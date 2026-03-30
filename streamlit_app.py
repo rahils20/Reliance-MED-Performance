@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import datetime
 
-st.set_page_config(page_title="Finor Piplaj | RIL MED Management Suite", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Chembond Chemicals Ltd. | RIL MED Management Suite", layout="wide", initial_sidebar_state="expanded")
 
 # --- INITIALIZE SESSION STATE FOR DAILY LOGGING ---
 if 'daily_logs' not in st.session_state:
@@ -30,7 +30,7 @@ WATER_SPECS = {
 
 def main():
     st.title("🏭 RIL Thermal Desalination (MED) - Daily Operations Suite")
-    st.caption("Developed for Finor Piplaj / Chembond | Compliant with RIL RFQ Guidelines")
+    st.caption("Developed for / Chembond | Compliant with RIL RFQ Guidelines")
 
     # --- SIDEBAR: DAILY SETUP ---
     st.sidebar.header("📅 Daily Log Setup")
@@ -228,7 +228,7 @@ def main():
             )
 
     st.sidebar.markdown("---")
-    st.sidebar.caption("Prepared by Rahil Shah | Finor Piplaj Chemicals Ltd.")
+    st.sidebar.caption("Prepared by Rahil Shah | Chembond Chemicals Ltd.")
 
 if __name__ == "__main__":
     main()
