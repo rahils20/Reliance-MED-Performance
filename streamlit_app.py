@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import datetime
 
-st.set_page_config(page_title="Chembond Chemicals | RIL MED Management Suite", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Finor Piplaj | RIL MED Management Suite", layout="wide", initial_sidebar_state="expanded")
 
 # --- INITIALIZE SESSION STATE FOR DAILY LOGGING ---
 if 'daily_logs' not in st.session_state:
@@ -30,7 +30,7 @@ WATER_SPECS = {
 
 def main():
     st.title("🏭 RIL Thermal Desalination (MED) - Daily Operations Suite")
-    st.caption("Developed for Chembond | Compliant with RIL RFQ Guidelines")
+    st.caption("Developed for Finor Piplaj / Chembond | Compliant with RIL RFQ Guidelines")
 
     # --- SIDEBAR: DAILY SETUP ---
     st.sidebar.header("📅 Daily Log Setup")
@@ -149,7 +149,7 @@ def main():
             if WATER_SPECS["Feed"]["Ca_min"] <= f_ca <= WATER_SPECS["Feed"]["Ca_max"]: st.write("✅ Calcium: Pass") 
             else: st.write("❌ Calcium: Fail (Target: 950-1100)")
 
-        with wq_col2 := w_col2:
+        with w_col2:
             st.markdown("### 🚰 Desal Product Analysis")
             p_ph = st.number_input("Product pH", value=6.5, step=0.1)
             p_cond = st.number_input("Product Conductivity (μs/cm)", value=10.0, step=0.5)
@@ -228,7 +228,7 @@ def main():
             )
 
     st.sidebar.markdown("---")
-    st.sidebar.caption("Prepared by Rahil Shah | Chembond Chemicals Ltd.")
+    st.sidebar.caption("Prepared by Rahil Shah | Finor Piplaj Chemicals Ltd.")
 
 if __name__ == "__main__":
     main()
