@@ -11,7 +11,7 @@ st.set_page_config(page_title="Chembond | RIL MED Management", layout="wide")
 # --- INITIALIZE SESSION STATE ---
 if 'daily_logs' not in st.session_state:
     st.session_state.daily_logs = pd.DataFrame(columns=[
-        "Date", "Cluster", "Steam (TPH)", "Distillate (TPH)", "SW Feed (m3/h)", "GOR", "Avg HTC"
+        "Date", "Cluster", "Steam (TPH)", "Distillate (TPH)", "Total SW Feed (m3/h)", "GOR", "Avg HTC"
     ])
 
 # --- CONSTANTS & MRA COEFFICIENTS ---
@@ -24,14 +24,16 @@ PLANT_SPECS = {
     "SEZ MED 1-6": {"area_m2": 14134.0}
 }
 
+# The true Linear Regression Coefficients
 MRA_COEF = {
     "Intercept": -161.56, "Press_1st": 0.613, "Temp_1st": 3.639, 
-    "SW_Feed": 0.811, "Brine_Temp_1st": -7.66, "Brine_Flow": -0.23, 
+    "SW_Upper": 0.811, "Brine_Temp_1st": -7.66, "Brine_Flow": -0.23, 
     "LP_Steam": 8.25, "Steam_Temp": 2.19, "Antiscalant": -7.03
 }
 
+# Accurate operational baselines for the variance explainer
 MRA_BASELINE = {
-    "Press_1st": 230.0, "Temp_1st": 69.0, "SW_Feed": 1970.0, 
+    "Press_1st": 230.0, "Temp_1st": 69.0, "SW_Upper": 775.0, 
     "Brine_Temp_1st": 66.0, "Brine_Flow": 1209.0, "LP_Steam": 70.0, 
     "Steam_Temp": 176.0, "Antiscalant": 2.5
 }
@@ -56,7 +58,7 @@ def generate_word_report(date, cluster, actual, predicted, residual, gor, stec, 
     
     doc.add_heading('2. Multiple Regression Analysis (MRA) & Fouling Indicator', level=1)
     mra_p = doc.add_paragraph()
-    mra_p.add_run(f"Actual SCADA Production: {actual:.1f} TPH\n")
+    mra_p.add_run(f"Actual Calculated Desal Production: {actual:.1f} TPH\n")
     mra_p.add_run(f"MRA Predicted Production: {predicted:.1f} TPH\n")
     mra_p.add_run(f"Calculated Residual (Actual - Predicted): {residual:.1f} TPH\n").bold = True
     
@@ -99,17 +101,26 @@ def main():
     tabs = st.tabs(["🌊 1. Flows & STEC", "🔥 2. Thermo", "🧪 3. Water", "🧠 4. MRA & Residual", "📂 5. Database & Report"])
 
     # ==========================================
-    # TAB 1: FLOWS & STEC
+    # TAB 1: FLOWS & STEC (Fixed Mass Balance)
     # ==========================================
     with tabs[0]:
-        st.subheader("Daily Mass Balance")
+        st.subheader("Daily Mass Balance (Input & Auto-Calculation)")
+        
+        st.markdown("#### Primary Plant Hydraulics")
         c1, c2, c3 = st.columns(3)
         steam = c1.number_input("Motive Steam (TPH)", value=70.0)
-        distillate = c2.number_input("Actual Distillate (TPH)", value=746.0)
-        sw_feed = c3.number_input("Sea Water Feed (m³/h)", value=1970.0)
+        sw_total = c2.number_input("Total Sea Water Feed (m³/h)", value=1970.0)
+        brine_return = c3.number_input("Brine Return (m³/h)", value=1209.0)
         
-        brine_flow = sw_feed - distillate
-        st.info(f"**Calculated Brine Return:** {brine_flow:,.1f} m³/h")
+        # Calculate Distillate via Mass Balance
+        distillate = sw_total - brine_return
+        
+        st.success(f"**Calculated Actual Desal Production:** {distillate:,.1f} m³/h (Based on Total Feed - Brine Return)")
+        
+        st.markdown("#### MRA Specific Input")
+        sw_upper = st.number_input("Upper SW Flow / Flow to 1st Effect (m³/h)", value=775.0, help="Required for accurate MRA predictive modeling.")
+        
+        st.divider()
         
         gor = distillate / steam if steam > 0 else 0
         heat_load_kw = ((steam * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
@@ -128,7 +139,7 @@ def main():
     # ==========================================
     with tabs[1]:
         st.subheader("11-Effect Temperature Inputs")
-        st.info("💡 **Pro-Tip for Operators:** You do not need to type these one by one. You can copy a column of 11 numbers directly from your Excel sheet and press `Ctrl + V` to paste them into the table below.")
+        st.info("💡 **Pro-Tip for Operators:** You can copy a column of 11 numbers directly from your Excel sheet and press `Ctrl + V` to paste them into the table below.")
         
         effects = [f"Effect {i}" for i in range(1, 12)]
         df_input = pd.DataFrame({
@@ -139,7 +150,6 @@ def main():
         
         edited_input = st.data_editor(df_input, use_container_width=True, hide_index=True)
         
-        # Math Execution
         edited_input['ΔT (°C)'] = edited_input['Vapor Temp (°C)'] - edited_input['Brine Temp (°C)']
         edited_input['Distillate per Effect (TPH)'] = distillate / 11
         edited_input['Q (kW)'] = (edited_input['Distillate per Effect (TPH)'] * 1000 / 3600) * LATENT_HEAT_VAPOR_KJ_KG
@@ -148,11 +158,10 @@ def main():
         st.divider()
         st.subheader("HTC Results & Warning Profiler")
         
-        # Restore the Delta T Warnings
         warning_triggered = False
         for index, row in edited_input.iterrows():
             if row['ΔT (°C)'] > 2.0:
-                st.error(f"🚨 **{row['Effect ID']} ALERT:** ΔT is {row['ΔT (°C)']:.2f}°C. This exceeds the 2.0°C limit and indicates severe localized scaling.")
+                st.error(f"🚨 **{row['Effect ID']} ALERT:** ΔT is {row['ΔT (°C)']:.2f}°C. This exceeds the 2.0°C limit.")
                 warning_triggered = True
         if not warning_triggered:
             st.success("✅ All 11 effects are operating safely below the 2.0°C ΔT limit.")
@@ -189,40 +198,40 @@ def main():
             p_iron = st.number_input("Total Iron (Max 0.1)", value=0.05)
 
     # ==========================================
-    # TAB 4: MRA & RESIDUAL ANALYSIS
+    # TAB 4: MRA & RESIDUAL ANALYSIS (Fixed SW Feed)
     # ==========================================
     with tabs[3]:
         st.subheader("Performance Data: Actual vs. Predicted")
-        st.markdown("This module isolates scaling by comparing Actual SCADA production against the MRA theoretical baseline.")
+        st.markdown("Isolating scaling by comparing Actual calculated production against the MRA theoretical baseline.")
         
         controls_col, calc_col = st.columns([1, 2])
         
         with controls_col:
             st.markdown("### Operational Inputs")
             p_stm = st.slider("LP Steam (TPH)", 50.0, 95.0, steam)
-            p_sw = st.slider("SW Feed (m³/h)", 1500.0, 2500.0, sw_feed)
+            p_sw_up = st.slider("Upper SW Flow (To 1st Effect)", 500.0, 1000.0, sw_upper)
             p_t1 = st.slider("1st Effect Temp (°C)", 60.0, 75.0, 69.0)
             p_bt1 = st.slider("1st Brine Temp (°C)", 60.0, 75.0, 66.0)
             
-            # Static background variables for cleaner UI
+            # Static background variables
             p_press = 230.0
             p_stm_t = 176.0
-            p_bflow = sw_feed - distillate
             p_anti = 2.5
 
         with calc_col:
+            # Corrected MRA Engine using p_sw_up (Upper Flow) and brine_return
             predicted = (
                 MRA_COEF["Intercept"] + 
                 (MRA_COEF["Press_1st"] * p_press) + (MRA_COEF["Temp_1st"] * p_t1) +
-                (MRA_COEF["SW_Feed"] * p_sw) + (MRA_COEF["Brine_Temp_1st"] * p_bt1) +
-                (MRA_COEF["Brine_Flow"] * p_bflow) + (MRA_COEF["LP_Steam"] * p_stm) +
+                (MRA_COEF["SW_Upper"] * p_sw_up) + (MRA_COEF["Brine_Temp_1st"] * p_bt1) +
+                (MRA_COEF["Brine_Flow"] * brine_return) + (MRA_COEF["LP_Steam"] * p_stm) +
                 (MRA_COEF["Steam_Temp"] * p_stm_t) + (MRA_COEF["Antiscalant"] * p_anti)
             )
             
             residual = distillate - predicted
             
             k1, k2, k3 = st.columns(3)
-            k1.metric("Actual SCADA", f"{distillate:,.1f} TPH")
+            k1.metric("Actual Desal", f"{distillate:,.1f} TPH")
             k2.metric("MRA Predicted", f"{predicted:,.1f} TPH")
             
             if residual < -15.0:
@@ -237,7 +246,7 @@ def main():
             
             var_data = [
                 ["LP Steam", MRA_BASELINE["LP_Steam"], p_stm, (p_stm - MRA_BASELINE["LP_Steam"]) * MRA_COEF["LP_Steam"]],
-                ["Sea Water Feed", MRA_BASELINE["SW_Feed"], p_sw, (p_sw - MRA_BASELINE["SW_Feed"]) * MRA_COEF["SW_Feed"]],
+                ["Upper SW Feed", MRA_BASELINE["SW_Upper"], p_sw_up, (p_sw_up - MRA_BASELINE["SW_Upper"]) * MRA_COEF["SW_Upper"]],
                 ["1st Effect Temp", MRA_BASELINE["Temp_1st"], p_t1, (p_t1 - MRA_BASELINE["Temp_1st"]) * MRA_COEF["Temp_1st"]],
                 ["1st Brine Temp", MRA_BASELINE["Brine_Temp_1st"], p_bt1, (p_bt1 - MRA_BASELINE["Brine_Temp_1st"]) * MRA_COEF["Brine_Temp_1st"]],
             ]
@@ -252,13 +261,9 @@ def main():
         
         if st.button("💾 Save Today's Log"):
             new_log = pd.DataFrame({
-                "Date": [log_date],
-                "Cluster": [cluster],
-                "Steam (TPH)": [steam],
-                "Distillate (TPH)": [distillate],
-                "SW Feed (m3/h)": [sw_feed],
-                "GOR": [round(gor, 2)],
-                "Avg HTC": [round(edited_input['HTC (kW/m²K)'].mean(), 2)]
+                "Date": [log_date], "Cluster": [cluster], "Steam (TPH)": [steam],
+                "Distillate (TPH)": [distillate], "Total SW Feed (m3/h)": [sw_total],
+                "GOR": [round(gor, 2)], "Avg HTC": [round(edited_input['HTC (kW/m²K)'].mean(), 2)]
             })
             st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
             st.success(f"Log saved for {log_date}!")
@@ -273,16 +278,10 @@ def main():
         
         if not st.session_state.daily_logs.empty:
             csv_export = st.session_state.daily_logs.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Download Master Log (CSV)",
-                data=csv_export,
-                file_name=f"RIL_MED_Log_{log_date}.csv",
-                mime='text/csv'
-            )
+            st.download_button(label="📥 Download Master Log (CSV)", data=csv_export, file_name=f"RIL_MED_Log_{log_date}.csv", mime='text/csv')
             
         st.divider()
         st.subheader("Generate Professional Daily Report")
-        st.markdown("Compile today's actual data and the MRA Residual into a formatted Microsoft Word (.docx) document.")
         
         if st.button("📄 Generate RIL Executive Report (.docx)", use_container_width=True):
             word_file = generate_word_report(log_date, cluster, distillate, predicted, residual, gor, stec, variance_df)
