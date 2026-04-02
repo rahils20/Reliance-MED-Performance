@@ -1,19 +1,15 @@
-# requirements: pandas, numpy
+# requirements: pandas, numpy, python-docx
 import streamlit as st
 import pandas as pd
 import numpy as np
 import datetime
 import io
+from docx import Document
+from docx.shared import Pt, Inches
 
 st.set_page_config(page_title="Chembond | RIL MED Management", layout="wide")
 
-# --- INITIALIZE SESSION STATE ---
-if 'daily_logs' not in st.session_state:
-    st.session_state.daily_logs = pd.DataFrame(columns=[
-        "Date", "Cluster", "Steam (TPH)", "Distillate (TPH)", "SW Feed (m3/h)", "GOR", "Avg HTC"
-    ])
-
-# --- CONSTANTS ---
+# --- CONSTANTS & BASELINES ---
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 LATENT_HEAT_VAPOR_KJ_KG = 2330.0 
 
@@ -29,33 +25,66 @@ MRA_COEF = {
     "LP_Steam": 8.25, "Steam_Temp": 2.19, "Antiscalant": -7.03
 }
 
-# Baseline for MRA Explainer (Design/Typical Values)
-MRA_BASELINE = {"LP_Steam": 70.0, "SW_Feed": 2000.0, "Temp_1st": 68.0, "Brine_Temp_1st": 65.0}
-
-# RFQ Water Quality Limits (Min, Max)
-WATER_SPECS = {
-    "Feed": {
-        "pH": (7.5, 9.2), "Turbidity (NTU)": (0, 5), "TSS (ppm)": (0, 10), 
-        "TDS (ppm)": (0, 42000), "Total Alkalinity": (160, 190), 
-        "Calcium Hardness": (950, 1100), "Chlorides": (21000, 22000), "Sulphate": (3050, 3250)
-    },
-    "Product": {
-        "pH": (5.5, 7.0), "Conductivity (μs/cm)": (0, 15), "TDS (ppm)": (0, 10), 
-        "Total Iron": (0, 0.1), "Chlorides": (0, 5), "Sulphate": (0, 1.0)
-    }
+MRA_BASELINE = {
+    "Press_1st": 230.0, "Temp_1st": 69.0, "SW_Feed": 1970.0, 
+    "Brine_Temp_1st": 66.0, "Brine_Flow": 1209.0, "LP_Steam": 70.0, 
+    "Steam_Temp": 176.0, "Antiscalant": 2.5
 }
 
-def generate_csv_template():
-    df = pd.DataFrame({
-        "Effect ID": [f"Effect {i}" for i in range(1, 12)],
-        "Vapor Temp (°C)": [0.0]*11,
-        "Brine Temp (°C)": [0.0]*11
-    })
-    return df.to_csv(index=False).encode('utf-8')
-
-def check_spec(val, limits):
-    if limits[0] <= val <= limits[1]: return "✅ Pass"
-    return f"🚨 Fail (Target: {limits[0]} - {limits[1]})"
+# --- DOCUMENT GENERATOR ---
+def generate_word_report(date, cluster, actual, predicted, residual, gor, stec, variance_df):
+    doc = Document()
+    
+    # Headers
+    doc.add_heading('MED Daily Operational Performance Report', 0)
+    p = doc.add_paragraph()
+    p.add_run('Prepared by: ').bold = True
+    p.add_run('Chembond Chemicals Ltd.\n')
+    p.add_run('Client: ').bold = True
+    p.add_run('Reliance Industries Limited (RIL)\n')
+    p.add_run('Date: ').bold = True
+    p.add_run(str(date) + '\n')
+    p.add_run('Plant ID: ').bold = True
+    p.add_run(cluster)
+    
+    # Executive Summary
+    doc.add_heading('1. Executive Summary', level=1)
+    doc.add_paragraph(f"On {date}, the {cluster} unit achieved a Gain Output Ratio (GOR) of {gor:.2f}:1 and a Specific Thermal Energy Consumption (STEC) of {stec:.2f} kWh/ton.")
+    
+    # MRA Section
+    doc.add_heading('2. Multiple Regression Analysis (MRA) & Fouling Indicator', level=1)
+    mra_p = doc.add_paragraph()
+    mra_p.add_run(f"Actual SCADA Production: {actual:.1f} TPH\n")
+    mra_p.add_run(f"MRA Predicted Production: {predicted:.1f} TPH\n")
+    mra_p.add_run(f"Calculated Residual (Actual - Predicted): {residual:.1f} TPH\n").bold = True
+    
+    if residual < -15.0:
+        doc.add_paragraph("WARNING: A significant negative residual indicates potential thermal resistance (fouling) forming on the tube bundles. Antiscalant dosing adjustments or a scheduled acid wash should be evaluated.", style='BodyText')
+    elif residual > 15.0:
+        doc.add_paragraph("NOTE: Positive residual indicates the plant is over-performing the baseline model, showing excellent heat transfer efficiency.", style='BodyText')
+    else:
+        doc.add_paragraph("STATUS: The plant is operating perfectly within the normalized thermodynamic baseline. No fouling detected.", style='BodyText')
+    
+    # Variance Table
+    doc.add_heading('3. Parameter Variance Impact', level=2)
+    table = doc.add_table(rows=1, cols=4)
+    table.style = 'Table Grid'
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = 'Parameter'
+    hdr_cells[1].text = 'Baseline'
+    hdr_cells[2].text = 'Actual Input'
+    hdr_cells[3].text = 'Production Impact (TPH)'
+    
+    for idx, row in variance_df.iterrows():
+        row_cells = table.add_row().cells
+        row_cells[0].text = str(row['Parameter'])
+        row_cells[1].text = str(row['Base Value'])
+        row_cells[2].text = str(row['Live Value'])
+        row_cells[3].text = f"{row['Impact (TPH)']:.1f}"
+        
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
 
 def main():
     st.title("🏭 RIL Thermal Desalination (MED) - Management Suite")
@@ -66,163 +95,105 @@ def main():
     cluster = st.sidebar.selectbox("Plant", list(PLANT_SPECS.keys()))
     plant_area = PLANT_SPECS[cluster]["area_m2"]
     
-    tabs = st.tabs([
-        "🌊 1. Flows & STEC", "🔥 2. Thermo & HTC", "🧪 3. Water Analysis",
-        "🧠 4. MRA Explainer", "📂 5. Master Log Database"
-    ])
+    tabs = st.tabs(["🌊 1. Flows & STEC", "🔥 2. Thermo", "🧪 3. Water", "🧠 4. MRA & Residual", "📂 5. Generate Report"])
 
-    # ==========================================
-    # TAB 1: FLOWS
-    # ==========================================
+    # --- TAB 1: FLOWS (Used as Global Inputs) ---
     with tabs[0]:
         st.subheader("Daily Mass Balance")
         c1, c2, c3 = st.columns(3)
-        steam = c1.number_input("Motive Steam (TPH)", 70.0)
-        distillate = c2.number_input("Distillate (TPH)", 746.0)
-        sw_feed = c3.number_input("Sea Water Feed (m³/h)", 1970.0)
-        
-        brine = sw_feed - distillate
-        st.info(f"**Calculated Brine Return:** {brine:,.1f} m³/h")
+        steam = c1.number_input("Motive Steam (TPH)", value=70.0)
+        distillate = c2.number_input("Actual Distillate (TPH)", value=746.0)
+        sw_feed = c3.number_input("Sea Water Feed (m³/h)", value=1970.0)
         
         gor = distillate / steam if steam > 0 else 0
+        heat_load_kw = ((steam * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
+        stec = heat_load_kw / distillate if distillate > 0 else 0
+        
         st.metric("Gain Output Ratio (GOR)", f"{gor:.2f}:1")
+        st.metric("STEC", f"{stec:.1f} kWh/t")
 
-    # ==========================================
-    # TAB 2: THERMODYNAMIC (CSV UPLOAD & ERRORS)
-    # ==========================================
-    with tabs[1]:
-        st.subheader("11-Effect Temperature Tracking")
-        
-        # Innovative File Upload System
-        upload_col, template_col = st.columns([3, 1])
-        with template_col:
-            st.download_button("📥 Download Daily Template", generate_csv_template(), "MED_Temp_Template.csv", "text/csv")
-        
-        with upload_col:
-            uploaded_file = st.file_uploader("Upload filled CSV file to auto-populate", type=["csv"])
-        
-        if uploaded_file:
-            df_input = pd.read_csv(uploaded_file)
-            st.success("Data imported successfully!")
-        else:
-            # Default Data
-            df_input = pd.DataFrame({
-                "Effect ID": [f"Effect {i}" for i in range(1, 12)],
-                "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
-                "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
-            })
-            
-        edited_input = st.data_editor(df_input, use_container_width=True, hide_index=True)
-        
-        # Thermodynamics
-        edited_input['ΔT (°C)'] = edited_input['Vapor Temp (°C)'] - edited_input['Brine Temp (°C)']
-        edited_input['Q (kW)'] = ((distillate / 11) * 1000 / 3600) * LATENT_HEAT_VAPOR_KJ_KG
-        edited_input['HTC (U)'] = edited_input['Q (kW)'] / (plant_area * edited_input['ΔT (°C)'])
-        
-        st.markdown("### ⚠️ Scaling Alerts (ΔT > 2.0°C)")
-        safe = True
-        for idx, row in edited_input.iterrows():
-            if row['ΔT (°C)'] > 2.0:
-                st.error(f"🚨 {row['Effect ID']}: ΔT is {row['ΔT (°C)']:.2f}°C. This indicates thermal resistance (fouling) on the tube bundle.")
-                safe = False
-        if safe: st.success("✅ All effects operating below the 2.0°C limit.")
-
-        st.dataframe(edited_input.style.format({"ΔT (°C)": "{:.2f}", "HTC (U)": "{:.2f}"}), hide_index=True, use_container_width=True)
-
-    # ==========================================
-    # TAB 3: WATER ANALYSIS (RESTORED PARAMS)
-    # ==========================================
-    with tabs[2]:
-        st.subheader("Laboratory Analysis vs RFQ Limits")
-        w_col1, w_col2 = st.columns(2)
-        
-        with w_col1:
-            st.markdown("#### 🌊 Sea Water Feed")
-            for param, limits in WATER_SPECS["Feed"].items():
-                col_in, col_chk = st.columns([2, 2])
-                val = col_in.number_input(param, value=limits[0] + (limits[1]-limits[0])/2, key=f"f_{param}")
-                col_chk.markdown(f"<div style='margin-top:30px'>{check_spec(val, limits)}</div>", unsafe_allow_html=True)
-                
-        with w_col2:
-            st.markdown("#### 🚰 Desal Product")
-            for param, limits in WATER_SPECS["Product"].items():
-                col_in, col_chk = st.columns([2, 2])
-                val = col_in.number_input(param, value=limits[0], key=f"p_{param}")
-                col_chk.markdown(f"<div style='margin-top:30px'>{check_spec(val, limits)}</div>", unsafe_allow_html=True)
-
-    # ==========================================
-    # TAB 4: MRA (PLAIN ENGLISH EXPLAINER)
-    # ==========================================
+    # --- TAB 4: MRA & RESIDUAL ANALYSIS ---
     with tabs[3]:
-        st.subheader("MRA Production Variance Explainer")
-        st.markdown("This tab translates the mathematical weights into an operational narrative for management.")
+        st.subheader("Performance Data: Actual vs. Predicted")
+        st.markdown("This module isolates scaling by comparing Actual SCADA production against the MRA theoretical baseline.")
         
-        live_steam = st.slider("LP Steam (TPH)", 50.0, 100.0, 70.0)
-        live_sw = st.slider("SW Feed (m³/h)", 1500.0, 2500.0, 2000.0)
+        # Split layout
+        controls_col, calc_col = st.columns([1, 2])
         
-        predicted = (MRA_COEF["Intercept"] + (MRA_COEF["LP_Steam"] * live_steam) + 
-                     (MRA_COEF["SW_Feed"] * live_sw) + (MRA_COEF["Brine_Temp_1st"] * 65.0) + (MRA_COEF["Temp_1st"] * 68.0))
-        
-        st.metric("Predicted Output based on Sliders", f"{predicted:,.1f} TPH")
-        
-        st.markdown("### 🗣️ How to explain this to Reliance:")
-        st.markdown("*(Compared to standard baseline operating conditions)*")
-        
-        # The Story-teller logic
-        steam_diff = live_steam - MRA_BASELINE["LP_Steam"]
-        sw_diff = live_sw - MRA_BASELINE["SW_Feed"]
-        
-        steam_impact = steam_diff * MRA_COEF["LP_Steam"]
-        sw_impact = sw_diff * MRA_COEF["SW_Feed"]
-        
-        if steam_impact != 0:
-            direction = "increased" if steam_impact > 0 else "decreased"
-            st.info(f"💨 Because Steam Flow {direction} by {abs(steam_diff):.1f} TPH, production mathematically shifted by **{steam_impact:+.1f} TPH**.")
-        if sw_impact != 0:
-            direction = "increased" if sw_impact > 0 else "decreased"
-            st.info(f"🌊 Because Sea Water Feed {direction} by {abs(sw_diff):.1f} m³/h, production mathematically shifted by **{sw_impact:+.1f} TPH**.")
+        with controls_col:
+            st.markdown("### Operational Inputs")
+            st.caption("Adjust to match today's SCADA readings.")
+            
+            p_stm = st.slider("LP Steam (TPH)", 50.0, 95.0, steam)
+            p_stm_t = st.number_input("Steam Temp (°C)", value=176.0)
+            p_sw = st.slider("SW Feed (m³/h)", 1500.0, 2500.0, sw_feed)
+            p_press = st.number_input("1st Effect Press (mbar)", value=230.0)
+            p_t1 = st.slider("1st Effect Temp (°C)", 60.0, 75.0, 69.0)
+            p_bt1 = st.slider("1st Brine Temp (°C)", 60.0, 75.0, 66.0)
+            p_bflow = st.number_input("Brine Flow (m³/h)", value=(sw_feed-distillate))
+            p_anti = st.slider("Antiscalant (PPM)", 1.0, 5.0, 2.5)
 
-    # ==========================================
-    # TAB 5: DATABASE & LOG MANAGEMENT
-    # ==========================================
-    with tabs[4]:
-        st.subheader("Monthly Database Management")
-        
-        c_up, c_save = st.columns(2)
-        with c_up:
-            old_db = st.file_uploader("📂 Load Previous Master Database (CSV)", type=["csv"])
-            if old_db:
-                st.session_state.daily_logs = pd.read_csv(old_db)
-                st.success("Database loaded! You can now append today's data.")
-                
-        with c_save:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("💾 Append Today's Log to Database"):
-                new_entry = pd.DataFrame({
-                    "Date": [log_date], "Cluster": [cluster], "Steam (TPH)": [steam], 
-                    "Distillate (TPH)": [distillate], "SW Feed (m3/h)": [sw_feed],
-                    "GOR": [round(gor, 2)], "Avg HTC": [round(edited_input['HTC (U)'].mean(), 2)]
-                })
-                st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_entry], ignore_index=True)
-                st.success("Log added below!")
-
-        st.markdown("### ✏️ Edit or Delete Entries")
-        st.caption("To delete a row, click the checkbox on the far left of the row, then press your 'Delete' or 'Backspace' key.")
-        
-        # Dynamic Data Editor allows row deletion and editing
-        st.session_state.daily_logs = st.data_editor(
-            st.session_state.daily_logs, 
-            num_rows="dynamic", 
-            use_container_width=True
-        )
-        
-        if not st.session_state.daily_logs.empty:
-            st.download_button(
-                "📥 Download Updated Master Database", 
-                st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), 
-                f"RIL_Master_Log_{log_date}.csv", 
-                "text/csv"
+        with calc_col:
+            # MRA Mathematical Engine
+            predicted = (
+                MRA_COEF["Intercept"] + 
+                (MRA_COEF["Press_1st"] * p_press) + (MRA_COEF["Temp_1st"] * p_t1) +
+                (MRA_COEF["SW_Feed"] * p_sw) + (MRA_COEF["Brine_Temp_1st"] * p_bt1) +
+                (MRA_COEF["Brine_Flow"] * p_bflow) + (MRA_COEF["LP_Steam"] * p_stm) +
+                (MRA_COEF["Steam_Temp"] * p_stm_t) + (MRA_COEF["Antiscalant"] * p_anti)
             )
+            
+            residual = distillate - predicted
+            
+            # Massive KPI Display
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Actual SCADA", f"{distillate:,.1f} TPH")
+            k2.metric("MRA Predicted", f"{predicted:,.1f} TPH")
+            
+            # Dynamic coloring for residual
+            if residual < -15.0:
+                k3.error(f"Residual: {residual:,.1f} TPH (FOULING)")
+            elif residual > 15.0:
+                k3.success(f"Residual: {residual:,.1f} TPH (CLEAN)")
+            else:
+                k3.info(f"Residual: {residual:,.1f} TPH (NORMAL)")
+                
+            st.divider()
+            
+            # The Variance Explainer Table
+            st.markdown("### 📊 Parameter Variance & Root Cause")
+            st.markdown("How today's inputs deviate from the baseline design, and exactly how many TPH of water were gained or lost due to each deviation.")
+            
+            var_data = [
+                ["LP Steam", MRA_BASELINE["LP_Steam"], p_stm, (p_stm - MRA_BASELINE["LP_Steam"]) * MRA_COEF["LP_Steam"]],
+                ["Sea Water Feed", MRA_BASELINE["SW_Feed"], p_sw, (p_sw - MRA_BASELINE["SW_Feed"]) * MRA_COEF["SW_Feed"]],
+                ["1st Effect Temp", MRA_BASELINE["Temp_1st"], p_t1, (p_t1 - MRA_BASELINE["Temp_1st"]) * MRA_COEF["Temp_1st"]],
+                ["1st Brine Temp", MRA_BASELINE["Brine_Temp_1st"], p_bt1, (p_bt1 - MRA_BASELINE["Brine_Temp_1st"]) * MRA_COEF["Brine_Temp_1st"]],
+            ]
+            variance_df = pd.DataFrame(var_data, columns=["Parameter", "Base Value", "Live Value", "Impact (TPH)"])
+            
+            st.dataframe(variance_df.style.format({"Base Value": "{:.1f}", "Live Value": "{:.1f}", "Impact (TPH)": "{:+.1f}"}), use_container_width=True, hide_index=True)
+
+    # --- TAB 5: REPORT GENERATOR ---
+    with tabs[4]:
+        st.subheader("Generate Professional Daily Report")
+        st.markdown("This will compile today's actual data, thermodynamic limits, and the MRA Residual into a formatted Microsoft Word (.docx) document ready to be emailed to Reliance Management.")
+        
+        st.info("Ensure all inputs in Tab 1 and Tab 4 are correct for today's operating conditions before generating the report.")
+        
+        if st.button("📄 Generate RIL Executive Report (.docx)", use_container_width=True):
+            word_file = generate_word_report(log_date, cluster, distillate, predicted, residual, gor, stec, variance_df)
+            
+            st.download_button(
+                label="📥 Download Word Document",
+                data=word_file,
+                file_name=f"RIL_MED_Report_{log_date}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                type="primary"
+            )
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Prepared by Rahil Shah | Chembond Chemicals Ltd.")
 
 if __name__ == "__main__":
     main()
