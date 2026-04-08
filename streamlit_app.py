@@ -56,7 +56,6 @@ WATER_SPECS = {
 # --- RELIANCE-GRADE DOCUMENT GENERATOR ---
 def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_data):
     doc = Document()
-    
     title = doc.add_heading('MED-4 Daily Operational & Performance Report', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
@@ -77,8 +76,7 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
     table_ops = doc.add_table(rows=1, cols=4)
     table_ops.style = 'Table Grid'
     hdr_cells = table_ops.rows[0].cells
-    headers = ['Parameter', 'UOM', 'Design', 'Actual']
-    for i, h in enumerate(headers): 
+    for i, h in enumerate(['Parameter', 'UOM', 'Design', 'Actual']): 
         hdr_cells[i].text = h
         hdr_cells[i].paragraphs[0].runs[0].bold = True
         
@@ -179,11 +177,10 @@ def main():
     mra_data = {}
 
     # ==========================================
-    # TAB 1: MANUAL SCADA INPUTS & STEC
+    # TAB 1: MANUAL SCADA INPUTS
     # ==========================================
     with tabs[0]:
         st.subheader("Daily Mass Balance (Raw SCADA Inputs)")
-        
         c1, c2, c3 = st.columns(3)
         ops_data['Steam'] = c1.number_input("LP Steam (TPH)", value=73.0)
         ops_data['Desal'] = c2.number_input("Desal Production (m³/h)", value=740.0)
@@ -196,7 +193,6 @@ def main():
 
         st.divider()
         st.subheader("📊 Executive Plant KPIs")
-        
         ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
         heat_load_kw = ((ops_data['Steam'] * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
         ops_data['STEC'] = heat_load_kw / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
@@ -212,7 +208,7 @@ def main():
         kpi5.metric("STEC", f"{ops_data['STEC']:.1f} kWh/t")
 
     # ==========================================
-    # TAB 2: OVERALL HTC & VISUAL GRAPH
+    # TAB 2: OVERALL HTC
     # ==========================================
     with tabs[1]:
         st.subheader("1. Overall Plant LMTD & Fouling Factor")
@@ -267,7 +263,7 @@ def main():
         st.altair_chart(bar_chart + limit_line, use_container_width=True)
 
     # ==========================================
-    # TAB 3: WATER ANALYSIS COMPLIANCE
+    # TAB 3: WATER ANALYSIS
     # ==========================================
     with tabs[2]:
         st.subheader("Laboratory Analysis vs RFQ Limits")
@@ -291,7 +287,7 @@ def main():
                 water_data['Product'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val, 'status': status}
 
     # ==========================================
-    # TAB 4: MRA & RESIDUAL ANALYSIS 
+    # TAB 4: MRA NORMALIZATION
     # ==========================================
     with tabs[3]:
         st.subheader("Performance Normalization (2026 Baseline)")
@@ -340,13 +336,12 @@ def main():
     # ==========================================
     with tabs[4]:
         st.subheader("Performance Intelligence & Reporting")
-        rep_tabs = st.tabs(["📅 Today's Command Center", "📆 Monthly Summary", "📊 Quarterly & Yearly"])
+        rep_tabs = st.tabs(["📅 Today's Command Center", "📆 Monthly Summary", "📊 Quarterly & Yearly Health"])
         
+        # --- SUB-TAB 1: TODAY ---
         with rep_tabs[0]:
             st.markdown("### 👁️ Daily Operations Diagnostic Board")
-            st.caption("Review the visual diagnostics below before committing to the master database.")
             
-            # --- ROW 1: Hero Metrics ---
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
             m_col1.metric("Date", str(log_date))
             m_col2.metric("Gross Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
@@ -354,38 +349,25 @@ def main():
             m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta="Clean/Stable" if mra_data['Residual'] >= -15 else "Fouling Alert", delta_color="normal" if mra_data['Residual'] >= -15 else "inverse")
             
             st.divider()
-
-            # --- ROW 2: Graphical Intelligence ---
             graph_col1, graph_col2 = st.columns(2)
             
             with graph_col1:
                 st.markdown("#### ⚖️ MRA Parameter Impact (TPH)")
-                st.caption("Visualizes exactly which parameters are limiting or boosting production today.")
-                
-                # Dynamic Bar chart highlighting positive vs negative impact
                 impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar().encode(
                     x=alt.X('Impact (TPH):Q', title='Impact on Production (m³/h)'),
                     y=alt.Y('Parameter:N', sort='-x', title=''),
-                    color=alt.condition(
-                        alt.datum['Impact (TPH)'] > 0,
-                        alt.value('#2ca02c'),  # Green for positive impact
-                        alt.value('#d62728')   # Red for negative impact
-                    ),
+                    color=alt.condition(alt.datum['Impact (TPH)'] > 0, alt.value('#2ca02c'), alt.value('#d62728')),
                     tooltip=['Parameter', 'Deviation', 'Impact (TPH)']
                 ).properties(height=300)
                 st.altair_chart(impact_chart, use_container_width=True)
 
             with graph_col2:
                 st.markdown("#### 🌊 Mass Balance Distribution")
-                st.caption("Visual breakdown of total incoming Sea Water.")
-                
-                # Donut chart for mass balance
                 unaccounted = ops_data['SW Total'] - (ops_data['Desal'] + ops_data['Brine Return'])
                 mb_data = pd.DataFrame({
                     'Stream': ['Desal Product (Net)', 'Brine Return', 'System Losses/Unaccounted'],
                     'Volume (m³/h)': [ops_data['Desal'], ops_data['Brine Return'], unaccounted if unaccounted > 0 else 0]
                 })
-                
                 donut = alt.Chart(mb_data).mark_arc(innerRadius=50).encode(
                     theta=alt.Theta(field="Volume (m³/h)", type="quantitative"),
                     color=alt.Color(field="Stream", type="nominal", scale=alt.Scale(scheme='set2')),
@@ -393,27 +375,20 @@ def main():
                 ).properties(height=300)
                 st.altair_chart(donut, use_container_width=True)
 
-            # --- ROW 3: Water Quality Summary Matrix ---
             st.markdown("#### 🧪 Water Quality Status Matrix")
             wq_list = []
             for param, data in water_data['Feed'].items(): wq_list.append({"Stream": "Feed", "Parameter": param, "Status": data['status']})
             for param, data in water_data['Product'].items(): wq_list.append({"Stream": "Product", "Parameter": param, "Status": data['status']})
-            
             df_wq_status = pd.DataFrame(wq_list)
-            # Create a compact horizontal layout using pills/badges
             feed_fails = df_wq_status[(df_wq_status['Stream'] == 'Feed') & (df_wq_status['Status'] == '🚨 Fail')]['Parameter'].tolist()
             prod_fails = df_wq_status[(df_wq_status['Stream'] == 'Product') & (df_wq_status['Status'] == '🚨 Fail')]['Parameter'].tolist()
-            
             w_info1, w_info2 = st.columns(2)
             if not feed_fails: w_info1.success("✅ Sea Water Feed: All parameters within limits.")
             else: w_info1.error(f"🚨 Sea Water Feed Fails: {', '.join(feed_fails)}")
-            
             if not prod_fails: w_info2.success("✅ Desal Product: All parameters within limits.")
             else: w_info2.error(f"🚨 Desal Product Fails: {', '.join(prod_fails)}")
 
             st.divider()
-            
-            # --- GATEKEEPER: SECURITY & EXPORT ---
             st.markdown("### 🔐 Database Commitment")
             c_save, c_report = st.columns(2)
             with c_save:
@@ -428,8 +403,7 @@ def main():
                         })
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                         st.success("✅ Successfully written to memory!")
-                    else:
-                        st.error("❌ Incorrect Password. Data not saved to Master Database.")
+                    else: st.error("❌ Incorrect Password. Data not saved.")
             
             with c_report:
                 st.markdown("<br><br>", unsafe_allow_html=True)
@@ -437,47 +411,85 @@ def main():
                     word_file = generate_comprehensive_report(log_date, ops_data, effect_df, water_data, mra_data)
                     st.download_button("📥 Click Here to Download Document", data=word_file, file_name=f"MED4_Daily_Report_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
+        # --- SUB-TAB 2: MONTHLY VISUALS ---
         with rep_tabs[1]:
-            st.markdown("### Monthly OPR & Quality Summary")
+            st.markdown("### 📆 The 30-Day Trajectory")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
-                current_month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)]
+                month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                 
-                if not current_month_data.empty:
+                if not month_data.empty:
                     m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Month Avg GOR", f"{current_month_data['GOR'].mean():.2f}")
-                    m2.metric("Month Avg Gross", f"{current_month_data['Gross Prod (m3/h)'].mean():.0f}")
-                    m3.metric("Month Avg HTC", f"{current_month_data['Overall HTC'].mean():.0f}")
-                    m4.metric("Avg MRA Residual", f"{current_month_data['Residual'].mean():.1f}")
-                else:
-                    st.info(f"No data saved yet for {log_date.strftime('%B %Y')}.")
-            else:
-                st.info("The database is currently empty. Please save today's log in the 'Today' tab.")
+                    m1.metric("Month Avg GOR", f"{month_data['GOR'].mean():.2f}")
+                    m2.metric("Month Avg Gross", f"{month_data['Gross Prod (m3/h)'].mean():.0f}")
+                    m3.metric("Month Avg HTC", f"{month_data['Overall HTC'].mean():.0f}")
+                    m4.metric("Avg MRA Residual", f"{month_data['Residual'].mean():.1f}")
+                    
+                    st.divider()
+                    col_chart1, col_chart2 = st.columns(2)
+                    
+                    with col_chart1:
+                        st.markdown("#### 📉 Daily Gross Production vs. Target")
+                        line_chart = alt.Chart(month_data).mark_line(point=True, color='#1f77b4').encode(
+                            x=alt.X('Date:T', title='Date'), y=alt.Y('Gross Prod (m3/h):Q', scale=alt.Scale(domain=[500, 1100])), tooltip=['Date', 'Gross Prod (m3/h)']
+                        )
+                        target_line = alt.Chart(pd.DataFrame({'y': [1000]})).mark_rule(color='green', strokeDash=[5, 5]).encode(y='y')
+                        st.altair_chart(line_chart + target_line, use_container_width=True)
+                        
+                    with col_chart2:
+                        st.markdown("#### 🧲 MRA Fouling Calendar")
+                        st.caption("Negative residual indicates days where scaling choked production.")
+                        res_chart = alt.Chart(month_data).mark_bar().encode(
+                            x='Date:T', y='Residual:Q',
+                            color=alt.condition(alt.datum.Residual < -15, alt.value('red'), alt.value('green')),
+                            tooltip=['Date', 'Residual']
+                        )
+                        st.altair_chart(res_chart, use_container_width=True)
+
+            else: st.info("The database is currently empty. Please save daily logs to generate monthly visuals.")
                 
             st.divider()
-            st.markdown("#### Master Log Database")
+            st.markdown("#### Master Log Database & Secure Export")
             st.session_state.daily_logs = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
             
-            st.divider()
-            st.markdown("#### 📥 Secure Database Export")
             pwd_dl = st.text_input("🔑 Authorization Password Required to Download Master CSV", type="password", key="pwd_dl")
             if pwd_dl == "12345678":
                 csv_export = st.session_state.daily_logs.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Unlock and Download Master Log (CSV)", data=csv_export, file_name=f"MED4_Master_Database.csv", mime='text/csv')
-            elif pwd_dl != "":
-                st.error("❌ Incorrect Password.")
+            elif pwd_dl != "": st.error("❌ Incorrect Password.")
 
+        # --- SUB-TAB 3: QUARTERLY/YEARLY VISUALS ---
         with rep_tabs[2]:
-            st.markdown("### Long-Term Asset Health")
+            st.markdown("### 📊 Long-Term Asset Health & Degradation")
+            st.caption("These visual proofs directly support the 'Two-Year Performance Review' deliverables for RIL Management.")
+            
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
-                df_logs['Quarter'] = df_logs['Date'].dt.to_period('Q')
-                quarterly_avg = df_logs.groupby('Quarter')[['GOR', 'Residual', 'Overall HTC']].mean().reset_index()
-                st.dataframe(quarterly_avg.style.format({"GOR": "{:.2f}", "Residual": "{:.1f}", "Overall HTC": "{:.0f}"}), use_container_width=True)
-            else:
-                st.info("Save more data to view quarterly trends.")
+                df_logs['Recovery (%)'] = (df_logs['Gross Prod (m3/h)'] / df_logs['SW Feed (m3/h)']) * 100
+                
+                q_col1, q_col2 = st.columns(2)
+                
+                with q_col1:
+                    st.markdown("#### 📉 Cumulative Recovery Trend")
+                    st.caption("Validates if the plant is maintaining the 'sub-5% recovery loss' KPI.")
+                    rec_chart = alt.Chart(df_logs).mark_circle(size=60, opacity=0.6).encode(
+                        x='Date:T', y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)), tooltip=['Date', 'Recovery (%)']
+                    )
+                    rec_trend = rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red')
+                    st.altair_chart(rec_chart + rec_trend, use_container_width=True)
+                    
+                with q_col2:
+                    st.markdown("#### 🌡️ HTC Degradation Curve (Fouling)")
+                    st.caption("A downward slope justifies the timeline for the next Acid Wash.")
+                    htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(
+                        x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)), tooltip=['Date', 'Overall HTC']
+                    )
+                    htc_trend = htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black', strokeDash=[4,4])
+                    st.altair_chart(htc_chart + htc_trend, use_container_width=True)
+                    
+            else: st.info("Save extended data to view quarterly degradation trends.")
 
 if __name__ == "__main__":
     main()
