@@ -255,3 +255,50 @@ def main():
                 base = MRA_BASELINE[key]
                 dev = live_val - base
                 impact = dev * MRA_COEF[key]
+                var_data.append([name, base, live_val, dev, MRA_COEF[key], impact])
+                
+            variance_df = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
+            st.dataframe(variance_df.style.format({
+                "Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}",
+                "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"
+            }), use_container_width=True, hide_index=True)
+
+    # ==========================================
+    # TAB 5: DATABASE & REPORT GENERATOR
+    # ==========================================
+    with tabs[4]:
+        st.subheader("Data Logging & Export")
+        
+        if st.button("💾 Save Today's Log"):
+            new_log = pd.DataFrame({
+                "Date": [log_date], "Steam (TPH)": [steam],
+                "Desal (m3/h)": [desal], "Gross Prod (m3/h)": [gross_prod],
+                "SW Feed (m3/h)": [sw_total], "GOR": [round(gor, 2)]
+            })
+            st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
+            st.success(f"Log saved for {log_date}!")
+            
+        st.session_state.daily_logs = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
+        
+        if not st.session_state.daily_logs.empty:
+            csv_export = st.session_state.daily_logs.to_csv(index=False).encode('utf-8')
+            st.download_button(label="📥 Download Master Log (CSV)", data=csv_export, file_name=f"MED4_Log_{log_date}.csv", mime='text/csv')
+            
+        st.divider()
+        st.subheader("Generate Enterprise Executive Report (.docx)")
+        
+        if st.button("📄 Generate RIL Executive Report", use_container_width=True):
+            word_file = generate_word_report(log_date, gross_prod, predicted, residual, gor, stec, variance_df)
+            st.download_button(
+                label="📥 Download Microsoft Word Document",
+                data=word_file,
+                file_name=f"MED4_Performance_Report_{log_date}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                type="primary"
+            )
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Prepared by Rahil Shah | Chembond Chemicals Ltd.")
+
+if __name__ == "__main__":
+    main()
