@@ -19,16 +19,18 @@ if 'daily_logs' not in st.session_state:
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 LATENT_HEAT_VAPOR_KJ_KG = 2330.0 
 
+# New 2026 OLS Regression Coefficients (Derived from Apr 2024 - Mar 2026 Data)
 MRA_COEF = {
-    "Intercept": -161.5637, "Press_1st": 0.6135, "Temp_1st": 3.6391, 
-    "SW_Upper": 0.8111, "Brine_Temp_1st": -7.6638, "Brine_Flow": -0.2328, 
-    "LP_Steam": 8.2539, "Steam_Temp": 2.1924, "Antiscalant": -7.0300
+    "Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, 
+    "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, 
+    "LP_Steam": 1.8876, "Steam_Temp": 1.2511
 }
 
+# New 2026 Operational Baselines for Variance Matrix
 MRA_BASELINE = {
-    "Press_1st": 230.8, "Temp_1st": 69.2, "SW_Upper": 584.8, 
-    "Brine_Temp_1st": 66.4, "Brine_Flow": 1361.9, "LP_Steam": 75.2, 
-    "Steam_Temp": 177.8, "Antiscalant": 5.2
+    "Press_1st": 240.0, "Temp_1st": 69.5, "SW_Upper": 775.0, 
+    "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, 
+    "Steam_Temp": 179.0
 }
 
 # --- DOCUMENT GENERATOR ---
@@ -84,8 +86,6 @@ def generate_word_report(date, actual_gross, predicted_gross, residual, gor, ste
 
 def main():
     # === SIDEBAR & BRANDING ===
-    # Instructions: Save a file named 'chembond_logo.png' in the same folder as this script,
-    # then change the line below to: st.sidebar.image("chembond_logo.png", use_column_width=True)
     st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
     st.sidebar.divider()
     
@@ -104,19 +104,18 @@ def main():
         st.subheader("Daily Mass Balance (Raw SCADA Inputs)")
         
         c1, c2, c3 = st.columns(3)
-        steam = c1.number_input("LP Steam (TPH)", value=78.0)
-        desal = c2.number_input("Desal Production (m³/h)", value=796.0)
-        gross_prod = c3.number_input("Gross Production (m³/h)", value=845.0)
+        steam = c1.number_input("LP Steam (TPH)", value=73.0)
+        desal = c2.number_input("Desal Production (m³/h)", value=740.0)
+        gross_prod = c3.number_input("Gross Production (m³/h)", value=790.0)
         
         c4, c5, c6 = st.columns(3)
-        sw_upper = c4.number_input("Sea Water Upper (Flow to 1st Effect) (m³/h)", value=899.0)
-        sw_total = c5.number_input("Total Sea Water Feed (m³/h)", value=2172.0)
-        brine_return = c6.number_input("Brine Water Return (m³/h)", value=1199.0)
+        sw_upper = c4.number_input("Sea Water Upper (Flow to 1st Effect) (m³/h)", value=775.0)
+        sw_total = c5.number_input("Total Sea Water Feed (m³/h)", value=2100.0)
+        brine_return = c6.number_input("Brine Water Return (m³/h)", value=1250.0)
 
         st.divider()
         st.subheader("📊 Executive Plant KPIs")
         
-        # --- Advanced KPI Math ---
         gor = gross_prod / steam if steam > 0 else 0
         heat_load_kw = ((steam * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
         stec = heat_load_kw / desal if desal > 0 else 0
@@ -124,7 +123,6 @@ def main():
         conversion = desal / sw_total if sw_total > 0 else 0
         steam_economy = steam / desal if desal > 0 else 0
         
-        # --- Clean Metric Layout ---
         kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
         kpi1.metric("Gain Output Ratio", f"{gor:.2f}:1", help="Gross / Steam")
         kpi2.metric("Steam Economy", f"{steam_economy:.4f}", help="Steam / Desal")
@@ -144,7 +142,6 @@ def main():
         steam_in_t = h3.number_input("LP Steam Inlet Temp (°C)", value=179.0)
         vapor_out_t = h4.number_input("Vapour Outlet Temp (°C)", value=70.0)
         
-        # LMTD Math
         dt1 = steam_in_t - brine_out_t
         dt2 = vapor_out_t - sw_in_t
         
@@ -177,7 +174,6 @@ def main():
         edited_input = st.data_editor(df_input, use_container_width=True, hide_index=True)
         edited_input['ΔT (°C)'] = edited_input['Vapor Temp (°C)'] - edited_input['Brine Temp (°C)']
         
-        # The Alarms
         st.markdown("### ⚠️ Scaling Alerts (ΔT > 2.0°C)")
         warning_triggered = False
         for index, row in edited_input.iterrows():
@@ -229,30 +225,31 @@ def main():
             else: st.error("🚨 Chlorides are OUT OF SPEC (Target: < 5)")
 
     # ==========================================
-    # TAB 4: MRA & RESIDUAL ANALYSIS 
+    # TAB 4: MRA & RESIDUAL ANALYSIS (2026 BASELINE)
     # ==========================================
     with tabs[3]:
-        st.subheader("Performance Normalization (Actual vs. Predicted)")
+        st.subheader("Performance Normalization (2026 Baseline)")
+        st.markdown("This model utilizes the updated 2026 OLS Regression coefficients to normalize today's production against recent clean-plant operations.")
         
         controls_col, calc_col = st.columns([1, 2])
         with controls_col:
             st.markdown("### Model Inputs")
-            p_press = st.slider("1st Effect Press (mbar)", 200.0, 260.0, 230.8)
-            p_t1 = st.slider("1st Effect Temp (°C)", 60.0, 75.0, 69.2)
+            p_press = st.slider("1st Effect Press (mbar)", 200.0, 260.0, 240.0)
+            p_t1 = st.slider("1st Effect Temp (°C)", 60.0, 75.0, 69.5)
             p_sw_up = st.slider("Sea Water Upper (m³/h)", 400.0, 1000.0, float(sw_upper))
-            p_bt1 = st.slider("1st Brine Temp (°C)", 60.0, 75.0, 66.4)
+            p_bt1 = st.slider("1st Brine Temp (°C)", 60.0, 75.0, 66.5)
             p_bflow = st.slider("Brine Flow (m³/h)", 1000.0, 1600.0, float(brine_return))
             p_stm = st.slider("LP Steam (TPH)", 50.0, 100.0, float(steam))
-            p_stm_t = st.slider("Steam Temp (°C)", 160.0, 190.0, 177.8)
-            p_anti = st.slider("Antiscalant (PPM)", 1.0, 10.0, 5.2)
+            p_stm_t = st.slider("Steam Temp (°C)", 160.0, 190.0, 179.0)
 
         with calc_col:
+            # 7-Variable MRA Engine
             predicted = (
                 MRA_COEF["Intercept"] + 
                 (MRA_COEF["Press_1st"] * p_press) + (MRA_COEF["Temp_1st"] * p_t1) +
                 (MRA_COEF["SW_Upper"] * p_sw_up) + (MRA_COEF["Brine_Temp_1st"] * p_bt1) +
                 (MRA_COEF["Brine_Flow"] * p_bflow) + (MRA_COEF["LP_Steam"] * p_stm) +
-                (MRA_COEF["Steam_Temp"] * p_stm_t) + (MRA_COEF["Antiscalant"] * p_anti)
+                (MRA_COEF["Steam_Temp"] * p_stm_t)
             )
             
             residual = gross_prod - predicted
@@ -275,8 +272,7 @@ def main():
                 ("1st Brine Temp", "Brine_Temp_1st", p_bt1),
                 ("Brine Flow", "Brine_Flow", p_bflow),
                 ("LP Steam", "LP_Steam", p_stm),
-                ("Steam Temp", "Steam_Temp", p_stm_t),
-                ("Antiscalant", "Antiscalant", p_anti)
+                ("Steam Temp", "Steam_Temp", p_stm_t)
             ]
             
             var_data = []
