@@ -17,6 +17,7 @@ if 'daily_logs' not in st.session_state:
 
 # --- CONSTANTS & MRA COEFFICIENTS ---
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
+LATENT_HEAT_VAPOR_KJ_KG = 2330.0 
 
 MRA_COEF = {
     "Intercept": -161.5637, "Press_1st": 0.6135, "Temp_1st": 3.6391, 
@@ -82,21 +83,25 @@ def generate_word_report(date, actual_gross, predicted_gross, residual, gor, ste
     return bio.getvalue()
 
 def main():
-    st.title("🏭 Reliance MED-4 Management Suite")
-    st.caption("Developed by Chembond Chemicals Ltd.")
+    # === SIDEBAR & BRANDING ===
+    # Instructions: Save a file named 'chembond_logo.png' in the same folder as this script,
+    # then change the line below to: st.sidebar.image("chembond_logo.png", use_column_width=True)
+    st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
+    st.sidebar.divider()
     
     st.sidebar.header("📅 Daily Setup")
     log_date = st.sidebar.date_input("Date", datetime.date.today())
     area_m2 = st.sidebar.number_input("Overall Surface Area (m²)", value=1757.49, help="Used for LMTD HTC Calculation")
     
-    tabs = st.tabs(["🌊 1. SCADA Inputs & KPIs", "🔥 2. Overall LMTD & HTC", "🧪 3. Water Analysis", "🧠 4. MRA Root Cause", "📂 5. Report Export"])
+    st.title("🏭 Reliance MED-4 Management Suite")
+    
+    tabs = st.tabs(["🌊 1. SCADA Inputs & KPIs", "🔥 2. Thermo & HTC", "🧪 3. Water Analysis", "🧠 4. MRA Root Cause", "📂 5. Report Export"])
 
     # ==========================================
     # TAB 1: MANUAL SCADA INPUTS & STEC
     # ==========================================
     with tabs[0]:
         st.subheader("Daily Mass Balance (Raw SCADA Inputs)")
-        st.markdown("Enter the exact meter readings below.")
         
         c1, c2, c3 = st.columns(3)
         steam = c1.number_input("LP Steam (TPH)", value=78.0)
@@ -109,56 +114,80 @@ def main():
         brine_return = c6.number_input("Brine Water Return (m³/h)", value=1199.0)
 
         st.divider()
-        st.subheader("Performance KPIs")
+        st.subheader("📊 Executive Plant KPIs")
         
-        # CORRECTED: GOR is calculated using GROSS PRODUCTION
+        # --- Advanced KPI Math ---
         gor = gross_prod / steam if steam > 0 else 0
         heat_load_kw = ((steam * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
-        # STEC is generally calculated based on Desal (net export)
         stec = heat_load_kw / desal if desal > 0 else 0
+        recovery = (gross_prod / sw_total) * 100 if sw_total > 0 else 0
+        conversion = desal / sw_total if sw_total > 0 else 0
+        steam_economy = steam / desal if desal > 0 else 0
         
-        k1, k2 = st.columns(2)
-        with k1:
-            st.metric("Gain Output Ratio (GOR)", f"{gor:.2f} : 1")
-            st.caption("Calculated using Gross Production / Steam")
-        with k2:
-            st.metric("Specific Thermal Energy (STEC)", f"{stec:.1f} kWh/ton")
-            st.caption(f"Based on Heat Load of {heat_load_kw:,.0f} kW")
+        # --- Clean Metric Layout ---
+        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+        kpi1.metric("Gain Output Ratio", f"{gor:.2f}:1", help="Gross / Steam")
+        kpi2.metric("Steam Economy", f"{steam_economy:.4f}", help="Steam / Desal")
+        kpi3.metric("System Recovery", f"{recovery:.1f} %", help="Gross / Total SW Feed")
+        kpi4.metric("Conversion Ratio", f"{conversion:.3f}", help="Desal / Total SW Feed")
+        kpi5.metric("STEC", f"{stec:.1f} kWh/t", help="Based on Heat Load / Desal")
 
     # ==========================================
-    # TAB 2: OVERALL HTC & LMTD
+    # TAB 2: OVERALL HTC & 11-EFFECT ALARMS
     # ==========================================
     with tabs[1]:
-        st.subheader("Overall Plant HTC & Fouling Factor (LMTD Method)")
-        st.markdown("This mirrors your `HTC Calculation.csv` logic perfectly.")
+        st.subheader("1. Overall Plant LMTD & Fouling Factor")
         
         h1, h2, h3, h4 = st.columns(4)
-        sw_in_t = h1.number_input("Sea Water Inlet Temp (°C)", value=50.0)
-        brine_out_t = h2.number_input("Brine Outlet Temp (°C)", value=67.0)
+        sw_in_t = h1.number_input("Sea Water Inlet Temp (°C)", value=30.0)
+        brine_out_t = h2.number_input("Brine Outlet Temp (°C)", value=41.0)
         steam_in_t = h3.number_input("LP Steam Inlet Temp (°C)", value=179.0)
         vapor_out_t = h4.number_input("Vapour Outlet Temp (°C)", value=70.0)
         
-        # Exact Math from Chembond Excel Sheet
+        # LMTD Math
         dt1 = steam_in_t - brine_out_t
         dt2 = vapor_out_t - sw_in_t
         
         if dt1 > 0 and dt2 > 0 and dt1 != dt2:
             lmtd = (dt1 - dt2) / np.log(dt1 / dt2)
-            # Heat load Q = Flow * dT * Conversion Factor (0.930 derived from your historical logs)
             q_actual = sw_total * (brine_out_t - sw_in_t) * 0.930
             htc_u = (q_actual / (area_m2 * lmtd)) * 1000 if lmtd > 0 else 0
             fouling_factor = 1 / htc_u if htc_u > 0 else 0
             
-            st.divider()
-            st.markdown("### Calculated Thermal Results")
             r1, r2, r3, r4 = st.columns(4)
-            r1.metric("LMTD (Actual)", f"{lmtd:.2f} °C")
-            r2.metric("Q (Actual)", f"{q_actual:,.2f} Kcal/hr°C")
-            r3.metric("HTC - U (Actual)", f"{htc_u:.2f} W/m²K")
+            r1.metric("LMTD", f"{lmtd:.2f} °C")
+            r2.metric("Plant Q (Actual)", f"{q_actual:,.0f} Kcal/hr°C")
+            r3.metric("Overall HTC (U)", f"{htc_u:.2f} W/m²K")
             r4.metric("Fouling Factor (1/U)", f"{fouling_factor:.6f}")
         else:
-            st.error("Temperature inputs invalid for LMTD calculation. Ensure Steam > Brine and Vapor > SW Inlet.")
+            st.error("Invalid temperatures for LMTD. Steam must be > Brine, Vapor must be > SW In.")
             htc_u = 0
+
+        st.divider()
+        st.subheader("2. 11-Effect Temperature & Scaling Profiler")
+        st.info("💡 **Operator Tip:** Copy your column of 11 temperatures from Excel and press `Ctrl+V` to paste them directly into the table.")
+        
+        effects = [f"Effect {i}" for i in range(1, 12)]
+        df_input = pd.DataFrame({
+            "Effect ID": effects,
+            "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
+            "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
+        })
+        
+        edited_input = st.data_editor(df_input, use_container_width=True, hide_index=True)
+        edited_input['ΔT (°C)'] = edited_input['Vapor Temp (°C)'] - edited_input['Brine Temp (°C)']
+        
+        # The Alarms
+        st.markdown("### ⚠️ Scaling Alerts (ΔT > 2.0°C)")
+        warning_triggered = False
+        for index, row in edited_input.iterrows():
+            if row['ΔT (°C)'] > 2.0:
+                st.error(f"🚨 **{row['Effect ID']} ALERT:** ΔT is {row['ΔT (°C)']:.2f}°C. This exceeds the 2.0°C limit and indicates localized scaling/choking.")
+                warning_triggered = True
+        if not warning_triggered:
+            st.success("✅ All 11 effects are operating safely below the 2.0°C ΔT limit.")
+            
+        st.dataframe(edited_input.style.format({"ΔT (°C)": "{:.2f}"}), use_container_width=True, hide_index=True)
 
     # ==========================================
     # TAB 3: WATER ANALYSIS COMPLIANCE
@@ -169,7 +198,6 @@ def main():
         
         with w_col1:
             st.markdown("### 🌊 Feed Sea Water")
-            
             ph = st.number_input("pH", value=8.14)
             if 7.5 <= ph <= 9.2: st.success("✅ pH is within spec (7.5 - 9.2)")
             else: st.error("🚨 pH is OUT OF SPEC (Target: 7.5 - 9.2)")
@@ -188,7 +216,6 @@ def main():
             
         with w_col2:
             st.markdown("### 🚰 Desal Product")
-            
             p_ph = st.number_input("Product pH", value=6.5)
             if 5.5 <= p_ph <= 7.0: st.success("✅ pH is within spec (5.5 - 7.0)")
             else: st.error("🚨 pH is OUT OF SPEC (Target: 5.5 - 7.0)")
@@ -206,13 +233,10 @@ def main():
     # ==========================================
     with tabs[3]:
         st.subheader("Performance Normalization (Actual vs. Predicted)")
-        st.markdown("This tab proves the health of the plant by using linear regression to isolate the exact impact of operational variations.")
         
         controls_col, calc_col = st.columns([1, 2])
-        
         with controls_col:
             st.markdown("### Model Inputs")
-            st.caption("Pre-populated from Tab 1 where applicable.")
             p_press = st.slider("1st Effect Press (mbar)", 200.0, 260.0, 230.8)
             p_t1 = st.slider("1st Effect Temp (°C)", 60.0, 75.0, 69.2)
             p_sw_up = st.slider("Sea Water Upper (m³/h)", 400.0, 1000.0, float(sw_upper))
@@ -231,19 +255,15 @@ def main():
                 (MRA_COEF["Steam_Temp"] * p_stm_t) + (MRA_COEF["Antiscalant"] * p_anti)
             )
             
-            # Residual is calculated using GROSS PRODUCTION
             residual = gross_prod - predicted
             
             k1, k2, k3 = st.columns(3)
             k1.metric("Actual Gross SCADA", f"{gross_prod:,.1f} m³/h")
             k2.metric("MRA Predicted", f"{predicted:,.1f} m³/h")
             
-            if residual < -15.0:
-                k3.error(f"Residual: {residual:,.1f} (FOULING)")
-            elif residual > 15.0:
-                k3.success(f"Residual: {residual:,.1f} (CLEAN)")
-            else:
-                k3.info(f"Residual: {residual:,.1f} (NORMAL)")
+            if residual < -15.0: k3.error(f"Residual: {residual:,.1f} (FOULING)")
+            elif residual > 15.0: k3.success(f"Residual: {residual:,.1f} (CLEAN)")
+            else: k3.info(f"Residual: {residual:,.1f} (NORMAL)")
                 
             st.divider()
             st.markdown("### 📊 Parameter Variance Matrix")
