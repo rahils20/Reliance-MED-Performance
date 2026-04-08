@@ -279,7 +279,7 @@ def main():
                 val = col_in.number_input(f"{param} ({data['limits'][0]}-{data['limits'][1]})", value=data['default'], key=f"f_{param}")
                 status = "✅ Pass" if data['limits'][0] <= val <= data['limits'][1] else "🚨 Fail"
                 col_chk.markdown(f"<div style='margin-top:30px'>{status}</div>", unsafe_allow_html=True)
-                water_data['Feed'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val}
+                water_data['Feed'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val, 'status': status}
             
         with w_col2:
             st.markdown("### 🚰 Desal Product")
@@ -288,7 +288,7 @@ def main():
                 val = col_in.number_input(f"{param} ({data['limits'][0]}-{data['limits'][1]})", value=data['default'], key=f"p_{param}")
                 status = "✅ Pass" if data['limits'][0] <= val <= data['limits'][1] else "🚨 Fail"
                 col_chk.markdown(f"<div style='margin-top:30px'>{status}</div>", unsafe_allow_html=True)
-                water_data['Product'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val}
+                water_data['Product'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val, 'status': status}
 
     # ==========================================
     # TAB 4: MRA & RESIDUAL ANALYSIS 
@@ -340,21 +340,81 @@ def main():
     # ==========================================
     with tabs[4]:
         st.subheader("Performance Intelligence & Reporting")
-        rep_tabs = st.tabs(["📅 Today's Report", "📆 Monthly Summary", "📊 Quarterly & Yearly"])
+        rep_tabs = st.tabs(["📅 Today's Command Center", "📆 Monthly Summary", "📊 Quarterly & Yearly"])
         
         with rep_tabs[0]:
-            st.markdown("### 🔍 Data Verification & Database Commit")
-            st.markdown("Verify the critical metrics below before authorizing a write to the Master Database.")
+            st.markdown("### 👁️ Daily Operations Diagnostic Board")
+            st.caption("Review the visual diagnostics below before committing to the master database.")
             
-            # High-Visibility Preview
-            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-            col_p1.metric("Date", str(log_date))
-            col_p2.metric("Gross Prod", f"{ops_data['Gross Prod']} m³/h")
-            col_p3.metric("GOR", f"{ops_data['GOR']:.2f}")
-            col_p4.metric("MRA Residual", f"{mra_data['Residual']:.1f}")
+            # --- ROW 1: Hero Metrics ---
+            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+            m_col1.metric("Date", str(log_date))
+            m_col2.metric("Gross Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
+            m_col3.metric("System GOR", f"{ops_data['GOR']:.2f}", delta=f"{ops_data['GOR'] - 10.5:.2f} from Target" if ops_data['GOR'] < 10.5 else None)
+            m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta="Clean/Stable" if mra_data['Residual'] >= -15 else "Fouling Alert", delta_color="normal" if mra_data['Residual'] >= -15 else "inverse")
             
             st.divider()
+
+            # --- ROW 2: Graphical Intelligence ---
+            graph_col1, graph_col2 = st.columns(2)
             
+            with graph_col1:
+                st.markdown("#### ⚖️ MRA Parameter Impact (TPH)")
+                st.caption("Visualizes exactly which parameters are limiting or boosting production today.")
+                
+                # Dynamic Bar chart highlighting positive vs negative impact
+                impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar().encode(
+                    x=alt.X('Impact (TPH):Q', title='Impact on Production (m³/h)'),
+                    y=alt.Y('Parameter:N', sort='-x', title=''),
+                    color=alt.condition(
+                        alt.datum['Impact (TPH)'] > 0,
+                        alt.value('#2ca02c'),  # Green for positive impact
+                        alt.value('#d62728')   # Red for negative impact
+                    ),
+                    tooltip=['Parameter', 'Deviation', 'Impact (TPH)']
+                ).properties(height=300)
+                st.altair_chart(impact_chart, use_container_width=True)
+
+            with graph_col2:
+                st.markdown("#### 🌊 Mass Balance Distribution")
+                st.caption("Visual breakdown of total incoming Sea Water.")
+                
+                # Donut chart for mass balance
+                unaccounted = ops_data['SW Total'] - (ops_data['Desal'] + ops_data['Brine Return'])
+                mb_data = pd.DataFrame({
+                    'Stream': ['Desal Product (Net)', 'Brine Return', 'System Losses/Unaccounted'],
+                    'Volume (m³/h)': [ops_data['Desal'], ops_data['Brine Return'], unaccounted if unaccounted > 0 else 0]
+                })
+                
+                donut = alt.Chart(mb_data).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta(field="Volume (m³/h)", type="quantitative"),
+                    color=alt.Color(field="Stream", type="nominal", scale=alt.Scale(scheme='set2')),
+                    tooltip=['Stream', 'Volume (m³/h)']
+                ).properties(height=300)
+                st.altair_chart(donut, use_container_width=True)
+
+            # --- ROW 3: Water Quality Summary Matrix ---
+            st.markdown("#### 🧪 Water Quality Status Matrix")
+            wq_list = []
+            for param, data in water_data['Feed'].items(): wq_list.append({"Stream": "Feed", "Parameter": param, "Status": data['status']})
+            for param, data in water_data['Product'].items(): wq_list.append({"Stream": "Product", "Parameter": param, "Status": data['status']})
+            
+            df_wq_status = pd.DataFrame(wq_list)
+            # Create a compact horizontal layout using pills/badges
+            feed_fails = df_wq_status[(df_wq_status['Stream'] == 'Feed') & (df_wq_status['Status'] == '🚨 Fail')]['Parameter'].tolist()
+            prod_fails = df_wq_status[(df_wq_status['Stream'] == 'Product') & (df_wq_status['Status'] == '🚨 Fail')]['Parameter'].tolist()
+            
+            w_info1, w_info2 = st.columns(2)
+            if not feed_fails: w_info1.success("✅ Sea Water Feed: All parameters within limits.")
+            else: w_info1.error(f"🚨 Sea Water Feed Fails: {', '.join(feed_fails)}")
+            
+            if not prod_fails: w_info2.success("✅ Desal Product: All parameters within limits.")
+            else: w_info2.error(f"🚨 Desal Product Fails: {', '.join(prod_fails)}")
+
+            st.divider()
+            
+            # --- GATEKEEPER: SECURITY & EXPORT ---
+            st.markdown("### 🔐 Database Commitment")
             c_save, c_report = st.columns(2)
             with c_save:
                 pwd_append = st.text_input("🔑 Authorization Password Required to Append", type="password", key="pwd_append")
@@ -372,7 +432,7 @@ def main():
                         st.error("❌ Incorrect Password. Data not saved to Master Database.")
             
             with c_report:
-                st.markdown("<br><br>", unsafe_allow_html=True) # Formatting alignment
+                st.markdown("<br><br>", unsafe_allow_html=True)
                 if st.button("📄 Export Comprehensive Daily Report (.docx)", type="primary", use_container_width=True):
                     word_file = generate_comprehensive_report(log_date, ops_data, effect_df, water_data, mra_data)
                     st.download_button("📥 Click Here to Download Document", data=word_file, file_name=f"MED4_Daily_Report_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
@@ -402,7 +462,6 @@ def main():
             st.divider()
             st.markdown("#### 📥 Secure Database Export")
             pwd_dl = st.text_input("🔑 Authorization Password Required to Download Master CSV", type="password", key="pwd_dl")
-            
             if pwd_dl == "12345678":
                 csv_export = st.session_state.daily_logs.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Unlock and Download Master Log (CSV)", data=csv_export, file_name=f"MED4_Master_Database.csv", mime='text/csv')
