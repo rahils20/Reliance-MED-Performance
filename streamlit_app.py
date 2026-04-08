@@ -32,6 +32,28 @@ MRA_BASELINE = {
     "Steam_Temp": 179.0
 }
 
+# Restored Full Water Quality Specs
+WATER_SPECS = {
+    "Feed": {
+        "pH": {"limits": (7.5, 9.2), "default": 8.14},
+        "Turbidity (NTU)": {"limits": (0.0, 5.0), "default": 3.2},
+        "TSS (ppm)": {"limits": (0.0, 10.0), "default": 6.5},
+        "TDS (ppm)": {"limits": (0.0, 42000.0), "default": 41000.0},
+        "Total Alkalinity": {"limits": (160.0, 190.0), "default": 170.0},
+        "Calcium Hardness": {"limits": (950.0, 1100.0), "default": 1040.0},
+        "Chlorides": {"limits": (21000.0, 22000.0), "default": 21500.0},
+        "Sulphate": {"limits": (3050.0, 3250.0), "default": 3150.0}
+    },
+    "Product": {
+        "pH": {"limits": (5.5, 7.0), "default": 6.5},
+        "Conductivity (μs/cm)": {"limits": (0.0, 15.0), "default": 4.6},
+        "TDS (ppm)": {"limits": (0.0, 10.0), "default": 2.5},
+        "Total Iron": {"limits": (0.0, 0.1), "default": 0.05},
+        "Chlorides": {"limits": (0.0, 5.0), "default": 0.0},
+        "Sulphate": {"limits": (0.0, 1.0), "default": 0.0}
+    }
+}
+
 # --- RELIANCE-GRADE DOCUMENT GENERATOR ---
 def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_data):
     doc = Document()
@@ -54,7 +76,7 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
     status_text = f"On {date}, the MED-4 unit achieved a Gross Production of {ops_data['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops_data['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops_data['STEC']:.2f} kWh/ton with a system recovery of {ops_data['Recovery']:.1f}%."
     doc.add_paragraph(status_text)
 
-    # 3. Operational Data (Design vs Actual Table)
+    # 3. Operational Data
     doc.add_heading('2. Operational Data Summary', level=1)
     table_ops = doc.add_table(rows=1, cols=4)
     table_ops.style = 'Table Grid'
@@ -79,7 +101,7 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
         row_cells = table_ops.add_row().cells
         for i, val in enumerate(row): row_cells[i].text = val
 
-    # 4. Effect-wise Temperature & Flow Data
+    # 4. Effect-wise Temperature
     doc.add_heading('3. Effect-wise Thermodynamic Profile', level=1)
     doc.add_paragraph(f"Overall Plant LMTD: {ops_data['LMTD']:.2f} °C | Overall HTC (U): {ops_data['HTC']:.2f} W/m²K | Fouling Factor: {ops_data['Fouling']:.6f}")
     
@@ -101,7 +123,7 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
             row_cells[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
             row_cells[3].paragraphs[0].runs[0].bold = True
 
-    # 5. Feed & Brine Water Analysis
+    # 5. Full Water Chemistry Compliance
     doc.add_heading('4. Water Quality Compliance', level=1)
     table_wq = doc.add_table(rows=1, cols=4)
     table_wq.style = 'Table Grid'
@@ -110,20 +132,22 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
         hdr_cells[i].text = h
         hdr_cells[i].paragraphs[0].runs[0].bold = True
         
-    wq_rows = [
-        ['pH', 'Sea Water Feed', '7.5 - 9.2', str(water_data['f_ph'])],
-        ['Turbidity (NTU)', 'Sea Water Feed', '< 5.0', str(water_data['f_turb'])],
-        ['TDS (ppm)', 'Sea Water Feed', '< 42000', str(water_data['f_tds'])],
-        ['Calcium Hardness (ppm)', 'Sea Water Feed', '950 - 1100', str(water_data['f_ca'])],
-        ['pH', 'Desal Product', '5.5 - 7.0', str(water_data['p_ph'])],
-        ['Conductivity (μs/cm)', 'Desal Product', '< 15', str(water_data['p_cond'])],
-        ['Chlorides (ppm)', 'Desal Product', '< 5', str(water_data['p_cl'])]
-    ]
-    for row in wq_rows:
+    # Dynamically inject all 14 parameters
+    for param, data in water_data['Feed'].items():
         row_cells = table_wq.add_row().cells
-        for i, val in enumerate(row): row_cells[i].text = val
+        row_cells[0].text = str(param)
+        row_cells[1].text = 'Sea Water Feed'
+        row_cells[2].text = f"{data['min']} - {data['max']}"
+        row_cells[3].text = str(data['val'])
+        
+    for param, data in water_data['Product'].items():
+        row_cells = table_wq.add_row().cells
+        row_cells[0].text = str(param)
+        row_cells[1].text = 'Desal Product'
+        row_cells[2].text = f"{data['min']} - {data['max']}"
+        row_cells[3].text = str(data['val'])
 
-    # 6. MRA & Residual Defense
+    # 6. MRA Variance Matrix
     doc.add_heading('5. MRA Fouling Indicator & Root Cause Variance', level=1)
     doc.add_paragraph(f"Actual Gross: {mra_data['Actual']:.1f} m³/h | MRA Predicted: {mra_data['Predicted']:.1f} m³/h | Residual: {mra_data['Residual']:.1f} m³/h")
     
@@ -158,9 +182,9 @@ def main():
     
     tabs = st.tabs(["🌊 1. SCADA Flow Data", "🔥 2. Thermo & HTC", "🧪 3. Water Analysis", "🧠 4. MRA Normalization", "📂 5. Enterprise Reporting"])
 
-    # === GLOBAL DATA COLLECTION DICTIONARIES ===
+    # Global Data Dictionaries
     ops_data = {}
-    water_data = {}
+    water_data = {'Feed': {}, 'Product': {}}
     mra_data = {}
 
     # ==========================================
@@ -236,7 +260,7 @@ def main():
         
         edited_input = st.data_editor(df_input, use_container_width=True, hide_index=True)
         edited_input['ΔT (°C)'] = edited_input['Vapor Temp (°C)'] - edited_input['Brine Temp (°C)']
-        effect_df = edited_input # Save for report
+        effect_df = edited_input
         
         warning_triggered = False
         for index, row in edited_input.iterrows():
@@ -252,26 +276,32 @@ def main():
         st.altair_chart(bar_chart + limit_line, use_container_width=True)
 
     # ==========================================
-    # TAB 3: WATER ANALYSIS COMPLIANCE
+    # TAB 3: WATER ANALYSIS (ALL PARAMETERS RESTORED)
     # ==========================================
     with tabs[2]:
         st.subheader("Laboratory Analysis vs RFQ Limits")
         w_col1, w_col2 = st.columns(2)
+        
         with w_col1:
             st.markdown("### 🌊 Feed Sea Water")
-            water_data['f_ph'] = st.number_input("pH (7.5-9.2)", value=8.14)
-            water_data['f_turb'] = st.number_input("Turbidity (NTU) < 5", value=3.2)
-            water_data['f_tds'] = st.number_input("TDS (ppm) < 42000", value=41000.0)
-            water_data['f_ca'] = st.number_input("Calcium Hardness (950-1100)", value=1040.0)
+            for param, data in WATER_SPECS["Feed"].items():
+                col_in, col_chk = st.columns([2, 2])
+                val = col_in.number_input(f"{param} ({data['limits'][0]}-{data['limits'][1]})", value=data['default'], key=f"f_{param}")
+                status = "✅ Pass" if data['limits'][0] <= val <= data['limits'][1] else "🚨 Fail"
+                col_chk.markdown(f"<div style='margin-top:30px'>{status}</div>", unsafe_allow_html=True)
+                water_data['Feed'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val}
             
         with w_col2:
             st.markdown("### 🚰 Desal Product")
-            water_data['p_ph'] = st.number_input("Product pH (5.5-7.0)", value=6.5)
-            water_data['p_cond'] = st.number_input("Conductivity (< 15 μs)", value=4.6)
-            water_data['p_cl'] = st.number_input("Chlorides (< 5 ppm)", value=0.0)
+            for param, data in WATER_SPECS["Product"].items():
+                col_in, col_chk = st.columns([2, 2])
+                val = col_in.number_input(f"{param} ({data['limits'][0]}-{data['limits'][1]})", value=data['default'], key=f"p_{param}")
+                status = "✅ Pass" if data['limits'][0] <= val <= data['limits'][1] else "🚨 Fail"
+                col_chk.markdown(f"<div style='margin-top:30px'>{status}</div>", unsafe_allow_html=True)
+                water_data['Product'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val}
 
     # ==========================================
-    # TAB 4: MRA & RESIDUAL ANALYSIS 
+    # TAB 4: MRA NORMALIZATION (TABLE RESTORED)
     # ==========================================
     with tabs[3]:
         st.subheader("Performance Normalization (2026 Baseline)")
@@ -309,6 +339,13 @@ def main():
             
             mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
+            # RESTORED: Visually displaying the Variance Matrix in the UI
+            st.markdown("### 📊 Parameter Variance Matrix")
+            st.dataframe(mra_data['Variance_DF'].style.format({
+                "Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}",
+                "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"
+            }), use_container_width=True, hide_index=True)
+
     # ==========================================
     # TAB 5: ENTERPRISE REPORTING SUITE
     # ==========================================
@@ -316,15 +353,12 @@ def main():
         st.subheader("Performance Intelligence & Reporting")
         rep_tabs = st.tabs(["📅 Today's Report", "📆 Monthly Summary", "📊 Quarterly & Yearly"])
         
-        # --- 1. TODAY'S REPORT ---
         with rep_tabs[0]:
             st.markdown("### Generate Reliance Daily Report")
             st.markdown("This will compile all data from Tabs 1-4 into a comprehensive multi-section Document, formatted specifically to match Reliance's Daily Progress expectations.")
             
-            # Preview of what goes in the report
             with st.expander("Preview Data Included in Report", expanded=False):
                 st.write("**Operational KPI's:**", ops_data)
-                st.write("**Water Quality:**", water_data)
             
             c_save, c_report = st.columns(2)
             with c_save:
@@ -343,11 +377,8 @@ def main():
                     word_file = generate_comprehensive_report(log_date, ops_data, effect_df, water_data, mra_data)
                     st.download_button("📥 Click Here to Download Document", data=word_file, file_name=f"MED4_Daily_Report_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
-        # --- 2. MONTHLY DATA ---
         with rep_tabs[1]:
             st.markdown("### Monthly OPR & Quality Summary")
-            st.caption("Averages below are calculated dynamically from your saved database for the current month. Once the backend Google Sheet is connected, this tab will generate the complete 'Monthly Performance Report'.")
-            
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
@@ -368,11 +399,8 @@ def main():
             st.markdown("#### Master Log Database")
             st.session_state.daily_logs = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
 
-        # --- 3. QUARTERLY & YEARLY ---
         with rep_tabs[2]:
             st.markdown("### Long-Term Asset Health")
-            st.markdown("In the finalized cloud version, this tab will aggregate 90-day and 365-day periods to calculate **Cumulative Recovery Loss** and long-term MRA Fouling trend lines required for the 'Two-Year Performance Review'.")
-            
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
