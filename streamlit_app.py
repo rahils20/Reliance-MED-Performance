@@ -5,20 +5,19 @@ import numpy as np
 import datetime
 import io
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import RGBColor
 
 st.set_page_config(page_title="Chembond | MED-4 Management", layout="wide")
 
 # --- INITIALIZE SESSION STATE ---
 if 'daily_logs' not in st.session_state:
     st.session_state.daily_logs = pd.DataFrame(columns=[
-        "Date", "Steam (TPH)", "Desal (m3/h)", "Gross Prod (m3/h)", "SW Feed (m3/h)", "GOR"
+        "Date", "Steam (TPH)", "Desal (m3/h)", "Gross Prod (m3/h)", "SW Feed (m3/h)", "GOR", "Overall HTC"
     ])
 
 # --- CONSTANTS & MRA COEFFICIENTS ---
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 
-# True Linear Regression Coefficients from MED-4 Tool
 MRA_COEF = {
     "Intercept": -161.5637, "Press_1st": 0.6135, "Temp_1st": 3.6391, 
     "SW_Upper": 0.8111, "Brine_Temp_1st": -7.6638, "Brine_Flow": -0.2328, 
@@ -88,69 +87,78 @@ def main():
     
     st.sidebar.header("📅 Daily Setup")
     log_date = st.sidebar.date_input("Date", datetime.date.today())
+    area_m2 = st.sidebar.number_input("Overall Surface Area (m²)", value=1757.49, help="Used for LMTD HTC Calculation")
     
-    tabs = st.tabs(["🌊 1. SCADA Inputs & KPIs", "🔥 2. Thermo Alarms", "🧪 3. Water Analysis", "🧠 4. MRA Root Cause", "📂 5. Report Export"])
+    tabs = st.tabs(["🌊 1. SCADA Inputs & KPIs", "🔥 2. Overall LMTD & HTC", "🧪 3. Water Analysis", "🧠 4. MRA Root Cause", "📂 5. Report Export"])
 
     # ==========================================
     # TAB 1: MANUAL SCADA INPUTS & STEC
     # ==========================================
     with tabs[0]:
         st.subheader("Daily Mass Balance (Raw SCADA Inputs)")
-        st.markdown("Enter the exact meter readings below. No hidden calculations or auto-subtractions are performed on these volumes.")
+        st.markdown("Enter the exact meter readings below.")
         
         c1, c2, c3 = st.columns(3)
-        steam = c1.number_input("LP Steam (TPH)", value=75.0)
-        desal = c2.number_input("Desal Production (m³/h)", value=750.0)
-        gross_prod = c3.number_input("Gross Production (m³/h)", value=870.0)
+        steam = c1.number_input("LP Steam (TPH)", value=78.0)
+        desal = c2.number_input("Desal Production (m³/h)", value=796.0)
+        gross_prod = c3.number_input("Gross Production (m³/h)", value=845.0)
         
         c4, c5, c6 = st.columns(3)
-        sw_upper = c4.number_input("Sea Water Upper (Flow to 1st Effect) (m³/h)", value=585.0)
-        sw_total = c5.number_input("Total Sea Water Feed (m³/h)", value=2080.0)
-        brine_return = c6.number_input("Brine Water Return (m³/h)", value=1360.0)
+        sw_upper = c4.number_input("Sea Water Upper (Flow to 1st Effect) (m³/h)", value=899.0)
+        sw_total = c5.number_input("Total Sea Water Feed (m³/h)", value=2172.0)
+        brine_return = c6.number_input("Brine Water Return (m³/h)", value=1199.0)
 
         st.divider()
         st.subheader("Performance KPIs")
         
-        gor = desal / steam if steam > 0 else 0
+        # CORRECTED: GOR is calculated using GROSS PRODUCTION
+        gor = gross_prod / steam if steam > 0 else 0
         heat_load_kw = ((steam * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
+        # STEC is generally calculated based on Desal (net export)
         stec = heat_load_kw / desal if desal > 0 else 0
         
         k1, k2 = st.columns(2)
         with k1:
             st.metric("Gain Output Ratio (GOR)", f"{gor:.2f} : 1")
-            st.caption("Target: 10.5 : 1")
+            st.caption("Calculated using Gross Production / Steam")
         with k2:
             st.metric("Specific Thermal Energy (STEC)", f"{stec:.1f} kWh/ton")
             st.caption(f"Based on Heat Load of {heat_load_kw:,.0f} kW")
 
     # ==========================================
-    # TAB 2: THERMODYNAMIC ALARMS
+    # TAB 2: OVERALL HTC & LMTD
     # ==========================================
     with tabs[1]:
-        st.subheader("11-Effect Temperature & Scaling Monitor")
-        st.info("Paste your 11 daily temperatures into the table. The system will automatically calculate the ΔT and flag any effect exceeding the 2.0°C design limit.")
+        st.subheader("Overall Plant HTC & Fouling Factor (LMTD Method)")
+        st.markdown("This mirrors your `HTC Calculation.csv` logic perfectly.")
         
-        effects = [f"Effect {i}" for i in range(1, 12)]
-        df_input = pd.DataFrame({
-            "Effect ID": effects,
-            "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
-            "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
-        })
+        h1, h2, h3, h4 = st.columns(4)
+        sw_in_t = h1.number_input("Sea Water Inlet Temp (°C)", value=50.0)
+        brine_out_t = h2.number_input("Brine Outlet Temp (°C)", value=67.0)
+        steam_in_t = h3.number_input("LP Steam Inlet Temp (°C)", value=179.0)
+        vapor_out_t = h4.number_input("Vapour Outlet Temp (°C)", value=70.0)
         
-        edited_input = st.data_editor(df_input, use_container_width=True, hide_index=True)
-        edited_input['ΔT (Vapor - Brine)'] = edited_input['Vapor Temp (°C)'] - edited_input['Brine Temp (°C)']
+        # Exact Math from Chembond Excel Sheet
+        dt1 = steam_in_t - brine_out_t
+        dt2 = vapor_out_t - sw_in_t
         
-        st.markdown("### ⚠️ Delta T Status")
-        safe = True
-        for index, row in edited_input.iterrows():
-            if row['ΔT (Vapor - Brine)'] > 2.0:
-                st.error(f"🚨 **{row['Effect ID']} SCALING ALERT:** ΔT is {row['ΔT (Vapor - Brine)']:.2f}°C (Exceeds 2.0°C Limit)")
-                safe = False
-        
-        if safe:
-            st.success("✅ All 11 effects are operating safely below the 2.0°C ΔT limit.")
+        if dt1 > 0 and dt2 > 0 and dt1 != dt2:
+            lmtd = (dt1 - dt2) / np.log(dt1 / dt2)
+            # Heat load Q = Flow * dT * Conversion Factor (0.930 derived from your historical logs)
+            q_actual = sw_total * (brine_out_t - sw_in_t) * 0.930
+            htc_u = (q_actual / (area_m2 * lmtd)) * 1000 if lmtd > 0 else 0
+            fouling_factor = 1 / htc_u if htc_u > 0 else 0
             
-        st.dataframe(edited_input.style.format({"ΔT (Vapor - Brine)": "{:.2f}"}), use_container_width=True, hide_index=True)
+            st.divider()
+            st.markdown("### Calculated Thermal Results")
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("LMTD (Actual)", f"{lmtd:.2f} °C")
+            r2.metric("Q (Actual)", f"{q_actual:,.2f} Kcal/hr°C")
+            r3.metric("HTC - U (Actual)", f"{htc_u:.2f} W/m²K")
+            r4.metric("Fouling Factor (1/U)", f"{fouling_factor:.6f}")
+        else:
+            st.error("Temperature inputs invalid for LMTD calculation. Ensure Steam > Brine and Vapor > SW Inlet.")
+            htc_u = 0
 
     # ==========================================
     # TAB 3: WATER ANALYSIS COMPLIANCE
@@ -223,6 +231,7 @@ def main():
                 (MRA_COEF["Steam_Temp"] * p_stm_t) + (MRA_COEF["Antiscalant"] * p_anti)
             )
             
+            # Residual is calculated using GROSS PRODUCTION
             residual = gross_prod - predicted
             
             k1, k2, k3 = st.columns(3)
@@ -273,7 +282,7 @@ def main():
             new_log = pd.DataFrame({
                 "Date": [log_date], "Steam (TPH)": [steam],
                 "Desal (m3/h)": [desal], "Gross Prod (m3/h)": [gross_prod],
-                "SW Feed (m3/h)": [sw_total], "GOR": [round(gor, 2)]
+                "SW Feed (m3/h)": [sw_total], "GOR": [round(gor, 2)], "Overall HTC": [round(htc_u, 2)]
             })
             st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
             st.success(f"Log saved for {log_date}!")
