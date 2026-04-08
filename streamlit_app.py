@@ -32,7 +32,6 @@ MRA_BASELINE = {
     "Steam_Temp": 179.0
 }
 
-# Restored Full Water Quality Specs
 WATER_SPECS = {
     "Feed": {
         "pH": {"limits": (7.5, 9.2), "default": 8.14},
@@ -58,7 +57,6 @@ WATER_SPECS = {
 def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_data):
     doc = Document()
     
-    # 1. Header & Title
     title = doc.add_heading('MED-4 Daily Operational & Performance Report', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
@@ -71,12 +69,10 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
     p.add_run(str(date))
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    # 2. Executive Summary
     doc.add_heading('1. Executive Summary', level=1)
     status_text = f"On {date}, the MED-4 unit achieved a Gross Production of {ops_data['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops_data['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops_data['STEC']:.2f} kWh/ton with a system recovery of {ops_data['Recovery']:.1f}%."
     doc.add_paragraph(status_text)
 
-    # 3. Operational Data
     doc.add_heading('2. Operational Data Summary', level=1)
     table_ops = doc.add_table(rows=1, cols=4)
     table_ops.style = 'Table Grid'
@@ -101,7 +97,6 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
         row_cells = table_ops.add_row().cells
         for i, val in enumerate(row): row_cells[i].text = val
 
-    # 4. Effect-wise Temperature
     doc.add_heading('3. Effect-wise Thermodynamic Profile', level=1)
     doc.add_paragraph(f"Overall Plant LMTD: {ops_data['LMTD']:.2f} °C | Overall HTC (U): {ops_data['HTC']:.2f} W/m²K | Fouling Factor: {ops_data['Fouling']:.6f}")
     
@@ -123,7 +118,6 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
             row_cells[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
             row_cells[3].paragraphs[0].runs[0].bold = True
 
-    # 5. Full Water Chemistry Compliance
     doc.add_heading('4. Water Quality Compliance', level=1)
     table_wq = doc.add_table(rows=1, cols=4)
     table_wq.style = 'Table Grid'
@@ -132,7 +126,6 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
         hdr_cells[i].text = h
         hdr_cells[i].paragraphs[0].runs[0].bold = True
         
-    # Dynamically inject all 14 parameters
     for param, data in water_data['Feed'].items():
         row_cells = table_wq.add_row().cells
         row_cells[0].text = str(param)
@@ -147,7 +140,6 @@ def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_dat
         row_cells[2].text = f"{data['min']} - {data['max']}"
         row_cells[3].text = str(data['val'])
 
-    # 6. MRA Variance Matrix
     doc.add_heading('5. MRA Fouling Indicator & Root Cause Variance', level=1)
     doc.add_paragraph(f"Actual Gross: {mra_data['Actual']:.1f} m³/h | MRA Predicted: {mra_data['Predicted']:.1f} m³/h | Residual: {mra_data['Residual']:.1f} m³/h")
     
@@ -182,7 +174,6 @@ def main():
     
     tabs = st.tabs(["🌊 1. SCADA Flow Data", "🔥 2. Thermo & HTC", "🧪 3. Water Analysis", "🧠 4. MRA Normalization", "📂 5. Enterprise Reporting"])
 
-    # Global Data Dictionaries
     ops_data = {}
     water_data = {'Feed': {}, 'Product': {}}
     mra_data = {}
@@ -276,12 +267,11 @@ def main():
         st.altair_chart(bar_chart + limit_line, use_container_width=True)
 
     # ==========================================
-    # TAB 3: WATER ANALYSIS (ALL PARAMETERS RESTORED)
+    # TAB 3: WATER ANALYSIS COMPLIANCE
     # ==========================================
     with tabs[2]:
         st.subheader("Laboratory Analysis vs RFQ Limits")
         w_col1, w_col2 = st.columns(2)
-        
         with w_col1:
             st.markdown("### 🌊 Feed Sea Water")
             for param, data in WATER_SPECS["Feed"].items():
@@ -301,7 +291,7 @@ def main():
                 water_data['Product'][param] = {'min': data['limits'][0], 'max': data['limits'][1], 'val': val}
 
     # ==========================================
-    # TAB 4: MRA NORMALIZATION (TABLE RESTORED)
+    # TAB 4: MRA & RESIDUAL ANALYSIS 
     # ==========================================
     with tabs[3]:
         st.subheader("Performance Normalization (2026 Baseline)")
@@ -339,7 +329,6 @@ def main():
             
             mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
-            # RESTORED: Visually displaying the Variance Matrix in the UI
             st.markdown("### 📊 Parameter Variance Matrix")
             st.dataframe(mra_data['Variance_DF'].style.format({
                 "Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}",
@@ -354,25 +343,36 @@ def main():
         rep_tabs = st.tabs(["📅 Today's Report", "📆 Monthly Summary", "📊 Quarterly & Yearly"])
         
         with rep_tabs[0]:
-            st.markdown("### Generate Reliance Daily Report")
-            st.markdown("This will compile all data from Tabs 1-4 into a comprehensive multi-section Document, formatted specifically to match Reliance's Daily Progress expectations.")
+            st.markdown("### 🔍 Data Verification & Database Commit")
+            st.markdown("Verify the critical metrics below before authorizing a write to the Master Database.")
             
-            with st.expander("Preview Data Included in Report", expanded=False):
-                st.write("**Operational KPI's:**", ops_data)
+            # High-Visibility Preview
+            col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+            col_p1.metric("Date", str(log_date))
+            col_p2.metric("Gross Prod", f"{ops_data['Gross Prod']} m³/h")
+            col_p3.metric("GOR", f"{ops_data['GOR']:.2f}")
+            col_p4.metric("MRA Residual", f"{mra_data['Residual']:.1f}")
+            
+            st.divider()
             
             c_save, c_report = st.columns(2)
             with c_save:
+                pwd_append = st.text_input("🔑 Authorization Password Required to Append", type="password", key="pwd_append")
                 if st.button("💾 Append Today's Data to Database", use_container_width=True):
-                    new_log = pd.DataFrame({
-                        "Date": [pd.to_datetime(log_date)], "Gross Prod (m3/h)": [ops_data['Gross Prod']],
-                        "Desal (m3/h)": [ops_data['Desal']], "Steam (TPH)": [ops_data['Steam']],
-                        "SW Feed (m3/h)": [ops_data['SW Total']], "GOR": [round(ops_data['GOR'], 2)], 
-                        "Overall HTC": [round(ops_data['HTC'], 2)], "Residual": [round(mra_data['Residual'], 1)]
-                    })
-                    st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
-                    st.success("Successfully written to memory!")
+                    if pwd_append == "12345678":
+                        new_log = pd.DataFrame({
+                            "Date": [pd.to_datetime(log_date)], "Gross Prod (m3/h)": [ops_data['Gross Prod']],
+                            "Desal (m3/h)": [ops_data['Desal']], "Steam (TPH)": [ops_data['Steam']],
+                            "SW Feed (m3/h)": [ops_data['SW Total']], "GOR": [round(ops_data['GOR'], 2)], 
+                            "Overall HTC": [round(ops_data['HTC'], 2)], "Residual": [round(mra_data['Residual'], 1)]
+                        })
+                        st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
+                        st.success("✅ Successfully written to memory!")
+                    else:
+                        st.error("❌ Incorrect Password. Data not saved to Master Database.")
             
             with c_report:
+                st.markdown("<br><br>", unsafe_allow_html=True) # Formatting alignment
                 if st.button("📄 Export Comprehensive Daily Report (.docx)", type="primary", use_container_width=True):
                     word_file = generate_comprehensive_report(log_date, ops_data, effect_df, water_data, mra_data)
                     st.download_button("📥 Click Here to Download Document", data=word_file, file_name=f"MED4_Daily_Report_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
@@ -398,6 +398,16 @@ def main():
             st.divider()
             st.markdown("#### Master Log Database")
             st.session_state.daily_logs = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
+            
+            st.divider()
+            st.markdown("#### 📥 Secure Database Export")
+            pwd_dl = st.text_input("🔑 Authorization Password Required to Download Master CSV", type="password", key="pwd_dl")
+            
+            if pwd_dl == "12345678":
+                csv_export = st.session_state.daily_logs.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Unlock and Download Master Log (CSV)", data=csv_export, file_name=f"MED4_Master_Database.csv", mime='text/csv')
+            elif pwd_dl != "":
+                st.error("❌ Incorrect Password.")
 
         with rep_tabs[2]:
             st.markdown("### Long-Term Asset Health")
