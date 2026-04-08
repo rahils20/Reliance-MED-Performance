@@ -6,7 +6,8 @@ import datetime
 import io
 import altair as alt
 from docx import Document
-from docx.shared import RGBColor
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="Chembond | MED-4 Management", layout="wide")
 
@@ -16,10 +17,9 @@ if 'daily_logs' not in st.session_state:
         "Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual"
     ])
 
-# --- CONSTANTS & MRA COEFFICIENTS ---
+# --- CONSTANTS & 2026 MRA COEFFICIENTS ---
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 
-# 2026 OLS Regression Coefficients
 MRA_COEF = {
     "Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, 
     "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, 
@@ -32,10 +32,13 @@ MRA_BASELINE = {
     "Steam_Temp": 179.0
 }
 
-# --- DOCUMENT GENERATOR ---
-def generate_word_report(date, actual_gross, predicted_gross, residual, gor, stec, variance_df):
+# --- RELIANCE-GRADE DOCUMENT GENERATOR ---
+def generate_comprehensive_report(date, ops_data, effect_df, water_data, mra_data):
     doc = Document()
-    doc.add_heading('MED-4 Daily Operational Performance Report', 0)
+    
+    # 1. Header & Title
+    title = doc.add_heading('MED-4 Daily Operational & Performance Report', 0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     
     p = doc.add_paragraph()
     p.add_run('Prepared by: ').bold = True
@@ -44,37 +47,101 @@ def generate_word_report(date, actual_gross, predicted_gross, residual, gor, ste
     p.add_run('Reliance Industries Limited (RIL)\n')
     p.add_run('Date: ').bold = True
     p.add_run(str(date))
-    
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    # 2. Executive Summary
     doc.add_heading('1. Executive Summary', level=1)
-    doc.add_paragraph(f"On {date}, the MED-4 unit achieved a Gain Output Ratio (GOR) of {gor:.2f}:1 and a Specific Thermal Energy Consumption (STEC) of {stec:.2f} kWh/ton.")
+    status_text = f"On {date}, the MED-4 unit achieved a Gross Production of {ops_data['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops_data['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops_data['STEC']:.2f} kWh/ton with a system recovery of {ops_data['Recovery']:.1f}%."
+    doc.add_paragraph(status_text)
+
+    # 3. Operational Data (Design vs Actual Table)
+    doc.add_heading('2. Operational Data Summary', level=1)
+    table_ops = doc.add_table(rows=1, cols=4)
+    table_ops.style = 'Table Grid'
+    hdr_cells = table_ops.rows[0].cells
+    headers = ['Parameter', 'UOM', 'Design', 'Actual']
+    for i, h in enumerate(headers): 
+        hdr_cells[i].text = h
+        hdr_cells[i].paragraphs[0].runs[0].bold = True
+        
+    ops_rows = [
+        ['Total Sea Water Feed', 'm³/h', '2400', str(ops_data['SW Total'])],
+        ['Sea Water Upper (1st Effect)', 'm³/h', '580', str(ops_data['SW Upper'])],
+        ['Brine Water Return', 'm³/h', '1400', str(ops_data['Brine Return'])],
+        ['Desal Production (Net)', 'm³/h', '1000', str(ops_data['Desal'])],
+        ['Gross Production', 'm³/h', '-', str(ops_data['Gross Prod'])],
+        ['LP Steam Consumption', 'TPH', '92 - 94.5', str(ops_data['Steam'])],
+        ['System Recovery', '%', '40.0', f"{ops_data['Recovery']:.2f}"],
+        ['Gain Output Ratio (GOR)', 'Ratio', '10.5 : 1', f"{ops_data['GOR']:.2f} : 1"],
+        ['Steam Economy', 'Ratio', '-', f"{ops_data['Economy']:.4f}"]
+    ]
+    for row in ops_rows:
+        row_cells = table_ops.add_row().cells
+        for i, val in enumerate(row): row_cells[i].text = val
+
+    # 4. Effect-wise Temperature & Flow Data
+    doc.add_heading('3. Effect-wise Thermodynamic Profile', level=1)
+    doc.add_paragraph(f"Overall Plant LMTD: {ops_data['LMTD']:.2f} °C | Overall HTC (U): {ops_data['HTC']:.2f} W/m²K | Fouling Factor: {ops_data['Fouling']:.6f}")
     
-    doc.add_heading('2. Multiple Regression Analysis (MRA) & Fouling Indicator', level=1)
-    mra_p = doc.add_paragraph()
-    mra_p.add_run(f"Actual Gross Production: {actual_gross:.1f} m³/h\n")
-    mra_p.add_run(f"MRA Predicted Gross Production: {predicted_gross:.1f} m³/h\n")
-    res_run = mra_p.add_run(f"Calculated Residual: {residual:.1f} m³/h\n")
-    res_run.bold = True
+    table_eff = doc.add_table(rows=1, cols=4)
+    table_eff.style = 'Table Grid'
+    hdr_cells = table_eff.rows[0].cells
+    for i, h in enumerate(['Effect ID', 'Vapor Temp (°C)', 'Brine Temp (°C)', 'ΔT (Vapor - Brine)']):
+        hdr_cells[i].text = h
+        hdr_cells[i].paragraphs[0].runs[0].bold = True
+        
+    for idx, row in effect_df.iterrows():
+        row_cells = table_eff.add_row().cells
+        row_cells[0].text = str(row['Effect ID'])
+        row_cells[1].text = f"{row['Vapor Temp (°C)']:.2f}"
+        row_cells[2].text = f"{row['Brine Temp (°C)']:.2f}"
+        dt_val = row['ΔT (°C)']
+        row_cells[3].text = f"{dt_val:.2f}"
+        if dt_val > 2.0:
+            row_cells[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
+            row_cells[3].paragraphs[0].runs[0].bold = True
+
+    # 5. Feed & Brine Water Analysis
+    doc.add_heading('4. Water Quality Compliance', level=1)
+    table_wq = doc.add_table(rows=1, cols=4)
+    table_wq.style = 'Table Grid'
+    hdr_cells = table_wq.rows[0].cells
+    for i, h in enumerate(['Parameter', 'Stream', 'Limit/Spec', 'Actual']):
+        hdr_cells[i].text = h
+        hdr_cells[i].paragraphs[0].runs[0].bold = True
+        
+    wq_rows = [
+        ['pH', 'Sea Water Feed', '7.5 - 9.2', str(water_data['f_ph'])],
+        ['Turbidity (NTU)', 'Sea Water Feed', '< 5.0', str(water_data['f_turb'])],
+        ['TDS (ppm)', 'Sea Water Feed', '< 42000', str(water_data['f_tds'])],
+        ['Calcium Hardness (ppm)', 'Sea Water Feed', '950 - 1100', str(water_data['f_ca'])],
+        ['pH', 'Desal Product', '5.5 - 7.0', str(water_data['p_ph'])],
+        ['Conductivity (μs/cm)', 'Desal Product', '< 15', str(water_data['p_cond'])],
+        ['Chlorides (ppm)', 'Desal Product', '< 5', str(water_data['p_cl'])]
+    ]
+    for row in wq_rows:
+        row_cells = table_wq.add_row().cells
+        for i, val in enumerate(row): row_cells[i].text = val
+
+    # 6. MRA & Residual Defense
+    doc.add_heading('5. MRA Fouling Indicator & Root Cause Variance', level=1)
+    doc.add_paragraph(f"Actual Gross: {mra_data['Actual']:.1f} m³/h | MRA Predicted: {mra_data['Predicted']:.1f} m³/h | Residual: {mra_data['Residual']:.1f} m³/h")
     
-    if residual < -15.0: doc.add_paragraph("WARNING: A significant negative residual indicates potential thermal resistance (fouling) forming on the tube bundles.", style='BodyText')
-    elif residual > 15.0: doc.add_paragraph("NOTE: Positive residual indicates the plant is over-performing the baseline model.", style='BodyText')
-    else: doc.add_paragraph("STATUS: The plant is operating perfectly within the normalized thermodynamic baseline.", style='BodyText')
-    
-    doc.add_heading('3. Parameter Variance Impact Matrix', level=2)
-    table = doc.add_table(rows=1, cols=6)
-    table.style = 'Table Grid'
-    hdr_cells = table.rows[0].cells
-    headers = ['Parameter', 'Baseline', 'Live Input', 'Deviation', 'Weight', 'Impact']
-    for i, h in enumerate(headers): hdr_cells[i].text = h
-    
-    for idx, row in variance_df.iterrows():
-        row_cells = table.add_row().cells
+    table_mra = doc.add_table(rows=1, cols=5)
+    table_mra.style = 'Table Grid'
+    hdr_cells = table_mra.rows[0].cells
+    for i, h in enumerate(['Parameter', 'Clean Baseline', 'Live Input', 'Deviation', 'Production Impact']):
+        hdr_cells[i].text = h
+        hdr_cells[i].paragraphs[0].runs[0].bold = True
+        
+    for idx, row in mra_data['Variance_DF'].iterrows():
+        row_cells = table_mra.add_row().cells
         row_cells[0].text = str(row['Parameter'])
         row_cells[1].text = f"{row['Baseline']:.1f}"
         row_cells[2].text = f"{row['Live Input']:.1f}"
-        row_cells[3].text = f"{row['Deviation']:.1f}"
-        row_cells[4].text = f"{row['Regression Weight']:.3f}"
-        row_cells[5].text = f"{row['Impact (TPH)']:.1f}"
-        
+        row_cells[3].text = f"{row['Deviation']:+.1f}"
+        row_cells[4].text = f"{row['Impact (TPH)']:+.1f}"
+
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
@@ -89,40 +156,45 @@ def main():
     
     st.title("🏭 Reliance MED-4 Management Suite")
     
-    tabs = st.tabs(["🌊 1. SCADA Inputs & KPIs", "🔥 2. Thermo & HTC", "🧪 3. Water Analysis", "🧠 4. MRA Root Cause", "📂 5. Enterprise Reporting"])
+    tabs = st.tabs(["🌊 1. SCADA Flow Data", "🔥 2. Thermo & HTC", "🧪 3. Water Analysis", "🧠 4. MRA Normalization", "📂 5. Enterprise Reporting"])
+
+    # === GLOBAL DATA COLLECTION DICTIONARIES ===
+    ops_data = {}
+    water_data = {}
+    mra_data = {}
 
     # ==========================================
-    # GLOBAL VARIABLES (Calculated in Tab 1, used everywhere)
+    # TAB 1: MANUAL SCADA INPUTS & STEC
     # ==========================================
     with tabs[0]:
         st.subheader("Daily Mass Balance (Raw SCADA Inputs)")
         
         c1, c2, c3 = st.columns(3)
-        steam = c1.number_input("LP Steam (TPH)", value=73.0)
-        desal = c2.number_input("Desal Production (m³/h)", value=740.0)
-        gross_prod = c3.number_input("Gross Production (m³/h)", value=790.0)
+        ops_data['Steam'] = c1.number_input("LP Steam (TPH)", value=73.0)
+        ops_data['Desal'] = c2.number_input("Desal Production (m³/h)", value=740.0)
+        ops_data['Gross Prod'] = c3.number_input("Gross Production (m³/h)", value=790.0)
         
         c4, c5, c6 = st.columns(3)
-        sw_upper = c4.number_input("Sea Water Upper (Flow to 1st Effect)", value=775.0)
-        sw_total = c5.number_input("Total Sea Water Feed (m³/h)", value=2100.0)
-        brine_return = c6.number_input("Brine Water Return (m³/h)", value=1250.0)
+        ops_data['SW Upper'] = c4.number_input("Sea Water Upper (Flow to 1st Effect)", value=775.0)
+        ops_data['SW Total'] = c5.number_input("Total Sea Water Feed (m³/h)", value=2100.0)
+        ops_data['Brine Return'] = c6.number_input("Brine Water Return (m³/h)", value=1250.0)
 
         st.divider()
         st.subheader("📊 Executive Plant KPIs")
         
-        gor = gross_prod / steam if steam > 0 else 0
-        heat_load_kw = ((steam * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
-        stec = heat_load_kw / desal if desal > 0 else 0
-        recovery = (gross_prod / sw_total) * 100 if sw_total > 0 else 0
-        conversion = desal / sw_total if sw_total > 0 else 0
-        steam_economy = steam / desal if desal > 0 else 0
+        ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
+        heat_load_kw = ((ops_data['Steam'] * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
+        ops_data['STEC'] = heat_load_kw / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
+        ops_data['Recovery'] = (ops_data['Gross Prod'] / ops_data['SW Total']) * 100 if ops_data['SW Total'] > 0 else 0
+        ops_data['Conversion'] = ops_data['Desal'] / ops_data['SW Total'] if ops_data['SW Total'] > 0 else 0
+        ops_data['Economy'] = ops_data['Steam'] / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
         
         kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-        kpi1.metric("GOR", f"{gor:.2f}:1")
-        kpi2.metric("Steam Economy", f"{steam_economy:.4f}")
-        kpi3.metric("System Recovery", f"{recovery:.1f} %")
-        kpi4.metric("Conversion Ratio", f"{conversion:.3f}")
-        kpi5.metric("STEC", f"{stec:.1f} kWh/t")
+        kpi1.metric("GOR", f"{ops_data['GOR']:.2f}:1")
+        kpi2.metric("Steam Economy", f"{ops_data['Economy']:.4f}")
+        kpi3.metric("System Recovery", f"{ops_data['Recovery']:.1f} %")
+        kpi4.metric("Conversion Ratio", f"{ops_data['Conversion']:.3f}")
+        kpi5.metric("STEC", f"{ops_data['STEC']:.1f} kWh/t")
 
     # ==========================================
     # TAB 2: OVERALL HTC & VISUAL GRAPH
@@ -137,22 +209,24 @@ def main():
         
         dt1 = steam_in_t - brine_out_t
         dt2 = vapor_out_t - sw_in_t
-        htc_u = 0
+        ops_data['HTC'] = 0
+        ops_data['LMTD'] = 0
+        ops_data['Fouling'] = 0
+        
         if dt1 > 0 and dt2 > 0 and dt1 != dt2:
-            lmtd = (dt1 - dt2) / np.log(dt1 / dt2)
-            q_actual = sw_total * (brine_out_t - sw_in_t) * 0.930
-            htc_u = (q_actual / (area_m2 * lmtd)) * 1000 if lmtd > 0 else 0
-            fouling_factor = 1 / htc_u if htc_u > 0 else 0
+            ops_data['LMTD'] = (dt1 - dt2) / np.log(dt1 / dt2)
+            q_actual = ops_data['SW Total'] * (brine_out_t - sw_in_t) * 0.930
+            ops_data['HTC'] = (q_actual / (area_m2 * ops_data['LMTD'])) * 1000 if ops_data['LMTD'] > 0 else 0
+            ops_data['Fouling'] = 1 / ops_data['HTC'] if ops_data['HTC'] > 0 else 0
             
             r1, r2, r3, r4 = st.columns(4)
-            r1.metric("LMTD", f"{lmtd:.2f} °C")
+            r1.metric("LMTD", f"{ops_data['LMTD']:.2f} °C")
             r2.metric("Plant Q (Actual)", f"{q_actual:,.0f} Kcal/hr°C")
-            r3.metric("Overall HTC (U)", f"{htc_u:.2f} W/m²K")
-            r4.metric("Fouling Factor (1/U)", f"{fouling_factor:.6f}")
+            r3.metric("Overall HTC (U)", f"{ops_data['HTC']:.2f} W/m²K")
+            r4.metric("Fouling Factor (1/U)", f"{ops_data['Fouling']:.6f}")
 
         st.divider()
         st.subheader("2. 11-Effect Temperature & Scaling Profiler")
-        
         effects = [f"Effect {i}" for i in range(1, 12)]
         df_input = pd.DataFrame({
             "Effect ID": effects,
@@ -162,123 +236,121 @@ def main():
         
         edited_input = st.data_editor(df_input, use_container_width=True, hide_index=True)
         edited_input['ΔT (°C)'] = edited_input['Vapor Temp (°C)'] - edited_input['Brine Temp (°C)']
+        effect_df = edited_input # Save for report
         
-        # The Alarms
         warning_triggered = False
         for index, row in edited_input.iterrows():
             if row['ΔT (°C)'] > 2.0:
                 st.error(f"🚨 **{row['Effect ID']} ALERT:** ΔT is {row['ΔT (°C)']:.2f}°C (Exceeds 2.0°C Limit)")
                 warning_triggered = True
-        if not warning_triggered: st.success("✅ All 11 effects are safely below the 2.0°C ΔT limit.")
-            
-        # The New Visual Graph (Replaces repetitive table)
-        st.markdown("### 📈 Effect-wise ΔT Profile vs. Design Limit")
         
-        # Altair chart with a red threshold line
+        st.markdown("### 📈 Effect-wise ΔT Profile vs. Design Limit")
         edited_input['Effect ID'] = pd.Categorical(edited_input['Effect ID'], categories=effects, ordered=True)
         base_chart = alt.Chart(edited_input).encode(x=alt.X('Effect ID', sort=effects, title=None))
         bar_chart = base_chart.mark_bar(color='#1f77b4', cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(y=alt.Y('ΔT (°C)', title='Delta T (°C)'))
         limit_line = alt.Chart(pd.DataFrame({'y': [2.0]})).mark_rule(color='red', strokeDash=[5, 5], strokeWidth=2).encode(y='y')
-        
         st.altair_chart(bar_chart + limit_line, use_container_width=True)
 
     # ==========================================
     # TAB 3: WATER ANALYSIS COMPLIANCE
     # ==========================================
     with tabs[2]:
-        st.subheader("Laboratory Analysis")
-        # (Water analysis content remains standard)
-        st.info("Water quality inputs hidden for brevity in this step.")
+        st.subheader("Laboratory Analysis vs RFQ Limits")
+        w_col1, w_col2 = st.columns(2)
+        with w_col1:
+            st.markdown("### 🌊 Feed Sea Water")
+            water_data['f_ph'] = st.number_input("pH (7.5-9.2)", value=8.14)
+            water_data['f_turb'] = st.number_input("Turbidity (NTU) < 5", value=3.2)
+            water_data['f_tds'] = st.number_input("TDS (ppm) < 42000", value=41000.0)
+            water_data['f_ca'] = st.number_input("Calcium Hardness (950-1100)", value=1040.0)
+            
+        with w_col2:
+            st.markdown("### 🚰 Desal Product")
+            water_data['p_ph'] = st.number_input("Product pH (5.5-7.0)", value=6.5)
+            water_data['p_cond'] = st.number_input("Conductivity (< 15 μs)", value=4.6)
+            water_data['p_cl'] = st.number_input("Chlorides (< 5 ppm)", value=0.0)
 
     # ==========================================
     # TAB 4: MRA & RESIDUAL ANALYSIS 
     # ==========================================
     with tabs[3]:
-        st.subheader("Performance Normalization")
-        
+        st.subheader("Performance Normalization (2026 Baseline)")
         controls_col, calc_col = st.columns([1, 2])
         with controls_col:
             p_press = st.slider("1st Effect Press (mbar)", 200.0, 260.0, 240.0)
             p_t1 = st.slider("1st Effect Temp (°C)", 60.0, 75.0, 69.5)
-            p_sw_up = st.slider("Sea Water Upper (m³/h)", 400.0, 1000.0, float(sw_upper))
+            p_sw_up = st.slider("Sea Water Upper (m³/h)", 400.0, 1000.0, float(ops_data['SW Upper']))
             p_bt1 = st.slider("1st Brine Temp (°C)", 60.0, 75.0, 66.5)
-            p_bflow = st.slider("Brine Flow (m³/h)", 1000.0, 1600.0, float(brine_return))
-            p_stm = st.slider("LP Steam (TPH)", 50.0, 100.0, float(steam))
+            p_bflow = st.slider("Brine Flow (m³/h)", 1000.0, 1600.0, float(ops_data['Brine Return']))
+            p_stm = st.slider("LP Steam (TPH)", 50.0, 100.0, float(ops_data['Steam']))
             p_stm_t = st.slider("Steam Temp (°C)", 160.0, 190.0, 179.0)
 
         with calc_col:
-            predicted = (
+            mra_data['Predicted'] = (
                 MRA_COEF["Intercept"] + (MRA_COEF["Press_1st"] * p_press) + (MRA_COEF["Temp_1st"] * p_t1) +
                 (MRA_COEF["SW_Upper"] * p_sw_up) + (MRA_COEF["Brine_Temp_1st"] * p_bt1) +
                 (MRA_COEF["Brine_Flow"] * p_bflow) + (MRA_COEF["LP_Steam"] * p_stm) + (MRA_COEF["Steam_Temp"] * p_stm_t)
             )
-            residual = gross_prod - predicted
+            mra_data['Actual'] = ops_data['Gross Prod']
+            mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
             
             k1, k2, k3 = st.columns(3)
-            k1.metric("Actual Gross SCADA", f"{gross_prod:,.1f} m³/h")
-            k2.metric("MRA Predicted", f"{predicted:,.1f} m³/h")
-            
-            if residual < -15.0: k3.error(f"Residual: {residual:,.1f} (FOULING)")
-            elif residual > 15.0: k3.success(f"Residual: {residual:,.1f} (CLEAN)")
-            else: k3.info(f"Residual: {residual:,.1f} (NORMAL)")
+            k1.metric("Actual Gross SCADA", f"{mra_data['Actual']:.1f} m³/h")
+            k2.metric("MRA Predicted", f"{mra_data['Predicted']:.1f} m³/h")
+            if mra_data['Residual'] < -15.0: k3.error(f"Residual: {mra_data['Residual']:.1f} (FOULING)")
+            elif mra_data['Residual'] > 15.0: k3.success(f"Residual: {mra_data['Residual']:.1f} (CLEAN)")
+            else: k3.info(f"Residual: {mra_data['Residual']:.1f} (NORMAL)")
                 
             var_data = []
             for name, key, live_val in [("1st Effect Press", "Press_1st", p_press), ("1st Effect Temp", "Temp_1st", p_t1), ("Sea Water Upper", "SW_Upper", p_sw_up), ("1st Brine Temp", "Brine_Temp_1st", p_bt1), ("Brine Flow", "Brine_Flow", p_bflow), ("LP Steam", "LP_Steam", p_stm), ("Steam Temp", "Steam_Temp", p_stm_t)]:
                 base = MRA_BASELINE[key]
                 dev = live_val - base
                 var_data.append([name, base, live_val, dev, MRA_COEF[key], dev * MRA_COEF[key]])
-            variance_df = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
+            
+            mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
     # ==========================================
     # TAB 5: ENTERPRISE REPORTING SUITE
     # ==========================================
     with tabs[4]:
         st.subheader("Performance Intelligence & Reporting")
+        rep_tabs = st.tabs(["📅 Today's Report", "📆 Monthly Summary", "📊 Quarterly & Yearly"])
         
-        # Sub-tabs for different timeframes
-        rep_tabs = st.tabs(["📅 Today's Log", "📆 Monthly Dashboard", "📊 Quarterly Analysis", "📈 Yearly Summary"])
-        
-        # --- 1. TODAY'S DATA ---
+        # --- 1. TODAY'S REPORT ---
         with rep_tabs[0]:
-            st.markdown("### Today's Operational Snapshot")
+            st.markdown("### Generate Reliance Daily Report")
+            st.markdown("This will compile all data from Tabs 1-4 into a comprehensive multi-section Document, formatted specifically to match Reliance's Daily Progress expectations.")
             
-            # Display current un-saved data
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Date", str(log_date))
-            col2.metric("Gross Prod", f"{gross_prod} m³/h")
-            col3.metric("GOR", f"{gor:.2f}")
-            col4.metric("MRA Residual", f"{residual:.1f}")
-            
-            st.divider()
+            # Preview of what goes in the report
+            with st.expander("Preview Data Included in Report", expanded=False):
+                st.write("**Operational KPI's:**", ops_data)
+                st.write("**Water Quality:**", water_data)
             
             c_save, c_report = st.columns(2)
             with c_save:
-                if st.button("💾 Append Today's Data to Master Database", use_container_width=True):
+                if st.button("💾 Append Today's Data to Database", use_container_width=True):
                     new_log = pd.DataFrame({
-                        "Date": [pd.to_datetime(log_date)], "Gross Prod (m3/h)": [gross_prod],
-                        "Desal (m3/h)": [desal], "Steam (TPH)": [steam],
-                        "SW Feed (m3/h)": [sw_total], "GOR": [round(gor, 2)], 
-                        "Overall HTC": [round(htc_u, 2)], "Residual": [round(residual, 1)]
+                        "Date": [pd.to_datetime(log_date)], "Gross Prod (m3/h)": [ops_data['Gross Prod']],
+                        "Desal (m3/h)": [ops_data['Desal']], "Steam (TPH)": [ops_data['Steam']],
+                        "SW Feed (m3/h)": [ops_data['SW Total']], "GOR": [round(ops_data['GOR'], 2)], 
+                        "Overall HTC": [round(ops_data['HTC'], 2)], "Residual": [round(mra_data['Residual'], 1)]
                     })
                     st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                     st.success("Successfully written to memory!")
             
             with c_report:
-                if st.button("📄 Generate RIL Daily Executive Report (.docx)", use_container_width=True):
-                    word_file = generate_word_report(log_date, gross_prod, predicted, residual, gor, stec, variance_df)
-                    st.download_button("📥 Download Report", data=word_file, file_name=f"MED4_Daily_Report_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                if st.button("📄 Export Comprehensive Daily Report (.docx)", type="primary", use_container_width=True):
+                    word_file = generate_comprehensive_report(log_date, ops_data, effect_df, water_data, mra_data)
+                    st.download_button("📥 Click Here to Download Document", data=word_file, file_name=f"MED4_Daily_Report_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
         # --- 2. MONTHLY DATA ---
         with rep_tabs[1]:
-            st.markdown("### Monthly Aggregation & Review")
-            st.caption("Averages below are calculated dynamically from your saved database for the current month.")
+            st.markdown("### Monthly OPR & Quality Summary")
+            st.caption("Averages below are calculated dynamically from your saved database for the current month. Once the backend Google Sheet is connected, this tab will generate the complete 'Monthly Performance Report'.")
             
             if not st.session_state.daily_logs.empty:
-                # Ensure Date is datetime for filtering
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
-                
-                # Filter for current month selected in the sidebar
                 current_month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)]
                 
                 if not current_month_data.empty:
@@ -294,41 +366,21 @@ def main():
                 
             st.divider()
             st.markdown("#### Master Log Database")
-            st.markdown("*(Click the checkbox on the left of any row and press 'Delete' to remove mistakes)*")
             st.session_state.daily_logs = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
-            
-            if not st.session_state.daily_logs.empty:
-                csv_export = st.session_state.daily_logs.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download Master Log (CSV)", data=csv_export, file_name=f"MED4_Master_Database.csv", mime='text/csv')
 
-        # --- 3. QUARTERLY DATA ---
+        # --- 3. QUARTERLY & YEARLY ---
         with rep_tabs[2]:
-            st.markdown("### Quarterly Long-Term Trends")
-            st.markdown("In the finalized cloud version, this tab will aggregate 90-day periods to show **Cumulative Recovery Loss** and long-term MRA Fouling trend lines, exactly as required for the Management Review.")
+            st.markdown("### Long-Term Asset Health")
+            st.markdown("In the finalized cloud version, this tab will aggregate 90-day and 365-day periods to calculate **Cumulative Recovery Loss** and long-term MRA Fouling trend lines required for the 'Two-Year Performance Review'.")
             
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
-                # Group by Quarter
                 df_logs['Quarter'] = df_logs['Date'].dt.to_period('Q')
                 quarterly_avg = df_logs.groupby('Quarter')[['GOR', 'Residual', 'Overall HTC']].mean().reset_index()
                 st.dataframe(quarterly_avg.style.format({"GOR": "{:.2f}", "Residual": "{:.1f}", "Overall HTC": "{:.0f}"}), use_container_width=True)
             else:
                 st.info("Save more data to view quarterly trends.")
-
-        # --- 4. YEARLY DATA ---
-        with rep_tabs[3]:
-            st.markdown("### Yearly Performance Assessment")
-            st.markdown("This tab will serve as the engine for your **Two-Year Performance Review** documents, comparing historical Clean-Plant performance to current-year averages.")
-            
-            if not st.session_state.daily_logs.empty:
-                df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'])
-                df_logs['Year'] = df_logs['Date'].dt.year
-                yearly_avg = df_logs.groupby('Year')[['Gross Prod (m3/h)', 'GOR', 'Residual']].mean().reset_index()
-                st.dataframe(yearly_avg.style.format({"Gross Prod (m3/h)": "{:.0f}", "GOR": "{:.2f}", "Residual": "{:.1f}"}), use_container_width=True)
-            else:
-                st.info("Save more data to view yearly trends.")
 
 if __name__ == "__main__":
     main()
