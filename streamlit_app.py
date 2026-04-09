@@ -81,7 +81,6 @@ def get_v(var_name): return st.session_state.vars[var_name]
 # 2. CONSTANTS & BASELINES
 # ==========================================
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
-# Note: Pressure unit is now mmHg
 MRA_COEF = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
 MRA_BASELINE = {"Press_1st": 248.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
 
@@ -126,7 +125,15 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, mra, skip_eff, s
         for i, h in enumerate(['Effect ID', 'Vapor (°C)', 'Brine (°C)', 'ΔT (°C)']): t_eff.rows[0].cells[i].text = h
         for idx, row in effect_df.iterrows():
             rc = t_eff.add_row().cells
-            rc[0].text, rc[1].text, rc[2].text, dt_val = str(row['Effect ID']), f"{row['Vapor Temp (°C)']:.2f}", f"{row['Brine Temp (°C)']:.2f}", row['ΔT (°C)']
+            
+            # SAFE CALCULATION: Compute Delta T dynamically inside the Word Generator
+            vap_t = float(row['Vapor Temp (°C)'])
+            bri_t = float(row['Brine Temp (°C)'])
+            dt_val = vap_t - bri_t
+            
+            rc[0].text = str(row['Effect ID'])
+            rc[1].text = f"{vap_t:.2f}"
+            rc[2].text = f"{bri_t:.2f}"
             rc[3].text = f"{dt_val:.2f}"
             if dt_val > 2.0: rc[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
 
@@ -213,7 +220,6 @@ def main():
     # --- CALCULATE LIVE DATA FOR ALL TABS ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
     
-    # Mathematical Formulas explicit definition
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
     heat_load_kw = ((ops_data['Steam'] * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
     ops_data['STEC'] = heat_load_kw / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
@@ -471,7 +477,6 @@ def main():
                     line_chart = alt.Chart(month_data).mark_line(point=True).encode(x='Date:T', y=alt.Y('Gross Prod (m3/h):Q', scale=alt.Scale(domain=[500, 1100])))
                     st.altair_chart(line_chart + alt.Chart(pd.DataFrame({'y': [1000]})).mark_rule(color='green').encode(y='y'), use_container_width=True)
                     
-                    # New Button: Download Monthly Report
                     if st.button("📄 Generate Monthly Report (.docx)", use_container_width=True):
                         monthly_doc = generate_monthly_report(month_data, log_date.strftime('%B'), str(log_date.year))
                         st.download_button("📥 Download Monthly Report", data=monthly_doc, file_name=f"MED4_Monthly_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
