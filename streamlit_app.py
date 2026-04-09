@@ -14,19 +14,18 @@ st.set_page_config(page_title="Chembond | MED-4 Management", layout="wide")
 # ==========================================
 # 1. CORE SYNCHRONIZATION ENGINE
 # ==========================================
-# Define default values for all parameters
 DEFAULTS = {
     'steam': 73.0, 'desal': 740.0, 'gross': 790.0,
     'sw_upper': 775.0, 'sw_total': 2100.0, 'brine_ret': 1250.0,
     'sw_in_t': 30.0, 'brine_out_t': 41.0, 'stm_in_t': 179.0, 'vap_out_t': 70.0,
-    'mra_press': 240.0, 'mra_t1': 69.5, 'mra_bt1': 66.5,
+    'mra_press': 248.0, 'mra_t1': 69.5, 'mra_bt1': 66.5,
     'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0,
     'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
     'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05,
-    'p_cl': 0.0, 'p_so4': 0.0
+    'p_cl': 0.0, 'p_so4': 0.0,
+    'skip_eff': False, 'skip_wq': False
 }
 
-# Map which widget keys belong to which variable across tabs
 SYNC_MAP = {
     'steam': ['in_steam', 't1_steam', 't4_steam'],
     'desal': ['in_desal', 't1_desal'],
@@ -47,51 +46,44 @@ SYNC_MAP = {
     'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
     'p_ph': ['in_p_ph', 't3_p_ph'], 'p_cond': ['in_p_cond', 't3_p_cond'],
     'p_tds': ['in_p_tds', 't3_p_tds'], 'p_iron': ['in_p_iron', 't3_p_iron'],
-    'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4']
+    'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
+    'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
 }
 
-# Initialize all widget states on first run
 if 'sync_initialized' not in st.session_state:
     for var_name, keys in SYNC_MAP.items():
-        for k in keys:
-            st.session_state[k] = DEFAULTS[var_name]
+        for k in keys: st.session_state[k] = DEFAULTS[var_name]
+    st.session_state.vars = DEFAULTS.copy()
     st.session_state.sync_initialized = True
 
 if 'daily_logs' not in st.session_state:
     st.session_state.daily_logs = pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual"])
 
 if 'shared_effect_df' not in st.session_state:
-    effects = [f"Effect {i}" for i in range(1, 12)]
     st.session_state.shared_effect_df = pd.DataFrame({
-        "Effect ID": effects,
+        "Effect ID": [f"Effect {i}" for i in range(1, 12)],
         "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
         "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
     })
 
-# The Magic Callback: When one widget changes, overwrite the others
+def update_var(var_key, widget_key):
+    st.session_state.vars[var_key] = st.session_state[widget_key]
+    
 def sync_var(var_name, source_key):
     new_val = st.session_state[source_key]
+    st.session_state.vars[var_name] = new_val
     for target_key in SYNC_MAP[var_name]:
-        if target_key != source_key:
-            st.session_state[target_key] = new_val
+        if target_key != source_key: st.session_state[target_key] = new_val
 
-def get_v(var_name):
-    # Retrieve the current value from the state
-    return st.session_state[SYNC_MAP[var_name][0]]
-
-def render_shared_table(key):
-    edited = st.data_editor(st.session_state.shared_effect_df, key=key, use_container_width=True, hide_index=True)
-    if not edited.equals(st.session_state.shared_effect_df):
-        st.session_state.shared_effect_df = edited
-        st.rerun() # Force immediate update
-    return edited
+def get_v(var_name): return st.session_state.vars[var_name]
 
 # ==========================================
 # 2. CONSTANTS & BASELINES
 # ==========================================
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
+# Note: Pressure unit is now mmHg
 MRA_COEF = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
-MRA_BASELINE = {"Press_1st": 240.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
+MRA_BASELINE = {"Press_1st": 248.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
 
 WATER_SPECS = {
     "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
@@ -99,9 +91,9 @@ WATER_SPECS = {
 }
 
 # ==========================================
-# 3. REPORT GENERATOR DOCX
+# 3. REPORT GENERATORS (DOCX)
 # ==========================================
-def generate_comprehensive_report(date, ops, effect_df, w_data, mra):
+def generate_comprehensive_report(date, ops, effect_df, w_data, mra, skip_eff, skip_wq):
     doc = Document()
     doc.add_heading('MED-4 Daily Operational & Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
     p = doc.add_paragraph()
@@ -125,25 +117,32 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, mra):
 
     doc.add_heading('3. Effect-wise Profile', level=1)
     doc.add_paragraph(f"Overall Plant LMTD: {ops['LMTD']:.2f} °C | Overall HTC (U): {ops['HTC']:.2f} W/m²K | Fouling Factor: {ops['Fouling']:.6f}")
-    t_eff = doc.add_table(rows=1, cols=4)
-    t_eff.style = 'Table Grid'
-    for i, h in enumerate(['Effect ID', 'Vapor (°C)', 'Brine (°C)', 'ΔT (°C)']): t_eff.rows[0].cells[i].text = h
-    for idx, row in effect_df.iterrows():
-        rc = t_eff.add_row().cells
-        rc[0].text, rc[1].text, rc[2].text, dt_val = str(row['Effect ID']), f"{row['Vapor Temp (°C)']:.2f}", f"{row['Brine Temp (°C)']:.2f}", row['ΔT (°C)']
-        rc[3].text = f"{dt_val:.2f}"
-        if dt_val > 2.0: rc[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
+    
+    if skip_eff:
+        doc.add_paragraph("NOTE: The 11-Effect Temperature Cascade was not recorded for this operational day.", style='BodyText')
+    else:
+        t_eff = doc.add_table(rows=1, cols=4)
+        t_eff.style = 'Table Grid'
+        for i, h in enumerate(['Effect ID', 'Vapor (°C)', 'Brine (°C)', 'ΔT (°C)']): t_eff.rows[0].cells[i].text = h
+        for idx, row in effect_df.iterrows():
+            rc = t_eff.add_row().cells
+            rc[0].text, rc[1].text, rc[2].text, dt_val = str(row['Effect ID']), f"{row['Vapor Temp (°C)']:.2f}", f"{row['Brine Temp (°C)']:.2f}", row['ΔT (°C)']
+            rc[3].text = f"{dt_val:.2f}"
+            if dt_val > 2.0: rc[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
 
     doc.add_heading('4. Water Quality', level=1)
-    t_wq = doc.add_table(rows=1, cols=4)
-    t_wq.style = 'Table Grid'
-    for i, h in enumerate(['Parameter', 'Stream', 'Limit/Spec', 'Actual']): t_wq.rows[0].cells[i].text = h
-    for param, data in w_data['Feed'].items():
-        rc = t_wq.add_row().cells
-        rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Sea Water Feed', f"{data['min']}-{data['max']}", str(data['val'])
-    for param, data in w_data['Product'].items():
-        rc = t_wq.add_row().cells
-        rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Desal Product', f"{data['min']}-{data['max']}", str(data['val'])
+    if skip_wq:
+        doc.add_paragraph("NOTE: Laboratory water quality parameters were not recorded for this operational day.", style='BodyText')
+    else:
+        t_wq = doc.add_table(rows=1, cols=4)
+        t_wq.style = 'Table Grid'
+        for i, h in enumerate(['Parameter', 'Stream', 'Limit/Spec', 'Actual']): t_wq.rows[0].cells[i].text = h
+        for param, data in w_data['Feed'].items():
+            rc = t_wq.add_row().cells
+            rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Sea Water Feed', f"{data['min']}-{data['max']}", str(data['val'])
+        for param, data in w_data['Product'].items():
+            rc = t_wq.add_row().cells
+            rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Desal Product', f"{data['min']}-{data['max']}", str(data['val'])
 
     doc.add_heading('5. MRA Fouling Indicator', level=1)
     doc.add_paragraph(f"Actual Gross: {mra['Actual']:.1f} m³/h | MRA Predicted: {mra['Predicted']:.1f} m³/h | Residual: {mra['Residual']:.1f} m³/h")
@@ -153,6 +152,47 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, mra):
     for idx, row in mra['Variance_DF'].iterrows():
         rc = t_mra.add_row().cells
         rc[0].text, rc[1].text, rc[2].text, rc[3].text, rc[4].text = str(row['Parameter']), f"{row['Baseline']:.1f}", f"{row['Live Input']:.1f}", f"{row['Deviation']:+.1f}", f"{row['Impact (TPH)']:+.1f}"
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+def generate_monthly_report(df_month, month_str, year_str):
+    doc = Document()
+    doc.add_heading(f'MED-4 Monthly Performance Summary: {month_str} {year_str}', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    doc.add_heading('1. Monthly Aggregation', level=1)
+    doc.add_paragraph("The following metrics represent the arithmetic averages for the operational days recorded in this month.")
+    
+    t_agg = doc.add_table(rows=1, cols=4)
+    t_agg.style = 'Table Grid'
+    for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
+    
+    metrics = [
+        ("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']),
+        ("Gain Output Ratio (GOR)", df_month['GOR']),
+        ("Overall HTC (W/m²K)", df_month['Overall HTC']),
+        ("MRA Residual (TPH)", df_month['Residual'])
+    ]
+    for name, series in metrics:
+        rc = t_agg.add_row().cells
+        rc[0].text = name
+        rc[1].text = f"{series.min():.2f}"
+        rc[2].text = f"{series.max():.2f}"
+        rc[3].text = f"{series.mean():.2f}"
+        
+    doc.add_heading('2. Daily Operational Log', level=1)
+    t_log = doc.add_table(rows=1, cols=5)
+    t_log.style = 'Table Grid'
+    for i, h in enumerate(['Date', 'Gross Prod', 'GOR', 'HTC', 'Residual']): t_log.rows[0].cells[i].text = h
+    
+    for _, row in df_month.iterrows():
+        rc = t_log.add_row().cells
+        rc[0].text = row['Date'].strftime('%Y-%m-%d')
+        rc[1].text = f"{row['Gross Prod (m3/h)']:.1f}"
+        rc[2].text = f"{row['GOR']:.2f}"
+        rc[3].text = f"{row['Overall HTC']:.1f}"
+        rc[4].text = f"{row['Residual']:.1f}"
 
     bio = io.BytesIO()
     doc.save(bio)
@@ -172,6 +212,8 @@ def main():
 
     # --- CALCULATE LIVE DATA FOR ALL TABS ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
+    
+    # Mathematical Formulas explicit definition
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
     heat_load_kw = ((ops_data['Steam'] * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
     ops_data['STEC'] = heat_load_kw / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
@@ -209,59 +251,69 @@ def main():
     # --- UI COMPONENTS ---
     with tabs[0]:
         st.subheader("Central Data Entry Panel")
-        st.markdown("This acts as the master SCADA interface. Any data entered here will instantly synchronize across all tabs.")
         
         with st.expander("1. Hydraulics & Mass Balance", expanded=True):
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.number_input("LP Steam (TPH)", key="in_steam", min_value=40.0, max_value=150.0, on_change=sync_var, args=('steam', 'in_steam'))
-                st.number_input("Sea Water Upper (m³/h)", key="in_sw_up", min_value=300.0, max_value=1500.0, on_change=sync_var, args=('sw_upper', 'in_sw_up'))
+                st.number_input("LP Steam (TPH)", key="in_steam", on_change=sync_var, args=('steam', 'in_steam'))
+                st.number_input("Sea Water Upper (m³/h)", key="in_sw_up", on_change=sync_var, args=('sw_upper', 'in_sw_up'))
             with c2:
                 st.number_input("Desal Production (m³/h)", key="in_desal", on_change=sync_var, args=('desal', 'in_desal'))
                 st.number_input("Total SW Feed (m³/h)", key="in_sw_tot", on_change=sync_var, args=('sw_total', 'in_sw_tot'))
             with c3:
                 st.number_input("Gross Production (m³/h)", key="in_gross", on_change=sync_var, args=('gross', 'in_gross'))
-                st.number_input("Brine Water Return (m³/h)", key="in_brine", min_value=800.0, max_value=2000.0, on_change=sync_var, args=('brine_ret', 'in_brine'))
+                st.number_input("Brine Water Return (m³/h)", key="in_brine", on_change=sync_var, args=('brine_ret', 'in_brine'))
 
         with st.expander("2. Thermodynamics & Plant Temperatures", expanded=False):
             t1, t2, t3, t4 = st.columns(4)
             with t1: 
                 st.number_input("SW Inlet Temp (°C)", key="in_sw_in", on_change=sync_var, args=('sw_in_t', 'in_sw_in'))
-                st.number_input("1st Effect Press (mbar)", key="in_press", min_value=100.0, max_value=300.0, on_change=sync_var, args=('mra_press', 'in_press'))
+                st.number_input("1st Effect Press (mmHg)", key="in_press", on_change=sync_var, args=('mra_press', 'in_press'))
             with t2: 
                 st.number_input("Brine Outlet Temp (°C)", key="in_brine_out", on_change=sync_var, args=('brine_out_t', 'in_brine_out'))
-                st.number_input("1st Effect Temp (°C)", key="in_t1", min_value=50.0, max_value=90.0, on_change=sync_var, args=('mra_t1', 'in_t1'))
+                st.number_input("1st Effect Temp (°C)", key="in_t1", on_change=sync_var, args=('mra_t1', 'in_t1'))
             with t3: 
-                st.number_input("LP Steam Inlet Temp (°C)", key="in_stm_in", min_value=140.0, max_value=220.0, on_change=sync_var, args=('stm_in_t', 'in_stm_in'))
-                st.number_input("1st Brine Temp (°C)", key="in_bt1", min_value=40.0, max_value=80.0, on_change=sync_var, args=('mra_bt1', 'in_bt1'))
+                st.number_input("LP Steam Inlet Temp (°C)", key="in_stm_in", on_change=sync_var, args=('stm_in_t', 'in_stm_in'))
+                st.number_input("1st Brine Temp (°C)", key="in_bt1", on_change=sync_var, args=('mra_bt1', 'in_bt1'))
             with t4: 
                 st.number_input("Vapour Outlet Temp (°C)", key="in_vap_out", on_change=sync_var, args=('vap_out_t', 'in_vap_out'))
 
         with st.expander("3. Effect-wise Cascade (Temperatures)", expanded=False):
-            render_shared_table("in_effect_df")
+            st.checkbox("Skip Effect-wise Temperatures for today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
+            if not get_v('skip_eff'):
+                st.caption("Paste the 11 temperatures directly from Excel.")
+                edited = st.data_editor(st.session_state.shared_effect_df, key="in_effect_df", use_container_width=True, hide_index=True)
+                if not edited.equals(st.session_state.shared_effect_df):
+                    st.session_state.shared_effect_df = edited
+                    st.rerun()
+            else: st.info("Effect-wise data logging is disabled for today.")
 
         with st.expander("4. Laboratory Water Analysis", expanded=False):
-            w_col1, w_col2 = st.columns(2)
-            with w_col1:
-                st.markdown("**Feed Water**")
-                for p, d in WATER_SPECS["Feed"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
-            with w_col2:
-                st.markdown("**Desal Product**")
-                for p, d in WATER_SPECS["Product"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+            st.checkbox("Skip Water Analysis for today", key="in_skip_wq", on_change=sync_var, args=('skip_wq', 'in_skip_wq'))
+            if not get_v('skip_wq'):
+                w_col1, w_col2 = st.columns(2)
+                with w_col1:
+                    st.markdown("**Feed Water**")
+                    for p, d in WATER_SPECS["Feed"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+                with w_col2:
+                    st.markdown("**Desal Product**")
+                    for p, d in WATER_SPECS["Product"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+            else: st.info("Water quality data logging is disabled for today.")
 
     # --- TAB 1: FLOW KPIs ---
     with tabs[1]:
         st.subheader("Mass Balance & KPI Dashboard")
+        st.caption("Formulas: GOR = Gross / Steam | Steam Economy = Steam / Desal | Recovery = Gross / Total SW Feed")
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.number_input("LP Steam (TPH)", key="t1_steam", min_value=40.0, max_value=150.0, on_change=sync_var, args=('steam', 't1_steam'))
-            st.number_input("Sea Water Upper (m³/h)", key="t1_sw_up", min_value=300.0, max_value=1500.0, on_change=sync_var, args=('sw_upper', 't1_sw_up'))
+            st.number_input("LP Steam (TPH)", key="t1_steam", on_change=sync_var, args=('steam', 't1_steam'))
+            st.number_input("Sea Water Upper (m³/h)", key="t1_sw_up", on_change=sync_var, args=('sw_upper', 't1_sw_up'))
         with c2:
             st.number_input("Desal Production (m³/h)", key="t1_desal", on_change=sync_var, args=('desal', 't1_desal'))
             st.number_input("Total SW Feed (m³/h)", key="t1_sw_tot", on_change=sync_var, args=('sw_total', 't1_sw_tot'))
         with c3:
             st.number_input("Gross Production (m³/h)", key="t1_gross", on_change=sync_var, args=('gross', 't1_gross'))
-            st.number_input("Brine Water Return (m³/h)", key="t1_brine", min_value=800.0, max_value=2000.0, on_change=sync_var, args=('brine_ret', 't1_brine'))
+            st.number_input("Brine Water Return (m³/h)", key="t1_brine", on_change=sync_var, args=('brine_ret', 't1_brine'))
             
         st.divider()
         kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
@@ -277,7 +329,7 @@ def main():
         h1, h2, h3, h4 = st.columns(4)
         with h1: st.number_input("SW Inlet Temp (°C)", key="t2_sw_in", on_change=sync_var, args=('sw_in_t', 't2_sw_in'))
         with h2: st.number_input("Brine Outlet Temp (°C)", key="t2_brine_out", on_change=sync_var, args=('brine_out_t', 't2_brine_out'))
-        with h3: st.number_input("Steam Inlet Temp (°C)", key="t2_stm_in", min_value=140.0, max_value=220.0, on_change=sync_var, args=('stm_in_t', 't2_stm_in'))
+        with h3: st.number_input("Steam Inlet Temp (°C)", key="t2_stm_in", on_change=sync_var, args=('stm_in_t', 't2_stm_in'))
         with h4: st.number_input("Vapour Outlet Temp (°C)", key="t2_vap_out", on_change=sync_var, args=('vap_out_t', 't2_vap_out'))
             
         if ops_data['LMTD'] > 0:
@@ -291,44 +343,53 @@ def main():
         st.divider()
         st.subheader("11-Effect Scaling Profiler")
         
-        col_t, col_g = st.columns([1, 2])
-        with col_t:
-            effect_df = render_shared_table("t2_effect_df")
-            
-        with col_g:
-            effect_df['ΔT (°C)'] = effect_df['Vapor Temp (°C)'] - effect_df['Brine Temp (°C)']
-            for _, row in effect_df.iterrows():
-                if row['ΔT (°C)'] > 2.0: st.error(f"🚨 **{row['Effect ID']} ALERT:** ΔT is {row['ΔT (°C)']:.2f}°C")
-            
-            effect_df['Effect ID'] = pd.Categorical(effect_df['Effect ID'], categories=[f"Effect {i}" for i in range(1, 12)], ordered=True)
-            base_chart = alt.Chart(effect_df).encode(x=alt.X('Effect ID', title=None))
-            bar_chart = base_chart.mark_bar(color='#1f77b4', cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(y=alt.Y('ΔT (°C)', title='Delta T (°C)'))
-            limit_line = alt.Chart(pd.DataFrame({'y': [2.0]})).mark_rule(color='red', strokeDash=[5, 5], strokeWidth=2).encode(y='y')
-            st.altair_chart(bar_chart + limit_line, use_container_width=True)
+        if get_v('skip_eff'):
+            st.info("Effect-wise data logging has been skipped for today.")
+        else:
+            col_t, col_g = st.columns([1, 2])
+            with col_t:
+                effect_df = st.data_editor(st.session_state.shared_effect_df, key="t2_effect_df", use_container_width=True, hide_index=True)
+                if not effect_df.equals(st.session_state.shared_effect_df):
+                    st.session_state.shared_effect_df = effect_df
+                    st.rerun()
+                
+            with col_g:
+                effect_df['ΔT (°C)'] = effect_df['Vapor Temp (°C)'] - effect_df['Brine Temp (°C)']
+                for _, row in effect_df.iterrows():
+                    if row['ΔT (°C)'] > 2.0: st.error(f"🚨 **{row['Effect ID']} ALERT:** ΔT is {row['ΔT (°C)']:.2f}°C")
+                
+                effect_df['Effect ID'] = pd.Categorical(effect_df['Effect ID'], categories=[f"Effect {i}" for i in range(1, 12)], ordered=True)
+                base_chart = alt.Chart(effect_df).encode(x=alt.X('Effect ID', title=None))
+                bar_chart = base_chart.mark_bar(color='#1f77b4', cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(y=alt.Y('ΔT (°C)', title='Delta T (°C)'))
+                limit_line = alt.Chart(pd.DataFrame({'y': [2.0]})).mark_rule(color='red', strokeDash=[5, 5], strokeWidth=2).encode(y='y')
+                st.altair_chart(bar_chart + limit_line, use_container_width=True)
 
     # --- TAB 3: WATER ANALYSIS ---
     with tabs[3]:
         st.subheader("Laboratory QA/QC vs Limits")
-        w_col1, w_col2 = st.columns(2)
-        with w_col1:
-            st.markdown("### 🌊 Feed Sea Water")
-            for param, d in WATER_SPECS["Feed"].items():
-                c_in, c_chk = st.columns([2, 2])
-                with c_in: st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
-                c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Feed'][param]['status']}</div>", unsafe_allow_html=True)
-        with w_col2:
-            st.markdown("### 🚰 Desal Product")
-            for param, d in WATER_SPECS["Product"].items():
-                c_in, c_chk = st.columns([2, 2])
-                with c_in: st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
-                c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Product'][param]['status']}</div>", unsafe_allow_html=True)
+        if get_v('skip_wq'):
+            st.info("Water Quality data logging has been skipped for today.")
+        else:
+            w_col1, w_col2 = st.columns(2)
+            with w_col1:
+                st.markdown("### 🌊 Feed Sea Water")
+                for param, d in WATER_SPECS["Feed"].items():
+                    c_in, c_chk = st.columns([2, 2])
+                    with c_in: st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                    c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Feed'][param]['status']}</div>", unsafe_allow_html=True)
+            with w_col2:
+                st.markdown("### 🚰 Desal Product")
+                for param, d in WATER_SPECS["Product"].items():
+                    c_in, c_chk = st.columns([2, 2])
+                    with c_in: st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                    c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Product'][param]['status']}</div>", unsafe_allow_html=True)
 
     # --- TAB 4: MRA NORMALIZATION ---
     with tabs[4]:
         st.subheader("MRA Fouling Defense")
         controls_col, calc_col = st.columns([1, 2])
         with controls_col:
-            st.slider("1st Effect Press (mbar)", key="t4_press", min_value=100.0, max_value=300.0, on_change=sync_var, args=('mra_press', 't4_press'))
+            st.slider("1st Effect Press (mmHg)", key="t4_press", min_value=100.0, max_value=400.0, on_change=sync_var, args=('mra_press', 't4_press'))
             st.slider("1st Effect Temp (°C)", key="t4_t1", min_value=50.0, max_value=90.0, on_change=sync_var, args=('mra_t1', 't4_t1'))
             st.slider("Sea Water Upper (m³/h)", key="t4_sw_up", min_value=300.0, max_value=1500.0, on_change=sync_var, args=('sw_upper', 't4_sw_up'))
             st.slider("1st Brine Temp (°C)", key="t4_bt1", min_value=40.0, max_value=80.0, on_change=sync_var, args=('mra_bt1', 't4_bt1'))
@@ -389,8 +450,8 @@ def main():
             
             with c_report:
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                if st.button("📄 Export Document (.docx)", type="primary", use_container_width=True):
-                    word_file = generate_comprehensive_report(log_date, ops_data, st.session_state.shared_effect_df, water_data, mra_data)
+                if st.button("📄 Export Daily Report (.docx)", type="primary", use_container_width=True):
+                    word_file = generate_comprehensive_report(log_date, ops_data, st.session_state.shared_effect_df, water_data, mra_data, get_v('skip_eff'), get_v('skip_wq'))
                     st.download_button("📥 Click to Download Document", data=word_file, file_name=f"MED4_Daily_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
         with rep_tabs[1]:
@@ -398,10 +459,23 @@ def main():
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
+                
                 if not month_data.empty:
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Month Avg GOR", f"{month_data['GOR'].mean():.2f}")
+                    m2.metric("Month Avg Gross", f"{month_data['Gross Prod (m3/h)'].mean():.0f}")
+                    m3.metric("Month Avg HTC", f"{month_data['Overall HTC'].mean():.0f}")
+                    m4.metric("Avg MRA Residual", f"{month_data['Residual'].mean():.1f}")
+                    
                     st.markdown("#### 📉 Gross Production vs. Target")
                     line_chart = alt.Chart(month_data).mark_line(point=True).encode(x='Date:T', y=alt.Y('Gross Prod (m3/h):Q', scale=alt.Scale(domain=[500, 1100])))
                     st.altair_chart(line_chart + alt.Chart(pd.DataFrame({'y': [1000]})).mark_rule(color='green').encode(y='y'), use_container_width=True)
+                    
+                    # New Button: Download Monthly Report
+                    if st.button("📄 Generate Monthly Report (.docx)", use_container_width=True):
+                        monthly_doc = generate_monthly_report(month_data, log_date.strftime('%B'), str(log_date.year))
+                        st.download_button("📥 Download Monthly Report", data=monthly_doc, file_name=f"MED4_Monthly_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
             st.divider()
             st.markdown("#### 📥 Secure Export")
             st.session_state.daily_logs = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
