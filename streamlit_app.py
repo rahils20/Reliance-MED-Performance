@@ -5,6 +5,7 @@ import numpy as np
 import datetime
 import io
 import os
+import json
 import altair as alt
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
@@ -27,16 +28,20 @@ except ImportError:
 st.set_page_config(page_title="Chembond | MED-4 Management", layout="wide")
 
 # ==========================================
-# 1. CLOUD "GHOST SHEET" DATABASE ENGINE
+# 1. CLOUD "GHOST SHEET" & CONFIG ENGINE
 # ==========================================
 GOOGLE_SHEET_NAME = "MED4_Cloud_Database"
 LOCAL_DB_FILE = "MED4_Master_Database.csv"
+LOCAL_CONFIG_FILE = "mra_config.json"
+
+MRA_COEF_2014 = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
 
 @st.cache_resource(ttl=600)
 def init_db_connection():
     if not GSPREAD_INSTALLED:
         return {"type": "local", "client": None}
 
+    # Streamlit Secrets (The Cloud Vault)
     if "gcp_service_account" in st.secrets:
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -51,6 +56,7 @@ def init_db_connection():
         except Exception as e:
             st.sidebar.error(f"Cloud Secret Failed: {e}")
 
+    # Fallback to local JSON
     if os.path.exists('service_account.json'):
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -87,6 +93,35 @@ def save_database(db, df):
     df.to_csv(LOCAL_DB_FILE, index=False)
     return True
 
+def load_config(db):
+    if db["type"] == "cloud":
+        try:
+            config_sheet = db["client"].spreadsheet.worksheet("Config")
+            records = config_sheet.get_all_records()
+            if records:
+                return {k: float(v) for k, v in records[0].items()}
+        except Exception:
+            pass # Config sheet might not exist yet
+    if os.path.exists(LOCAL_CONFIG_FILE):
+        try:
+            with open(LOCAL_CONFIG_FILE, "r") as f: return json.load(f)
+        except: pass
+    return MRA_COEF_2014.copy()
+
+def save_config(db, coef_dict):
+    if db["type"] == "cloud":
+        try:
+            try:
+                config_sheet = db["client"].spreadsheet.worksheet("Config")
+            except:
+                config_sheet = db["client"].spreadsheet.add_worksheet(title="Config", rows=2, cols=10)
+            config_sheet.clear()
+            config_sheet.update([list(coef_dict.keys()), list(coef_dict.values())])
+        except Exception as e:
+            st.error(f"Failed to sync config to cloud: {e}")
+    with open(LOCAL_CONFIG_FILE, "w") as f:
+        json.dump(coef_dict, f)
+
 db_conn = init_db_connection()
 
 # ==========================================
@@ -119,6 +154,7 @@ SYNC_MAP = {
     'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
 }
 
+# Variable tracking to avoid KeyErrors
 if 'vars' not in st.session_state: st.session_state.vars = DEFAULTS.copy()
 for k, v in DEFAULTS.items():
     if k not in st.session_state.vars: st.session_state.vars[k] = v
@@ -128,14 +164,12 @@ if 'sync_initialized' not in st.session_state:
         for k in keys: 
             if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
     st.session_state.sync_initialized = True
-else:
-    for var_name, keys in SYNC_MAP.items():
-        for k in keys:
-            if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
 
 if 'shared_effect_df' not in st.session_state:
     st.session_state.shared_effect_df = pd.DataFrame({"Effect ID": [f"Effect {i}" for i in range(1, 12)], "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1), "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)})
+
 if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
+if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
 
 def sync_var(var_name, source_key):
     new_val = st.session_state[source_key]
@@ -146,14 +180,10 @@ def sync_var(var_name, source_key):
 def get_v(var_name): return st.session_state.vars[var_name]
 
 # ==========================================
-# 3. BASELINES & DYNAMIC MRA COEF
+# 3. CONSTANTS & BASELINES
 # ==========================================
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 MRA_BASELINE = {"Press_1st": 248.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
-
-# Initialize dynamic MRA coefficients in session state
-if 'mra_coef' not in st.session_state:
-    st.session_state.mra_coef = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
 
 WATER_SPECS = {
     "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
@@ -243,11 +273,17 @@ def generate_monthly_report(df_month, month_str, year_str):
     
     doc.add_heading('1. Monthly Aggregation', level=1)
     doc.add_paragraph("The following metrics represent the arithmetic averages for the operational days recorded in this month.")
+    
     t_agg = doc.add_table(rows=1, cols=4)
     t_agg.style = 'Table Grid'
     for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
     
-    metrics = [("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("MRA Residual (TPH)", df_month['Residual'])]
+    metrics = [
+        ("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']),
+        ("Gain Output Ratio (GOR)", df_month['GOR']),
+        ("Overall HTC (W/m²K)", df_month['Overall HTC']),
+        ("MRA Residual (TPH)", df_month['Residual'])
+    ]
     for name, series in metrics:
         rc = t_agg.add_row().cells
         rc[0].text = name
@@ -262,8 +298,10 @@ def generate_monthly_report(df_month, month_str, year_str):
     
     for _, row in df_month.iterrows():
         rc = t_log.add_row().cells
-        try: date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
-        except: date_str = str(row['Date'])
+        try:
+            date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
+        except:
+            date_str = str(row['Date'])
         rc[0].text = date_str
         rc[1].text = f"{row['Gross Prod (m3/h)']:.1f}"
         rc[2].text = f"{row['GOR']:.2f}"
@@ -278,8 +316,10 @@ def generate_monthly_report(df_month, month_str, year_str):
 # 5. MAIN UI APPLICATION
 # ==========================================
 def main():
-    try: st.sidebar.image("chembond_logo.png", use_container_width=True)
-    except: st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
+    try:
+        st.sidebar.image("chembond_logo.png", use_container_width=True)
+    except:
+        st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
     st.sidebar.divider()
     
     log_date = st.sidebar.date_input("Date", datetime.date.today())
@@ -310,7 +350,7 @@ def main():
         ops_data['Fouling'] = 1 / ops_data['HTC'] if ops_data['HTC'] > 0 else 0
 
     mra_data = {}
-    coefs = st.session_state.mra_coef # Using Dynamic Coefs
+    coefs = st.session_state.mra_coef 
     mra_data['Predicted'] = (coefs["Intercept"] + (coefs["Press_1st"] * get_v('mra_press')) + (coefs["Temp_1st"] * get_v('mra_t1')) + (coefs["SW_Upper"] * get_v('sw_upper')) + (coefs["Brine_Temp_1st"] * get_v('mra_bt1')) + (coefs["Brine_Flow"] * get_v('brine_ret')) + (coefs["LP_Steam"] * get_v('steam')) + (coefs["Steam_Temp"] * get_v('stm_in_t')))
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
@@ -530,11 +570,12 @@ def main():
                 st.altair_chart(donut, use_container_width=True)
 
             st.divider()
-            st.markdown("### 🔐 Commit & Export")
-            c_save, c_report = st.columns(2)
+            st.markdown("### 💾 Commit Today's Data")
+            c_pwd, c_save, c_export = st.columns([2, 1, 1])
+            with c_pwd:
+                pwd_append = st.text_input("Master Password", type="password", key="pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Commit")
             with c_save:
-                pwd_append = st.text_input("🔑 Master Password", type="password", key="pwd_append")
-                if st.button("💾 Append Today's Data", use_container_width=True):
+                if st.button("💾 Append Data", use_container_width=True):
                     if pwd_append == "12345678":
                         new_log = pd.DataFrame({
                             "Date": [log_date], "Gross Prod (m3/h)": [ops_data['Gross Prod']], "Desal (m3/h)": [ops_data['Desal']], 
@@ -546,32 +587,29 @@ def main():
                         save_database(db_conn, st.session_state.daily_logs)
                         st.success("✅ Master Database Updated!")
                     elif pwd_append != "": st.error("❌ Incorrect Password.")
-            
-            with c_report:
-                st.markdown("<br><br>", unsafe_allow_html=True)
-                if st.button("📄 Export Daily Report (.docx)", type="primary", use_container_width=True):
-                    word_file = generate_comprehensive_report(log_date, ops_data, st.session_state.shared_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'))
-                    st.download_button("📥 Click to Download Document", data=word_file, file_name=f"MED4_Daily_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            with c_export:
+                word_file = generate_comprehensive_report(log_date, ops_data, st.session_state.shared_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'))
+                st.download_button("📄 Export Report (.docx)", data=word_file, file_name=f"MED4_Daily_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
 
         with rep_tabs[1]:
-            st.markdown("#### Editable Master Log Database")
-            
+            st.markdown("#### 📆 Editable Master Log Database")
             edited_db = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
             
-            sync_c1, sync_c2 = st.columns(2)
-            with sync_c1:
-                if st.button("☁️ Sync Edits to Master Database", use_container_width=True):
-                    st.session_state.daily_logs = edited_db
-                    save_database(db_conn, st.session_state.daily_logs)
-                    st.success("✅ Database Overwritten with new edits!")
-            
-            with sync_c2:
-                pwd_dl = st.text_input("🔑 Export Password", type="password", key="pwd_dl")
-                if pwd_dl == "12345678":
-                    st.download_button("📥 Download CSV Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_Master.csv", mime='text/csv')
+            c_sync_pwd, c_sync, c_dl = st.columns([2, 1, 1])
+            with c_sync_pwd:
+                pwd_sync = st.text_input("Master Password", type="password", key="pwd_sync", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+            with c_sync:
+                if st.button("☁️ Sync Edits", use_container_width=True):
+                    if pwd_sync == "12345678":
+                        st.session_state.daily_logs = edited_db
+                        save_database(db_conn, st.session_state.daily_logs)
+                        st.success("✅ Database Overwritten!")
+                    else: st.error("❌ Incorrect Password.")
+            with c_dl:
+                st.download_button("📥 Download CSV Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_Master.csv", mime='text/csv', use_container_width=True)
 
             st.divider()
-            st.markdown("#### 📆 Monthly Report Generator")
+            st.markdown("#### 📊 Monthly Report Generator")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
@@ -607,8 +645,8 @@ def main():
         else:
             st.markdown("Upload clean baseline historical data to mathematically recalibrate the MRA formula.")
             
-            # Step 1: Download Template
-            template_df = pd.DataFrame(columns=["Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
+            # Step 1: Download Template (Now includes Date)
+            template_df = pd.DataFrame(columns=["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
             st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
             
             st.divider()
@@ -619,6 +657,11 @@ def main():
             if uploaded_file is not None:
                 try:
                     df_train = pd.read_csv(uploaded_file)
+                    
+                    # Ensure Date is dropped before running math, but handled gracefully
+                    if "Date" in df_train.columns:
+                        df_train = df_train.drop(columns=["Date"])
+                        
                     req_cols = ["Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]
                     
                     if not all(col in df_train.columns for col in req_cols):
@@ -657,10 +700,19 @@ def main():
                         })
                         st.dataframe(comp_df.style.format({"Current Coefficient": "{:.4f}", "New ML Coefficient": "{:.4f}"}), use_container_width=True, hide_index=True)
                         
-                        if st.button("🔥 Apply New Coefficients to MRA Tab", type="primary", use_container_width=True):
-                            st.session_state.mra_coef = new_coefs
-                            st.success("✅ MRA Engine updated! Go to the 'MRA' tab to see the live formulas using the new logic.")
-                            
+                        st.markdown("### 💾 Commit New Model")
+                        c_apply, c_reset = st.columns(2)
+                        with c_apply:
+                            if st.button("🔥 Save New Coefficients Permanently", type="primary", use_container_width=True):
+                                st.session_state.mra_coef = new_coefs
+                                save_config(db_conn, new_coefs)
+                                st.success("✅ Coefficients updated and synced to Cloud! The MRA tab is now using this new logic.")
+                        with c_reset:
+                            if st.button("🔄 Reset to 2014 Defaults", use_container_width=True):
+                                st.session_state.mra_coef = MRA_COEF_2014.copy()
+                                save_config(db_conn, st.session_state.mra_coef)
+                                st.success("✅ Restored original 2014 baseline model.")
+                                
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
 
