@@ -22,21 +22,25 @@ st.set_page_config(page_title="Chembond | MED-4 Management", layout="wide")
 # ==========================================
 # 1. CLOUD "GHOST SHEET" DATABASE ENGINE
 # ==========================================
-# Change this to the exact name of your Google Sheet once created
 GOOGLE_SHEET_NAME = "MED4_Cloud_Database"
 LOCAL_DB_FILE = "MED4_Master_Database.csv"
 
 @st.cache_resource(ttl=600)
 def init_db_connection():
-    if GSPREAD_INSTALLED and os.path.exists('service_account.json'):
+    # This line tells it to look in your Streamlit Secrets!
+    if GSPREAD_INSTALLED and "gcp_service_account" in st.secrets:
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            creds = ServiceAccountCredentials.from_json_keyfile_name('service_account.json', scope)
+            
+            # Converts the secret back into the dictionary format the Google API needs
+            creds_dict = dict(st.secrets["gcp_service_account"])
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            
             client = gspread.authorize(creds)
             sheet = client.open(GOOGLE_SHEET_NAME).sheet1
             return {"type": "cloud", "client": sheet}
         except Exception as e:
-            st.sidebar.warning("⚠️ Cloud connection failed. Using local database.")
+            st.sidebar.error(f"Cloud Connection Failed. Check JSON and Sheet sharing. Details: {e}")
             return {"type": "local", "client": None}
     return {"type": "local", "client": None}
 
@@ -51,19 +55,18 @@ def load_database(db):
     return pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual", "Antiscalant (kg)", "Antifoam (kg)"])
 
 def save_database(db, df):
-    # Standardize Date format for JSON serialization
     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
-    df = df.fillna(0) # Prevent JSON NaN errors
+    df = df.fillna(0)
     
     if db["type"] == "cloud":
         try:
             db["client"].clear()
             db["client"].update([df.columns.values.tolist()] + df.values.tolist())
+            df.to_csv(LOCAL_DB_FILE, index=False) # Always keep a local backup
             return True
         except Exception as e:
             st.error(f"Cloud Save Error: {e}")
-    
-    # Always save a local backup
+            
     df.to_csv(LOCAL_DB_FILE, index=False)
     return True
 
@@ -72,7 +75,7 @@ if 'daily_logs' not in st.session_state:
     st.session_state.daily_logs = load_database(db_conn)
 
 # ==========================================
-# 2. CORE SYNCHRONIZATION ENGINE
+# 2. BULLETPROOF SYNCHRONIZATION ENGINE
 # ==========================================
 DEFAULTS = {
     'steam': 73.0, 'desal': 740.0, 'gross': 790.0,
@@ -88,7 +91,6 @@ DEFAULTS = {
     'skip_eff': False, 'skip_wq': False
 }
 
-# The routing map ensuring all UI elements share the same brain
 SYNC_MAP = {
     'steam': ['in_steam', 't1_steam', 't5_steam'], 'desal': ['in_desal', 't1_desal'], 'gross': ['in_gross', 't1_gross'],
     'sw_upper': ['in_sw_up', 't1_sw_up', 't5_sw_up'], 'sw_total': ['in_sw_tot', 't1_sw_tot', 't4_sw_tot'], 'brine_ret': ['in_brine', 't1_brine', 't5_bflow'],
@@ -102,11 +104,22 @@ SYNC_MAP = {
     'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
 }
 
+# --- HOT RELOAD FIX ---
+if 'vars' not in st.session_state:
+    st.session_state.vars = DEFAULTS.copy()
+for k, v in DEFAULTS.items():
+    if k not in st.session_state.vars:
+        st.session_state.vars[k] = v
+
 if 'sync_initialized' not in st.session_state:
     for var_name, keys in SYNC_MAP.items():
-        for k in keys: st.session_state[k] = DEFAULTS[var_name]
-    st.session_state.vars = DEFAULTS.copy()
+        for k in keys: 
+            if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
     st.session_state.sync_initialized = True
+else:
+    for var_name, keys in SYNC_MAP.items():
+        for k in keys:
+            if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
 
 if 'shared_effect_df' not in st.session_state:
     st.session_state.shared_effect_df = pd.DataFrame({
@@ -210,11 +223,55 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
     doc.save(bio)
     return bio.getvalue()
 
+def generate_monthly_report(df_month, month_str, year_str):
+    doc = Document()
+    doc.add_heading(f'MED-4 Monthly Performance Summary: {month_str} {year_str}', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
+    doc.add_heading('1. Monthly Aggregation', level=1)
+    doc.add_paragraph("The following metrics represent the arithmetic averages for the operational days recorded in this month.")
+    
+    t_agg = doc.add_table(rows=1, cols=4)
+    t_agg.style = 'Table Grid'
+    for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
+    
+    metrics = [
+        ("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']),
+        ("Gain Output Ratio (GOR)", df_month['GOR']),
+        ("Overall HTC (W/m²K)", df_month['Overall HTC']),
+        ("MRA Residual (TPH)", df_month['Residual'])
+    ]
+    for name, series in metrics:
+        rc = t_agg.add_row().cells
+        rc[0].text = name
+        rc[1].text = f"{series.min():.2f}"
+        rc[2].text = f"{series.max():.2f}"
+        rc[3].text = f"{series.mean():.2f}"
+        
+    doc.add_heading('2. Daily Operational Log', level=1)
+    t_log = doc.add_table(rows=1, cols=5)
+    t_log.style = 'Table Grid'
+    for i, h in enumerate(['Date', 'Gross Prod', 'GOR', 'HTC', 'Residual']): t_log.rows[0].cells[i].text = h
+    
+    for _, row in df_month.iterrows():
+        rc = t_log.add_row().cells
+        try:
+            date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
+        except:
+            date_str = str(row['Date'])
+        rc[0].text = date_str
+        rc[1].text = f"{row['Gross Prod (m3/h)']:.1f}"
+        rc[2].text = f"{row['GOR']:.2f}"
+        rc[3].text = f"{row['Overall HTC']:.1f}"
+        rc[4].text = f"{row['Residual']:.1f}"
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
 # ==========================================
 # 5. MAIN UI APPLICATION
 # ==========================================
 def main():
-    # Attempt to load Chembond Logo
     try:
         st.sidebar.image("chembond_logo.png", use_container_width=True)
     except:
@@ -224,14 +281,13 @@ def main():
     log_date = st.sidebar.date_input("Date", datetime.date.today())
     area_m2 = st.sidebar.number_input("Overall Surface Area (m²)", value=1757.49)
     
-    # Cloud Status Indicator
     if db_conn["type"] == "cloud": st.sidebar.success("☁️ Connected to Cloud Database")
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
     tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting"])
 
-    # --- CALCULATE LIVE DATA FOR ALL TABS ---
+    # --- CALCULATE LIVE DATA ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
     heat_load_kw = ((ops_data['Steam'] * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG
@@ -267,10 +323,7 @@ def main():
             status = "✅ Pass" if details['lim'][0] <= val <= details['lim'][1] else "🚨 Fail"
             water_data[cat][param] = {'min': details['lim'][0], 'max': details['lim'][1], 'val': val, 'status': status}
 
-    chem_data = {
-        'anti_ppm': get_v('chem_anti_ppm'), 'anti_cons': get_v('chem_anti_cons'),
-        'foam_ppm': get_v('chem_foam_ppm'), 'foam_cons': get_v('chem_foam_cons')
-    }
+    chem_data = {'anti_ppm': get_v('chem_anti_ppm'), 'anti_cons': get_v('chem_anti_cons'), 'foam_ppm': get_v('chem_foam_ppm'), 'foam_cons': get_v('chem_foam_cons')}
 
     # --- TAB 0: INPUTS ---
     with tabs[0]:
@@ -407,10 +460,8 @@ def main():
     # --- TAB 4: CHEMICAL DOSING ---
     with tabs[4]:
         st.subheader("Chemical Dosing & Inventory Tracking")
-        
         st.number_input("Total SW Feed (m³/h)", key="t4_sw_tot", on_change=sync_var, args=('sw_total', 't4_sw_tot'))
         st.divider()
-        
         cc1, cc2 = st.columns(2)
         with cc1:
             st.markdown("### 🧪 Kem Watreat r 3687 (Antiscalant)")
@@ -418,12 +469,6 @@ def main():
             theo_anti = (ops_data['SW Total'] * get_v('chem_anti_ppm')) / 1000
             st.info(f"**Theoretical Requirement:** {theo_anti:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_anti_cons", on_change=sync_var, args=('chem_anti_cons', 't4_anti_cons'))
-            
-            diff = get_v('chem_anti_cons') - theo_anti
-            if diff > 0.5: st.warning(f"Over-dosing by {diff:.2f} kg/hr")
-            elif diff < -0.5: st.error(f"Under-dosing by {abs(diff):.2f} kg/hr")
-            else: st.success("Dosing is optimized.")
-
         with cc2:
             st.markdown("### 🫧 Kem Antifoam 1795")
             st.number_input("Target Dosing Level (PPM)", key="t4_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 't4_foam_ppm'))
@@ -494,7 +539,7 @@ def main():
                         })
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                         save_database(db_conn, st.session_state.daily_logs)
-                        st.success("✅ Master Database Updated (Cloud & Local)!")
+                        st.success("✅ Master Database Updated!")
                     elif pwd_append != "": st.error("❌ Incorrect Password.")
             
             with c_report:
@@ -505,9 +550,7 @@ def main():
 
         with rep_tabs[1]:
             st.markdown("#### Editable Master Log Database")
-            st.caption("You can directly edit past data below. Click 'Sync Edits' to update the Cloud/Local file.")
             
-            # The editable table
             edited_db = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
             
             sync_c1, sync_c2 = st.columns(2)
@@ -522,11 +565,21 @@ def main():
                 if pwd_dl == "12345678":
                     st.download_button("📥 Download CSV Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_Master.csv", mime='text/csv')
 
+            st.divider()
+            st.markdown("#### 📆 Monthly Report Generator")
+            if not st.session_state.daily_logs.empty:
+                df_logs = st.session_state.daily_logs.copy()
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'])
+                month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
+                if not month_data.empty:
+                    if st.button("📄 Generate Monthly Report (.docx)", use_container_width=True):
+                        monthly_doc = generate_monthly_report(month_data, log_date.strftime('%B'), str(log_date.year))
+                        st.download_button("📥 Download Monthly Report", data=monthly_doc, file_name=f"MED4_Monthly_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
-                # Only calculate recovery if SW Feed is > 0 to avoid division by zero errors
                 df_logs['Recovery (%)'] = np.where(df_logs['SW Feed (m3/h)'] > 0, (df_logs['Gross Prod (m3/h)'] / df_logs['SW Feed (m3/h)']) * 100, 0)
                 
                 q_col1, q_col2 = st.columns(2)
@@ -540,8 +593,6 @@ def main():
                     if len(df_logs) > 1:
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
-            else:
-                st.info("Save more data to view long-term degradation trends.")
 
 if __name__ == "__main__":
     main()
