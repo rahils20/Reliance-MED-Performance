@@ -4,3 +4,4 @@ python-docx
 altair
 gspread
 oauth2client
+scikit-learn
