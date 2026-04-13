@@ -1,3 +1,6 @@
 pandas
 numpy
 python-docx
+altair
+gspread
+oauth2client
