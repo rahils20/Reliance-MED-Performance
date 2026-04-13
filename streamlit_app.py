@@ -27,21 +27,37 @@ LOCAL_DB_FILE = "MED4_Master_Database.csv"
 
 @st.cache_resource(ttl=600)
 def init_db_connection():
-    # This line tells it to look in your Streamlit Secrets!
-    if GSPREAD_INSTALLED and "gcp_service_account" in st.secrets:
+    if not GSPREAD_INSTALLED:
+        return {"type": "local", "client": None}
+
+    # Streamlit Secrets (The Cloud Vault)
+    if "gcp_service_account" in st.secrets:
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-            
-            # Converts the secret back into the dictionary format the Google API needs
             creds_dict = dict(st.secrets["gcp_service_account"])
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             
+            # --- THE FIX FOR "NO KEY DETECTED" ---
+            if "\\n" in creds_dict["private_key"]:
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+                
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             sheet = client.open(GOOGLE_SHEET_NAME).sheet1
             return {"type": "cloud", "client": sheet}
         except Exception as e:
-            st.sidebar.error(f"Cloud Connection Failed. Check JSON and Sheet sharing. Details: {e}")
-            return {"type": "local", "client": None}
+            st.sidebar.error(f"Cloud Secret Failed: {e}")
+
+    # Fallback to local JSON if Secrets aren't used (Local Dev)
+    if os.path.exists('service_account.json'):
+        try:
+            scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+            creds = ServiceAccountCredentials.from_json_keyfile_name('service_account.json', scope)
+            client = gspread.authorize(creds)
+            sheet = client.open(GOOGLE_SHEET_NAME).sheet1
+            return {"type": "cloud", "client": sheet}
+        except Exception as e:
+            st.sidebar.error(f"JSON File Failed: {e}")
+
     return {"type": "local", "client": None}
 
 def load_database(db):
@@ -57,22 +73,18 @@ def load_database(db):
 def save_database(db, df):
     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
-    
     if db["type"] == "cloud":
         try:
             db["client"].clear()
             db["client"].update([df.columns.values.tolist()] + df.values.tolist())
-            df.to_csv(LOCAL_DB_FILE, index=False) # Always keep a local backup
+            df.to_csv(LOCAL_DB_FILE, index=False)
             return True
         except Exception as e:
             st.error(f"Cloud Save Error: {e}")
-            
     df.to_csv(LOCAL_DB_FILE, index=False)
     return True
 
 db_conn = init_db_connection()
-if 'daily_logs' not in st.session_state:
-    st.session_state.daily_logs = load_database(db_conn)
 
 # ==========================================
 # 2. BULLETPROOF SYNCHRONIZATION ENGINE
@@ -127,6 +139,8 @@ if 'shared_effect_df' not in st.session_state:
         "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
         "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
     })
+if 'daily_logs' not in st.session_state:
+    st.session_state.daily_logs = load_database(db_conn)
 
 def sync_var(var_name, source_key):
     new_val = st.session_state[source_key]
@@ -184,7 +198,8 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
 
     doc.add_heading('4. Effect-wise Profile', level=1)
     doc.add_paragraph(f"Overall Plant LMTD: {ops['LMTD']:.2f} °C | Overall HTC (U): {ops['HTC']:.2f} W/m²K | Fouling Factor: {ops['Fouling']:.6f}")
-    if skip_eff: doc.add_paragraph("NOTE: The 11-Effect Temperature Cascade was not recorded for this operational day.", style='BodyText')
+    if skip_eff: 
+        doc.add_paragraph("NOTE: The 11-Effect Temperature Cascade was not recorded for this operational day.", style='BodyText')
     else:
         t_eff = doc.add_table(rows=1, cols=4)
         t_eff.style = 'Table Grid'
@@ -198,7 +213,8 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
             if dt_val > 2.0: rc[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
 
     doc.add_heading('5. Water Quality', level=1)
-    if skip_wq: doc.add_paragraph("NOTE: Laboratory water quality parameters were not recorded for this operational day.", style='BodyText')
+    if skip_wq: 
+        doc.add_paragraph("NOTE: Laboratory water quality parameters were not recorded for this operational day.", style='BodyText')
     else:
         t_wq = doc.add_table(rows=1, cols=4)
         t_wq.style = 'Table Grid'
