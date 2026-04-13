@@ -1,4 +1,4 @@
-# requirements: pandas, numpy, python-docx, altair, gspread, oauth2client
+# requirements: pandas, numpy, python-docx, altair, gspread, oauth2client, scikit-learn
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -17,6 +17,13 @@ try:
 except ImportError:
     GSPREAD_INSTALLED = False
 
+try:
+    from sklearn.linear_model import LinearRegression
+    from sklearn.metrics import r2_score
+    SKLEARN_INSTALLED = True
+except ImportError:
+    SKLEARN_INSTALLED = False
+
 st.set_page_config(page_title="Chembond | MED-4 Management", layout="wide")
 
 # ==========================================
@@ -30,13 +37,10 @@ def init_db_connection():
     if not GSPREAD_INSTALLED:
         return {"type": "local", "client": None}
 
-    # Streamlit Secrets (The Cloud Vault)
     if "gcp_service_account" in st.secrets:
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
             creds_dict = dict(st.secrets["gcp_service_account"])
-            
-            # --- THE FIX FOR "NO KEY DETECTED" ---
             if "\\n" in creds_dict["private_key"]:
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
                 
@@ -47,7 +51,6 @@ def init_db_connection():
         except Exception as e:
             st.sidebar.error(f"Cloud Secret Failed: {e}")
 
-    # Fallback to local JSON if Secrets aren't used (Local Dev)
     if os.path.exists('service_account.json'):
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -116,12 +119,9 @@ SYNC_MAP = {
     'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
 }
 
-# --- HOT RELOAD FIX ---
-if 'vars' not in st.session_state:
-    st.session_state.vars = DEFAULTS.copy()
+if 'vars' not in st.session_state: st.session_state.vars = DEFAULTS.copy()
 for k, v in DEFAULTS.items():
-    if k not in st.session_state.vars:
-        st.session_state.vars[k] = v
+    if k not in st.session_state.vars: st.session_state.vars[k] = v
 
 if 'sync_initialized' not in st.session_state:
     for var_name, keys in SYNC_MAP.items():
@@ -134,13 +134,8 @@ else:
             if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
 
 if 'shared_effect_df' not in st.session_state:
-    st.session_state.shared_effect_df = pd.DataFrame({
-        "Effect ID": [f"Effect {i}" for i in range(1, 12)],
-        "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
-        "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
-    })
-if 'daily_logs' not in st.session_state:
-    st.session_state.daily_logs = load_database(db_conn)
+    st.session_state.shared_effect_df = pd.DataFrame({"Effect ID": [f"Effect {i}" for i in range(1, 12)], "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1), "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)})
+if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
 
 def sync_var(var_name, source_key):
     new_val = st.session_state[source_key]
@@ -151,11 +146,14 @@ def sync_var(var_name, source_key):
 def get_v(var_name): return st.session_state.vars[var_name]
 
 # ==========================================
-# 3. CONSTANTS & BASELINES
+# 3. BASELINES & DYNAMIC MRA COEF
 # ==========================================
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
-MRA_COEF = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
 MRA_BASELINE = {"Press_1st": 248.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
+
+# Initialize dynamic MRA coefficients in session state
+if 'mra_coef' not in st.session_state:
+    st.session_state.mra_coef = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
 
 WATER_SPECS = {
     "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
@@ -245,17 +243,11 @@ def generate_monthly_report(df_month, month_str, year_str):
     
     doc.add_heading('1. Monthly Aggregation', level=1)
     doc.add_paragraph("The following metrics represent the arithmetic averages for the operational days recorded in this month.")
-    
     t_agg = doc.add_table(rows=1, cols=4)
     t_agg.style = 'Table Grid'
     for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
     
-    metrics = [
-        ("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']),
-        ("Gain Output Ratio (GOR)", df_month['GOR']),
-        ("Overall HTC (W/m²K)", df_month['Overall HTC']),
-        ("MRA Residual (TPH)", df_month['Residual'])
-    ]
+    metrics = [("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("MRA Residual (TPH)", df_month['Residual'])]
     for name, series in metrics:
         rc = t_agg.add_row().cells
         rc[0].text = name
@@ -270,10 +262,8 @@ def generate_monthly_report(df_month, month_str, year_str):
     
     for _, row in df_month.iterrows():
         rc = t_log.add_row().cells
-        try:
-            date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
-        except:
-            date_str = str(row['Date'])
+        try: date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
+        except: date_str = str(row['Date'])
         rc[0].text = date_str
         rc[1].text = f"{row['Gross Prod (m3/h)']:.1f}"
         rc[2].text = f"{row['GOR']:.2f}"
@@ -288,10 +278,8 @@ def generate_monthly_report(df_month, month_str, year_str):
 # 5. MAIN UI APPLICATION
 # ==========================================
 def main():
-    try:
-        st.sidebar.image("chembond_logo.png", use_container_width=True)
-    except:
-        st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
+    try: st.sidebar.image("chembond_logo.png", use_container_width=True)
+    except: st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
     st.sidebar.divider()
     
     log_date = st.sidebar.date_input("Date", datetime.date.today())
@@ -301,7 +289,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. Model Trainer"])
 
     # --- CALCULATE LIVE DATA ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
@@ -322,14 +310,15 @@ def main():
         ops_data['Fouling'] = 1 / ops_data['HTC'] if ops_data['HTC'] > 0 else 0
 
     mra_data = {}
-    mra_data['Predicted'] = (MRA_COEF["Intercept"] + (MRA_COEF["Press_1st"] * get_v('mra_press')) + (MRA_COEF["Temp_1st"] * get_v('mra_t1')) + (MRA_COEF["SW_Upper"] * get_v('sw_upper')) + (MRA_COEF["Brine_Temp_1st"] * get_v('mra_bt1')) + (MRA_COEF["Brine_Flow"] * get_v('brine_ret')) + (MRA_COEF["LP_Steam"] * get_v('steam')) + (MRA_COEF["Steam_Temp"] * get_v('stm_in_t')))
+    coefs = st.session_state.mra_coef # Using Dynamic Coefs
+    mra_data['Predicted'] = (coefs["Intercept"] + (coefs["Press_1st"] * get_v('mra_press')) + (coefs["Temp_1st"] * get_v('mra_t1')) + (coefs["SW_Upper"] * get_v('sw_upper')) + (coefs["Brine_Temp_1st"] * get_v('mra_bt1')) + (coefs["Brine_Flow"] * get_v('brine_ret')) + (coefs["LP_Steam"] * get_v('steam')) + (coefs["Steam_Temp"] * get_v('stm_in_t')))
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
 
     var_data = []
     for name, key, live_val in [("1st Effect Press", "Press_1st", get_v('mra_press')), ("1st Effect Temp", "Temp_1st", get_v('mra_t1')), ("Sea Water Upper", "SW_Upper", get_v('sw_upper')), ("1st Brine Temp", "Brine_Temp_1st", get_v('mra_bt1')), ("Brine Flow", "Brine_Flow", get_v('brine_ret')), ("LP Steam", "LP_Steam", get_v('steam')), ("Steam Temp", "Steam_Temp", get_v('stm_in_t'))]:
         dev = live_val - MRA_BASELINE[key]
-        var_data.append([name, MRA_BASELINE[key], live_val, dev, MRA_COEF[key], dev * MRA_COEF[key]])
+        var_data.append([name, MRA_BASELINE[key], live_val, dev, coefs[key], dev * coefs[key]])
     mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
     water_data = {'Feed': {}, 'Product': {}}
@@ -609,6 +598,71 @@ def main():
                     if len(df_logs) > 1:
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
+
+    # --- TAB 7: MODEL TRAINER (OLS) ---
+    with tabs[7]:
+        st.subheader("🤖 Self-Calibrating MRA Engine (OLS Regression)")
+        if not SKLEARN_INSTALLED:
+            st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt to unlock the Machine Learning engine.")
+        else:
+            st.markdown("Upload clean baseline historical data to mathematically recalibrate the MRA formula.")
+            
+            # Step 1: Download Template
+            template_df = pd.DataFrame(columns=["Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
+            st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
+            
+            st.divider()
+            
+            # Step 2: Upload Data
+            uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"])
+            
+            if uploaded_file is not None:
+                try:
+                    df_train = pd.read_csv(uploaded_file)
+                    req_cols = ["Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]
+                    
+                    if not all(col in df_train.columns for col in req_cols):
+                        st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact Template format.")
+                    else:
+                        st.success(f"✅ Data Accepted: {len(df_train)} historical data points loaded.")
+                        
+                        # Data Prep
+                        X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]]
+                        Y = df_train["Gross Prod"]
+                        
+                        # Train Model
+                        model = LinearRegression()
+                        model.fit(X, Y)
+                        predictions = model.predict(X)
+                        r2 = r2_score(Y, predictions)
+                        
+                        st.markdown("### ⚙️ Regression Results")
+                        m1, m2 = st.columns(2)
+                        m1.metric("Model Accuracy (R² Score)", f"{r2 * 100:.2f}%", help="100% means the formula perfectly predicts historical production.")
+                        m2.metric("New Intercept", f"{model.intercept_:.4f}")
+                        
+                        # Build New Coef Dict
+                        new_coefs = {
+                            "Intercept": float(model.intercept_),
+                            "Press_1st": float(model.coef_[0]), "Temp_1st": float(model.coef_[1]), 
+                            "SW_Upper": float(model.coef_[2]), "Brine_Temp_1st": float(model.coef_[3]), 
+                            "Brine_Flow": float(model.coef_[4]), "LP_Steam": float(model.coef_[5]), "Steam_Temp": float(model.coef_[6])
+                        }
+                        
+                        # Display Comparison
+                        comp_df = pd.DataFrame({
+                            "Parameter": list(new_coefs.keys()),
+                            "Current Coefficient": [st.session_state.mra_coef[k] for k in new_coefs.keys()],
+                            "New ML Coefficient": [new_coefs[k] for k in new_coefs.keys()]
+                        })
+                        st.dataframe(comp_df.style.format({"Current Coefficient": "{:.4f}", "New ML Coefficient": "{:.4f}"}), use_container_width=True, hide_index=True)
+                        
+                        if st.button("🔥 Apply New Coefficients to MRA Tab", type="primary", use_container_width=True):
+                            st.session_state.mra_coef = new_coefs
+                            st.success("✅ MRA Engine updated! Go to the 'MRA' tab to see the live formulas using the new logic.")
+                            
+                except Exception as e:
+                    st.error(f"Error processing file: {e}")
 
 if __name__ == "__main__":
     main()
