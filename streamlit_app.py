@@ -6,6 +6,7 @@ import datetime
 import io
 import os
 import json
+import time  # <-- Added for the refresh delay
 import altair as alt
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
@@ -706,12 +707,16 @@ def main():
                             if st.button("🔥 Save New Coefficients Permanently", type="primary", use_container_width=True):
                                 st.session_state.mra_coef = new_coefs
                                 save_config(db_conn, new_coefs)
-                                st.success("✅ Coefficients updated and synced to Cloud! The MRA tab is now using this new logic.")
+                                st.success("✅ Coefficients updated! Reloading application...")
+                                time.sleep(1.5)
+                                st.rerun() # <-- FORCES INSTANT UI UPDATE
                         with c_reset:
                             if st.button("🔄 Reset to 2014 Defaults", use_container_width=True):
                                 st.session_state.mra_coef = MRA_COEF_2014.copy()
                                 save_config(db_conn, st.session_state.mra_coef)
-                                st.success("✅ Restored original 2014 baseline model.")
+                                st.success("✅ Restored original 2014 baseline model. Reloading...")
+                                time.sleep(1.5)
+                                st.rerun() # <-- FORCES INSTANT UI UPDATE
                                 
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
