@@ -6,7 +6,7 @@ import datetime
 import io
 import os
 import json
-import time  # <-- Added for the refresh delay
+import time
 import altair as alt
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
@@ -37,12 +37,17 @@ LOCAL_CONFIG_FILE = "mra_config.json"
 
 MRA_COEF_2014 = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
 
+BASE_EFFECTS = pd.DataFrame({
+    "Effect ID": [f"Effect {i}" for i in range(1, 12)],
+    "Base Vapor (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
+    "Base Brine (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
+})
+
 @st.cache_resource(ttl=600)
 def init_db_connection():
     if not GSPREAD_INSTALLED:
         return {"type": "local", "client": None}
 
-    # Streamlit Secrets (The Cloud Vault)
     if "gcp_service_account" in st.secrets:
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -57,7 +62,6 @@ def init_db_connection():
         except Exception as e:
             st.sidebar.error(f"Cloud Secret Failed: {e}")
 
-    # Fallback to local JSON
     if os.path.exists('service_account.json'):
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -102,7 +106,7 @@ def load_config(db):
             if records:
                 return {k: float(v) for k, v in records[0].items()}
         except Exception:
-            pass # Config sheet might not exist yet
+            pass 
     if os.path.exists(LOCAL_CONFIG_FILE):
         try:
             with open(LOCAL_CONFIG_FILE, "r") as f: return json.load(f)
@@ -155,7 +159,6 @@ SYNC_MAP = {
     'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
 }
 
-# Variable tracking to avoid KeyErrors
 if 'vars' not in st.session_state: st.session_state.vars = DEFAULTS.copy()
 for k, v in DEFAULTS.items():
     if k not in st.session_state.vars: st.session_state.vars[k] = v
@@ -166,8 +169,13 @@ if 'sync_initialized' not in st.session_state:
             if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
     st.session_state.sync_initialized = True
 
-if 'shared_effect_df' not in st.session_state:
-    st.session_state.shared_effect_df = pd.DataFrame({"Effect ID": [f"Effect {i}" for i in range(1, 12)], "Vapor Temp (°C)": np.round(np.linspace(69.0, 42.0, 11), 1), "Brine Temp (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)})
+# Initialize or fix shared effect DF format
+if 'shared_effect_df' not in st.session_state or 'Vapor Temp (°C)' in st.session_state.shared_effect_df.columns:
+    st.session_state.shared_effect_df = pd.DataFrame({
+        "Effect ID": [f"Effect {i}" for i in range(1, 12)], 
+        "Live Vapor (°C)": np.round(np.linspace(69.0, 42.0, 11), 1), 
+        "Live Brine (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
+    })
 
 if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
 if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
@@ -194,7 +202,7 @@ WATER_SPECS = {
 # ==========================================
 # 4. REPORT GENERATORS (DOCX)
 # ==========================================
-def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, skip_eff, skip_wq):
+def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_data, mra, skip_eff, skip_wq):
     doc = Document()
     doc.add_heading('MED-4 Daily Operational & Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
     p = doc.add_paragraph()
@@ -208,8 +216,7 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
     doc.add_paragraph(f"On {date}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
 
     doc.add_heading('2. Operational Data Summary', level=1)
-    t_ops = doc.add_table(rows=1, cols=4)
-    t_ops.style = 'Table Grid'
+    t_ops = doc.add_table(rows=1, cols=4); t_ops.style = 'Table Grid'
     for i, h in enumerate(['Parameter', 'UOM', 'Design', 'Actual']): t_ops.rows[0].cells[i].text = h
     ops_rows = [['Total SW Feed', 'm³/h', '2400', str(ops['SW Total'])], ['SW Upper', 'm³/h', '580', str(ops['SW Upper'])], ['Brine Return', 'm³/h', '1400', str(ops['Brine Return'])], ['Desal', 'm³/h', '1000', str(ops['Desal'])], ['Gross Prod', 'm³/h', '-', str(ops['Gross Prod'])], ['LP Steam', 'TPH', '92-94.5', str(ops['Steam'])], ['Recovery', '%', '40.0', f"{ops['Recovery']:.2f}"], ['GOR', 'Ratio', '10.5 : 1', f"{ops['GOR']:.2f} : 1"], ['Steam Economy', 'Ratio', '-', f"{ops['Economy']:.4f}"]]
     for row in ops_rows:
@@ -217,8 +224,7 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
         for i, val in enumerate(row): rc[i].text = val
 
     doc.add_heading('3. Chemical Dosing Status', level=1)
-    t_chem = doc.add_table(rows=1, cols=3)
-    t_chem.style = 'Table Grid'
+    t_chem = doc.add_table(rows=1, cols=3); t_chem.style = 'Table Grid'
     for i, h in enumerate(['Chemical', 'Target Dosing (PPM)', 'Actual Consumption (kg/hr)']): t_chem.rows[0].cells[i].text = h
     rc1 = t_chem.add_row().cells
     rc1[0].text, rc1[1].text, rc1[2].text = "Kem Watreat r 3687 (Antiscalant)", f"{chem_data['anti_ppm']:.1f}", f"{chem_data['anti_cons']:.2f}"
@@ -230,23 +236,23 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
     if skip_eff: 
         doc.add_paragraph("NOTE: The 11-Effect Temperature Cascade was not recorded for this operational day.", style='BodyText')
     else:
-        t_eff = doc.add_table(rows=1, cols=4)
+        t_eff = doc.add_table(rows=1, cols=5)
         t_eff.style = 'Table Grid'
-        for i, h in enumerate(['Effect ID', 'Vapor (°C)', 'Brine (°C)', 'ΔT (°C)']): t_eff.rows[0].cells[i].text = h
-        for idx, row in effect_df.iterrows():
+        for i, h in enumerate(['Effect ID', 'Live Vapor (°C)', 'Vapor Dev.', 'Live Brine (°C)', 'Brine Dev.']): t_eff.rows[0].cells[i].text = h
+        for idx, row in display_effect_df.iterrows():
             rc = t_eff.add_row().cells
-            vap_t = float(row['Vapor Temp (°C)'])
-            bri_t = float(row['Brine Temp (°C)'])
-            dt_val = vap_t - bri_t
-            rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(row['Effect ID']), f"{vap_t:.2f}", f"{bri_t:.2f}", f"{dt_val:.2f}"
-            if dt_val > 2.0: rc[3].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
+            v_dev = abs(float(row['Live Vapor (°C)']) - float(row['Base Vapor (°C)']))
+            b_dev = abs(float(row['Live Brine (°C)']) - float(row['Base Brine (°C)']))
+            
+            rc[0].text, rc[1].text, rc[2].text, rc[3].text, rc[4].text = str(row['Effect ID']), f"{row['Live Vapor (°C)']:.1f}", f"{v_dev:.1f}", f"{row['Live Brine (°C)']:.1f}", f"{b_dev:.1f}"
+            if v_dev > 1.0: rc[2].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
+            if b_dev > 1.0: rc[4].paragraphs[0].runs[0].font.color.rgb = RGBColor(255, 0, 0)
 
     doc.add_heading('5. Water Quality', level=1)
     if skip_wq: 
         doc.add_paragraph("NOTE: Laboratory water quality parameters were not recorded for this operational day.", style='BodyText')
     else:
-        t_wq = doc.add_table(rows=1, cols=4)
-        t_wq.style = 'Table Grid'
+        t_wq = doc.add_table(rows=1, cols=4); t_wq.style = 'Table Grid'
         for i, h in enumerate(['Parameter', 'Stream', 'Limit/Spec', 'Actual']): t_wq.rows[0].cells[i].text = h
         for param, data in w_data['Feed'].items():
             rc = t_wq.add_row().cells
@@ -257,8 +263,7 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
 
     doc.add_heading('6. MRA Fouling Indicator', level=1)
     doc.add_paragraph(f"Actual Gross: {mra['Actual']:.1f} m³/h | MRA Predicted: {mra['Predicted']:.1f} m³/h | Residual: {mra['Residual']:.1f} m³/h")
-    t_mra = doc.add_table(rows=1, cols=5)
-    t_mra.style = 'Table Grid'
+    t_mra = doc.add_table(rows=1, cols=5); t_mra.style = 'Table Grid'
     for i, h in enumerate(['Parameter', 'Baseline', 'Live Input', 'Deviation', 'Impact']): t_mra.rows[0].cells[i].text = h
     for idx, row in mra['Variance_DF'].iterrows():
         rc = t_mra.add_row().cells
@@ -271,43 +276,25 @@ def generate_comprehensive_report(date, ops, effect_df, w_data, chem_data, mra, 
 def generate_monthly_report(df_month, month_str, year_str):
     doc = Document()
     doc.add_heading(f'MED-4 Monthly Performance Summary: {month_str} {year_str}', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
     doc.add_heading('1. Monthly Aggregation', level=1)
     doc.add_paragraph("The following metrics represent the arithmetic averages for the operational days recorded in this month.")
     
-    t_agg = doc.add_table(rows=1, cols=4)
-    t_agg.style = 'Table Grid'
+    t_agg = doc.add_table(rows=1, cols=4); t_agg.style = 'Table Grid'
     for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
     
-    metrics = [
-        ("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']),
-        ("Gain Output Ratio (GOR)", df_month['GOR']),
-        ("Overall HTC (W/m²K)", df_month['Overall HTC']),
-        ("MRA Residual (TPH)", df_month['Residual'])
-    ]
+    metrics = [("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("MRA Residual (TPH)", df_month['Residual'])]
     for name, series in metrics:
         rc = t_agg.add_row().cells
-        rc[0].text = name
-        rc[1].text = f"{series.min():.2f}"
-        rc[2].text = f"{series.max():.2f}"
-        rc[3].text = f"{series.mean():.2f}"
+        rc[0].text, rc[1].text, rc[2].text, rc[3].text = name, f"{series.min():.2f}", f"{series.max():.2f}", f"{series.mean():.2f}"
         
     doc.add_heading('2. Daily Operational Log', level=1)
-    t_log = doc.add_table(rows=1, cols=5)
-    t_log.style = 'Table Grid'
+    t_log = doc.add_table(rows=1, cols=5); t_log.style = 'Table Grid'
     for i, h in enumerate(['Date', 'Gross Prod', 'GOR', 'HTC', 'Residual']): t_log.rows[0].cells[i].text = h
-    
     for _, row in df_month.iterrows():
         rc = t_log.add_row().cells
-        try:
-            date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
-        except:
-            date_str = str(row['Date'])
-        rc[0].text = date_str
-        rc[1].text = f"{row['Gross Prod (m3/h)']:.1f}"
-        rc[2].text = f"{row['GOR']:.2f}"
-        rc[3].text = f"{row['Overall HTC']:.1f}"
-        rc[4].text = f"{row['Residual']:.1f}"
+        try: date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
+        except: date_str = str(row['Date'])
+        rc[0].text, rc[1].text, rc[2].text, rc[3].text, rc[4].text = date_str, f"{row['Gross Prod (m3/h)']:.1f}", f"{row['GOR']:.2f}", f"{row['Overall HTC']:.1f}", f"{row['Residual']:.1f}"
 
     bio = io.BytesIO()
     doc.save(bio)
@@ -317,10 +304,8 @@ def generate_monthly_report(df_month, month_str, year_str):
 # 5. MAIN UI APPLICATION
 # ==========================================
 def main():
-    try:
-        st.sidebar.image("chembond_logo.png", use_container_width=True)
-    except:
-        st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
+    try: st.sidebar.image("chembond_logo.png", use_container_width=True)
+    except: st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
     st.sidebar.divider()
     
     log_date = st.sidebar.date_input("Date", datetime.date.today())
@@ -370,6 +355,10 @@ def main():
             water_data[cat][param] = {'min': details['lim'][0], 'max': details['lim'][1], 'val': val, 'status': status}
 
     chem_data = {'anti_ppm': get_v('chem_anti_ppm'), 'anti_cons': get_v('chem_anti_cons'), 'foam_ppm': get_v('chem_foam_ppm'), 'foam_cons': get_v('chem_foam_cons')}
+    
+    # Merge effect data for global access
+    display_effect_df = pd.merge(BASE_EFFECTS, st.session_state.shared_effect_df, on="Effect ID")
+    display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)"]]
 
     # --- TAB 0: INPUTS ---
     with tabs[0]:
@@ -403,9 +392,10 @@ def main():
         with st.expander("3. Effect-wise Cascade (Temperatures)", expanded=False):
             st.checkbox("Skip Effect-wise Temperatures for today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
             if not get_v('skip_eff'):
-                edited = st.data_editor(st.session_state.shared_effect_df, key="in_effect_df", use_container_width=True, hide_index=True)
-                if not edited.equals(st.session_state.shared_effect_df):
-                    st.session_state.shared_effect_df = edited
+                e_df = st.data_editor(display_effect_df, key="in_effect_df", use_container_width=True, hide_index=True, disabled=["Effect ID", "Base Vapor (°C)", "Base Brine (°C)"])
+                if not e_df[["Live Vapor (°C)", "Live Brine (°C)"]].equals(st.session_state.shared_effect_df[["Live Vapor (°C)", "Live Brine (°C)"]]):
+                    st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df["Live Vapor (°C)"]
+                    st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
                     st.rerun()
 
         with st.expander("4. Laboratory Water Analysis", expanded=False):
@@ -469,21 +459,53 @@ def main():
             r4.metric("Fouling Factor (1/U)", f"{ops_data['Fouling']:.6f}")
         
         if not get_v('skip_eff'):
-            col_t, col_g = st.columns([1, 2])
+            st.markdown("#### 11-Effect Temperature Deviation Profile")
+            col_t, col_g = st.columns([5, 2])
             with col_t:
-                effect_df = st.data_editor(st.session_state.shared_effect_df, key="t2_effect_df", use_container_width=True, hide_index=True)
-                if not effect_df.equals(st.session_state.shared_effect_df):
-                    st.session_state.shared_effect_df = effect_df
+                e_df2 = st.data_editor(display_effect_df, key="t2_effect_df", use_container_width=True, hide_index=True, disabled=["Effect ID", "Base Vapor (°C)", "Base Brine (°C)"])
+                if not e_df2[["Live Vapor (°C)", "Live Brine (°C)"]].equals(st.session_state.shared_effect_df[["Live Vapor (°C)", "Live Brine (°C)"]]):
+                    st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df2["Live Vapor (°C)"]
+                    st.session_state.shared_effect_df["Live Brine (°C)"] = e_df2["Live Brine (°C)"]
                     st.rerun()
+            
             with col_g:
-                effect_df['ΔT (°C)'] = effect_df['Vapor Temp (°C)'] - effect_df['Brine Temp (°C)']
-                for _, row in effect_df.iterrows():
-                    if row['ΔT (°C)'] > 2.0: st.error(f"🚨 **{row['Effect ID']} ALERT:** ΔT is {row['ΔT (°C)']:.2f}°C")
-                effect_df['Effect ID'] = pd.Categorical(effect_df['Effect ID'], categories=[f"Effect {i}" for i in range(1, 12)], ordered=True)
-                base_chart = alt.Chart(effect_df).encode(x=alt.X('Effect ID', title=None))
-                bar_chart = base_chart.mark_bar(color='#1f77b4', cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(y=alt.Y('ΔT (°C)', title='Delta T (°C)'))
-                limit_line = alt.Chart(pd.DataFrame({'y': [2.0]})).mark_rule(color='red', strokeDash=[5, 5], strokeWidth=2).encode(y='y')
-                st.altair_chart(bar_chart + limit_line, use_container_width=True)
+                has_errors = False
+                for _, row in e_df2.iterrows():
+                    vap_diff = abs(row['Live Vapor (°C)'] - row['Base Vapor (°C)'])
+                    bri_diff = abs(row['Live Brine (°C)'] - row['Base Brine (°C)'])
+                    if vap_diff > 1.0:
+                        st.error(f"🚨 **{row['Effect ID']} Vapor:** Dev by {vap_diff:.1f}°C")
+                        has_errors = True
+                    if bri_diff > 1.0:
+                        st.error(f"🚨 **{row['Effect ID']} Brine:** Dev by {bri_diff:.1f}°C")
+                        has_errors = True
+                if not has_errors: st.success("✅ All temps within 1.0°C of Base.")
+
+            st.divider()
+            st.markdown("#### Effect-wise Heat Transfer Coefficients (HTC)")
+            
+            htc_data = []
+            prev_vap = ops_data['Stm In']
+            for idx, row in e_df2.iterrows():
+                live_bri = row['Live Brine (°C)']
+                dt_eff = prev_vap - live_bri 
+                
+                if dt_eff > 0 and ops_data['Q_act'] > 0:
+                    eff_htc = (ops_data['Q_act'] / (area_m2 * dt_eff)) * 1000
+                else:
+                    eff_htc = 0
+                    
+                htc_data.append({"Effect ID": row['Effect ID'], "Driving Temp (°C)": round(prev_vap, 1), "Live Brine Temp (°C)": round(live_bri, 1), "Tube ΔT (°C)": round(dt_eff, 1), "Effect HTC (W/m²K)": round(eff_htc, 1)})
+                prev_vap = row['Live Vapor (°C)'] 
+                
+            htc_df = pd.DataFrame(htc_data)
+            
+            htc_col1, htc_col2 = st.columns([1, 1])
+            with htc_col1: st.dataframe(htc_df, use_container_width=True, hide_index=True)
+            with htc_col2:
+                htc_df['Effect ID'] = pd.Categorical(htc_df['Effect ID'], categories=[f"Effect {i}" for i in range(1, 12)], ordered=True)
+                htc_chart = alt.Chart(htc_df).mark_bar(color='#ff7f0e', cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(x=alt.X('Effect ID', title=None), y=alt.Y('Effect HTC (W/m²K)', title='HTC (W/m²K)'))
+                st.altair_chart(htc_chart, use_container_width=True)
 
     # --- TAB 3: WATER ANALYSIS ---
     with tabs[3]:
@@ -589,7 +611,7 @@ def main():
                         st.success("✅ Master Database Updated!")
                     elif pwd_append != "": st.error("❌ Incorrect Password.")
             with c_export:
-                word_file = generate_comprehensive_report(log_date, ops_data, st.session_state.shared_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'))
+                word_file = generate_comprehensive_report(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'))
                 st.download_button("📄 Export Report (.docx)", data=word_file, file_name=f"MED4_Daily_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
 
         with rep_tabs[1]:
@@ -646,20 +668,17 @@ def main():
         else:
             st.markdown("Upload clean baseline historical data to mathematically recalibrate the MRA formula.")
             
-            # Step 1: Download Template (Now includes Date)
             template_df = pd.DataFrame(columns=["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
             st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
             
             st.divider()
             
-            # Step 2: Upload Data
             uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"])
             
             if uploaded_file is not None:
                 try:
                     df_train = pd.read_csv(uploaded_file)
                     
-                    # Ensure Date is dropped before running math, but handled gracefully
                     if "Date" in df_train.columns:
                         df_train = df_train.drop(columns=["Date"])
                         
@@ -670,11 +689,9 @@ def main():
                     else:
                         st.success(f"✅ Data Accepted: {len(df_train)} historical data points loaded.")
                         
-                        # Data Prep
                         X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]]
                         Y = df_train["Gross Prod"]
                         
-                        # Train Model
                         model = LinearRegression()
                         model.fit(X, Y)
                         predictions = model.predict(X)
@@ -685,7 +702,6 @@ def main():
                         m1.metric("Model Accuracy (R² Score)", f"{r2 * 100:.2f}%", help="100% means the formula perfectly predicts historical production.")
                         m2.metric("New Intercept", f"{model.intercept_:.4f}")
                         
-                        # Build New Coef Dict
                         new_coefs = {
                             "Intercept": float(model.intercept_),
                             "Press_1st": float(model.coef_[0]), "Temp_1st": float(model.coef_[1]), 
@@ -693,7 +709,6 @@ def main():
                             "Brine_Flow": float(model.coef_[4]), "LP_Steam": float(model.coef_[5]), "Steam_Temp": float(model.coef_[6])
                         }
                         
-                        # Display Comparison
                         comp_df = pd.DataFrame({
                             "Parameter": list(new_coefs.keys()),
                             "Current Coefficient": [st.session_state.mra_coef[k] for k in new_coefs.keys()],
@@ -709,14 +724,14 @@ def main():
                                 save_config(db_conn, new_coefs)
                                 st.success("✅ Coefficients updated! Reloading application...")
                                 time.sleep(1.5)
-                                st.rerun() # <-- FORCES INSTANT UI UPDATE
+                                st.rerun()
                         with c_reset:
                             if st.button("🔄 Reset to 2014 Defaults", use_container_width=True):
                                 st.session_state.mra_coef = MRA_COEF_2014.copy()
                                 save_config(db_conn, st.session_state.mra_coef)
                                 st.success("✅ Restored original 2014 baseline model. Reloading...")
                                 time.sleep(1.5)
-                                st.rerun() # <-- FORCES INSTANT UI UPDATE
+                                st.rerun()
                                 
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
