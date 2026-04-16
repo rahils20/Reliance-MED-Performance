@@ -286,16 +286,17 @@ def generate_monthly_report(df_month, month_str, year_str):
 # ==========================================
 # 3. BULLETPROOF SYNCHRONIZATION ENGINE
 # ==========================================
+# THE FIX: ALL DEFAULTS EXACTLY MATCH 2014 AVERAGES SO PREDICTION STARTS PERFECTLY AT ~801 M3/HR
 DEFAULTS = {
-    'steam': 73.0, 'desal': 740.0, 'gross': 790.0,
-    'sw_upper': 775.0, 'sw_total': 2100.0, 'brine_ret': 1250.0,
-    'sw_in_t': 30.0, 'brine_out_t': 41.0, 'stm_in_t': 179.0, 'vap_out_t': 70.0,
-    'mra_press': 248.0, 'mra_t1': 69.5, 'mra_bt1': 66.5,
+    'steam': 71.75, 'desal': 800.0, 'gross': 801.4,
+    'sw_upper': 553.63, 'sw_total': 2100.0, 'brine_ret': 1275.5,
+    'sw_in_t': 30.0, 'brine_out_t': 41.0, 'stm_in_t': 165.54, 'vap_out_t': 70.0,
+    'mra_press': 231.76, 'mra_t1': 68.47, 'mra_bt1': 65.46,
     'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0,
     'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
     'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05,
     'p_cl': 0.0, 'p_so4': 0.0,
-    'chem_anti_ppm': 4.8, 'chem_anti_cons': 13.5,
+    'chem_anti_ppm': 4.82, 'chem_anti_cons': 13.5,
     'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
     'skip_eff': False, 'skip_wq': False
 }
@@ -351,7 +352,6 @@ WATER_SPECS = {
     "Product": {"pH": {"lim": (5.5, 7.0), "var": "p_ph"}, "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond"}, "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds"}, "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron"}, "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl"}, "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4"}}
 }
 
-
 # ==========================================
 # 5. MAIN UI APPLICATION
 # ==========================================
@@ -390,7 +390,7 @@ def main():
     mra_data = {}
     coefs = st.session_state.mra_coef 
     
-    # 8-Variable Prediction Formula (including Antiscalant)
+    # 8-Variable Prediction Formula
     mra_data['Predicted'] = (
         coefs["Intercept"] + 
         (coefs["Press_1st"] * get_v('mra_press')) + 
@@ -730,7 +730,7 @@ def main():
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
 
-    # --- TAB 7: TEMPLATE UPLOAD MODEL TRAINER (8-VARIABLES) ---
+    # --- TAB 7: TEMPLATE UPLOAD MODEL TRAINER (10-COLUMNS) ---
     with tabs[7]:
         st.subheader("🤖 Pure OLS Model Calibration (Template Upload)")
         if not SKLEARN_INSTALLED:
@@ -738,7 +738,7 @@ def main():
         else:
             st.markdown("Download the 10-column template, paste your historical data, and upload it here. The system uses pure Ordinary Least Squares (OLS) regression to calculate the coefficients, identical to Excel's LINEST function.")
             
-            # The template now explicitly includes the 8th variable (Anti_PPM)
+            # The template explicitly includes all 10 columns
             req_cols = ["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
             template_df = pd.DataFrame(columns=req_cols)
             st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
@@ -754,13 +754,17 @@ def main():
                     if not all(col in df_train.columns for col in req_cols):
                         st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact 10-column Template format.")
                     else:
-                        # Drop Date for the math, and drop any rows with NaNs
-                        df_train = df_train.drop(columns=["Date"]).dropna()
+                        # Data Scrubber: Strip commas if present, convert to numeric
+                        for col in req_cols:
+                            if col != "Date":
+                                if df_train[col].dtype == object:
+                                    df_train[col] = pd.to_numeric(df_train[col].str.replace(',', '', regex=False), errors='coerce')
+                        
+                        df_train = df_train.dropna(subset=[c for c in req_cols if c != "Date"])
                         
                         st.success(f"✅ Data Accepted: Evaluated {len(df_train)} clean operational records.")
                         
                         if len(df_train) > 0:
-                            # X-Data MUST match the 8 variables
                             X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]]
                             Y = df_train["Gross Prod"]
                             
@@ -786,7 +790,7 @@ def main():
                             
                             comp_df = pd.DataFrame({
                                 "Parameter": list(new_coefs.keys()),
-                                "Current Coefficient": [st.session_state.mra_coef.get(k, MRA_COEF_2014[k]) for k in new_coefs.keys()],
+                                "Current Coefficient": [st.session_state.mra_coef.get(k, MRA_COEF_2014.get(k, 0)) for k in new_coefs.keys()],
                                 "Calculated OLS Coefficient": [new_coefs[k] for k in new_coefs.keys()]
                             })
                             st.dataframe(comp_df.style.format({"Current Coefficient": "{:.4f}", "Calculated OLS Coefficient": "{:.4f}"}), use_container_width=True, hide_index=True)
