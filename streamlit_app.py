@@ -1,4 +1,4 @@
-# requirements: pandas, numpy, python-docx, altair, gspread, oauth2client, scikit-learn
+# requirements: pandas, numpy, python-docx, altair, gspread, oauth2client
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -19,14 +19,6 @@ try:
 except ImportError:
     GSPREAD_INSTALLED = False
 
-try:
-    from sklearn.linear_model import RidgeCV
-    from sklearn.preprocessing import StandardScaler # THE CRITICAL FIX
-    from sklearn.metrics import r2_score
-    SKLEARN_INSTALLED = True
-except ImportError:
-    SKLEARN_INSTALLED = False
-
 st.set_page_config(page_title="Chembond | MED-4 Management", layout="wide")
 
 # ==========================================
@@ -36,6 +28,7 @@ GOOGLE_SHEET_NAME = "MED4_Cloud_Database"
 LOCAL_DB_FILE = "MED4_Master_Database.csv"
 LOCAL_CONFIG_FILE = "mra_config.json"
 
+# The immutable laws of physics for this specific MED-4 unit
 MRA_COEF_2014 = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
 
 BASE_EFFECTS = pd.DataFrame({
@@ -344,7 +337,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. Model Trainer"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. Baseline Calibrator"])
 
     # --- CALCULATE LIVE DATA ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
@@ -692,97 +685,93 @@ def main():
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
 
-    # --- TAB 7: MODEL TRAINER (OLS) ---
+    # --- TAB 7: BASELINE CALIBRATOR (THE AGING OFFSET) ---
     with tabs[7]:
-        st.subheader("🤖 Self-Calibrating MRA Engine (Ridge Regression)")
-        if not SKLEARN_INSTALLED:
-            st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt to unlock the Machine Learning engine.")
-        else:
-            st.markdown("Upload clean baseline historical data to mathematically recalibrate the MRA formula using L2 Regularization (stabilizes highly correlated thermal variables).")
-            
-            template_df = pd.DataFrame(columns=["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
-            st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
-            
-            st.divider()
-            
-            uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"])
-            
-            if uploaded_file is not None:
-                try:
-                    df_train = pd.read_csv(uploaded_file)
+        st.subheader("⚙️ Baseline Aging Offset Calibrator")
+        st.markdown("""
+        **How it works:** A decade-old plant will never hit exact 2014 efficiencies due to permanent wear. 
+        This tool strictly **locks the thermodynamic laws of physics (the slopes)** from the 2014 baseline, but recalibrates the **Overall Plant Efficiency (The Intercept)** to match the *current* reality of your plant immediately following a Chemical Clean (CIP). 
+        """)
+        
+        template_df = pd.DataFrame(columns=["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
+        st.download_button(label="1️⃣ Download Clean Baseline CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_Calibration_Template.csv', mime='text/csv')
+        
+        st.divider()
+        
+        uploaded_file = st.file_uploader("2️⃣ Upload Data from immediately after your most recent CIP wash", type=["csv"])
+        
+        if uploaded_file is not None:
+            try:
+                df_cal = pd.read_csv(uploaded_file)
+                
+                req_cols = ["Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]
+                
+                if not all(col in df_cal.columns for col in req_cols):
+                    st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact Template format.")
+                else:
+                    df_cal = df_cal[(df_cal["Gross Prod"] > 200.0) & (df_cal["LP_Steam"] > 20.0)]
                     
-                    if "Date" in df_train.columns:
-                        df_train = df_train.drop(columns=["Date"])
-                        
-                    req_cols = ["Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]
+                    # Lock the 2014 physical slopes
+                    locked_coefs = MRA_COEF_2014.copy()
                     
-                    if not all(col in df_train.columns for col in req_cols):
-                        st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact Template format.")
-                    else:
-                        # DATA SCRUBBER: Remove shutdowns, NaNs, and infinite values
-                        df_train = df_train.replace([np.inf, -np.inf], np.nan).dropna(subset=req_cols)
-                        df_train = df_train[(df_train["Gross Prod"] > 200.0) & (df_train["LP_Steam"] > 20.0)]
-                        
-                        st.success(f"✅ Data Accepted: {len(df_train)} clean historical data points loaded.")
-                        
-                        X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]]
-                        Y = df_train["Gross Prod"]
-                        
-                        # --- THE FIX: FEATURE SCALING ---
-                        # We MUST scale the data so the ML algorithm treats 69°C and 1250 m3/h with equal mathematical respect
-                        scaler = StandardScaler()
-                        X_scaled = scaler.fit_transform(X)
-                        
-                        # RIDGE REGRESSION ENGINE
-                        model = RidgeCV(alphas=np.logspace(-2, 4, 100))
-                        model.fit(X_scaled, Y)
-                        
-                        # --- REVERT TO REAL-WORLD UNITS ---
-                        # The coefficients are currently in "Standard Deviations". We must un-scale them back to raw Engineering units.
-                        real_coefs = model.coef_ / scaler.scale_
-                        real_intercept = model.intercept_ - np.sum(real_coefs * scaler.mean_)
-
-                        predictions = model.predict(X_scaled)
-                        r2 = r2_score(Y, predictions)
-                        
-                        st.markdown("### ⚙️ Regression Results")
-                        m1, m2 = st.columns(2)
-                        m1.metric("Model Accuracy (R² Score)", f"{r2 * 100:.2f}%", help="100% means the formula perfectly predicts historical production.")
-                        m2.metric("New Intercept", f"{real_intercept:.4f}")
-                        
-                        new_coefs = {
-                            "Intercept": float(real_intercept),
-                            "Press_1st": float(real_coefs[0]), "Temp_1st": float(real_coefs[1]), 
-                            "SW_Upper": float(real_coefs[2]), "Brine_Temp_1st": float(real_coefs[3]), 
-                            "Brine_Flow": float(real_coefs[4]), "LP_Steam": float(real_coefs[5]), "Steam_Temp": float(real_coefs[6])
-                        }
-                        
-                        comp_df = pd.DataFrame({
-                            "Parameter": list(new_coefs.keys()),
-                            "Current Coefficient": [st.session_state.mra_coef[k] for k in new_coefs.keys()],
-                            "New ML Coefficient": [new_coefs[k] for k in new_coefs.keys()]
-                        })
-                        st.dataframe(comp_df.style.format({"Current Coefficient": "{:.4f}", "New ML Coefficient": "{:.4f}"}), use_container_width=True, hide_index=True)
-                        
-                        st.markdown("### 💾 Commit New Model")
-                        c_apply, c_reset = st.columns(2)
-                        with c_apply:
-                            if st.button("🔥 Save New Coefficients Permanently", type="primary", use_container_width=True):
-                                st.session_state.mra_coef = new_coefs
-                                save_config(db_conn, new_coefs)
-                                st.success("✅ Coefficients updated! Reloading application...")
-                                time.sleep(1.5)
-                                st.rerun()
-                        with c_reset:
-                            if st.button("🔄 Reset to 2014 Defaults", use_container_width=True):
-                                st.session_state.mra_coef = MRA_COEF_2014.copy()
-                                save_config(db_conn, st.session_state.mra_coef)
-                                st.success("✅ Restored original 2014 baseline model. Reloading...")
-                                time.sleep(1.5)
-                                st.rerun()
-                                
-                except Exception as e:
-                    st.error(f"Error processing file: {e}")
+                    # Calculate what the math *would* produce using ONLY the locked slopes (ignoring the old intercept)
+                    expected_production_no_intercept = (
+                        (locked_coefs["Press_1st"] * df_cal["Press_1st"]) + 
+                        (locked_coefs["Temp_1st"] * df_cal["Temp_1st"]) + 
+                        (locked_coefs["SW_Upper"] * df_cal["SW_Upper"]) + 
+                        (locked_coefs["Brine_Temp_1st"] * df_cal["Brine_Temp_1st"]) + 
+                        (locked_coefs["Brine_Flow"] * df_cal["Brine_Flow"]) + 
+                        (locked_coefs["LP_Steam"] * df_cal["LP_Steam"]) + 
+                        (locked_coefs["Steam_Temp"] * df_cal["Steam_Temp"])
+                    )
+                    
+                    # The required Intercept is the difference between Actual Production and the Slope-Expected Production
+                    required_intercepts = df_cal["Gross Prod"] - expected_production_no_intercept
+                    
+                    # Average it out to find the new stable offset for this year
+                    new_intercept = required_intercepts.mean()
+                    
+                    # Calculate how much permanent efficiency has been lost since 2014
+                    efficiency_drop = new_intercept - locked_coefs["Intercept"]
+                    
+                    st.success(f"✅ Data Accepted: Evaluated {len(df_cal)} recent operational records.")
+                    
+                    st.markdown("### 📊 Calibration Results")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Original 2014 Intercept", f"{locked_coefs['Intercept']:.2f}")
+                    c2.metric("New Calibrated Intercept", f"{new_intercept:.2f}", delta=f"{efficiency_drop:.2f} m³/h permanent aging", delta_color="inverse")
+                    
+                    # Prepare the final dictionary to save
+                    final_calibrated_coefs = locked_coefs.copy()
+                    final_calibrated_coefs["Intercept"] = float(new_intercept)
+                    
+                    # Show comparison table (Slopes never change!)
+                    comp_df = pd.DataFrame({
+                        "Parameter": list(final_calibrated_coefs.keys()),
+                        "Locked Physics (2014)": [MRA_COEF_2014[k] for k in final_calibrated_coefs.keys()],
+                        "Current Reality (2026)": [final_calibrated_coefs[k] for k in final_calibrated_coefs.keys()]
+                    })
+                    st.dataframe(comp_df.style.format({"Locked Physics (2014)": "{:.4f}", "Current Reality (2026)": "{:.4f}"}), use_container_width=True, hide_index=True)
+                    
+                    st.markdown("### 💾 Commit New Baseline Offset")
+                    c_apply, c_reset = st.columns(2)
+                    with c_apply:
+                        if st.button("🔥 Save New Aging Offset Permanently", type="primary", use_container_width=True):
+                            st.session_state.mra_coef = final_calibrated_coefs
+                            save_config(db_conn, final_calibrated_coefs)
+                            st.success("✅ Intercept calibrated to current plant health! Reloading application...")
+                            time.sleep(1.5)
+                            st.rerun()
+                    with c_reset:
+                        if st.button("🔄 Factory Reset to 2014", use_container_width=True):
+                            st.session_state.mra_coef = MRA_COEF_2014.copy()
+                            save_config(db_conn, st.session_state.mra_coef)
+                            st.success("✅ Restored verified 2014 baseline. Reloading...")
+                            time.sleep(1.5)
+                            st.rerun()
+                            
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
 
 if __name__ == "__main__":
     main()
