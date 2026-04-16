@@ -20,7 +20,7 @@ except ImportError:
     GSPREAD_INSTALLED = False
 
 try:
-    from sklearn.linear_model import LinearRegression # RESTORED PURE OLS
+    from sklearn.linear_model import LinearRegression
     from sklearn.metrics import r2_score
     SKLEARN_INSTALLED = True
 except ImportError:
@@ -343,7 +343,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. Model Trainer (OLS)"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. MRA Calibration Tool"])
 
     # --- CALCULATE LIVE DATA ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
@@ -366,7 +366,7 @@ def main():
     mra_data = {}
     coefs = st.session_state.mra_coef 
     
-    # MRA Calculation (Absolute values, exactly matching standard Linear Regression)
+    # MRA Calculation
     mra_data['Predicted'] = (
         coefs["Intercept"] + 
         (coefs["Press_1st"] * get_v('mra_press')) + 
@@ -703,83 +703,104 @@ def main():
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
 
-    # --- TAB 7: PURE OLS MODEL TRAINER ---
+    # --- TAB 7: MANUAL EXCEL MRA EMULATOR ---
     with tabs[7]:
-        st.subheader("🤖 Pure OLS Model Calibration (Matches Excel LINEST)")
+        st.subheader("⚙️ Exact Excel MRA Emulator (Pure OLS)")
         if not SKLEARN_INSTALLED:
             st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt.")
         else:
-            st.markdown("Upload historical data to mathematically recalibrate the MRA formula. This tool uses pure Ordinary Least Squares (OLS) regression—the exact mathematical engine used in your original 2014 Excel baseline.")
+            st.markdown("This tool bypasses automated guessing. It perfectly mimics highlighting columns in Excel's LINEST function. To guarantee exact math, you must select the precise columns the engineer used in 2015.")
             
-            template_df = pd.DataFrame(columns=["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
-            st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
-            
-            st.divider()
-            
-            uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"])
+            uploaded_file = st.file_uploader("Upload your raw 2014-2015 baseline CSV here", type=["csv"])
             
             if uploaded_file is not None:
                 try:
-                    df_train = pd.read_csv(uploaded_file)
+                    # 1. Read CSV as strings to safely handle commas
+                    df_raw = pd.read_csv(uploaded_file, dtype=str)
+                    df_raw.columns = df_raw.columns.str.strip()
                     
-                    if "Date" in df_train.columns:
-                        df_train = df_train.drop(columns=["Date"])
-                        
-                    req_cols = ["Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]
+                    st.success(f"✅ File loaded. Found {len(df_raw.columns)} columns.")
                     
-                    if not all(col in df_train.columns for col in req_cols):
-                        st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact Template format.")
-                    else:
-                        # Drop any rows that are completely missing values, but NO other filters.
-                        df_train = df_train.dropna(subset=req_cols)
+                    # 2. Manual Column Mapping Interface
+                    st.markdown("### 🗺️ Map Your Excel Columns")
+                    col_opts = ["-- Select Column --"] + list(df_raw.columns)
+                    
+                    c_y, c_x1, c_x2 = st.columns(3)
+                    with c_y:  y_col = st.selectbox("Target (Y) - Gross Production", col_opts)
+                    with c_x1: x1_col = st.selectbox("X1 - 1st Effect Press", col_opts)
+                    with c_x2: x2_col = st.selectbox("X2 - 1st Effect Temp", col_opts)
+                    
+                    c_x3, c_x4, c_x5 = st.columns(3)
+                    with c_x3: x3_col = st.selectbox("X3 - Sea Water Upper", col_opts)
+                    with c_x4: x4_col = st.selectbox("X4 - 1st Brine Temp", col_opts)
+                    with c_x5: x5_col = st.selectbox("X5 - Brine Flow", col_opts)
+                    
+                    c_x6, c_x7, _ = st.columns(3)
+                    with c_x6: x6_col = st.selectbox("X6 - LP Steam", col_opts)
+                    with c_x7: x7_col = st.selectbox("X7 - Steam Temp", col_opts)
+                    
+                    selected_cols = [y_col, x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col]
+                    
+                    if "-- Select Column --" not in selected_cols:
+                        st.divider()
                         
-                        st.success(f"✅ Data Accepted: Evaluated {len(df_train)} operational records.")
+                        # 3. Clean the selected data (Strip European/Indian commas)
+                        df_clean = df_raw[selected_cols].copy()
+                        for col in selected_cols:
+                            df_clean[col] = pd.to_numeric(df_clean[col].str.replace(',', '', regex=False), errors='coerce')
+                            
+                        # Drop ONLY the rows where the selected columns have blanks/NaNs
+                        df_clean = df_clean.dropna()
                         
-                        X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]]
-                        Y = df_train["Gross Prod"]
+                        st.info(f"🧹 Data Scrubber: After removing text rows and blanks, **{len(df_clean)} pure numeric rows remain** for OLS.")
                         
-                        # --- PURE OLS LINEAR REGRESSION ---
-                        model = LinearRegression(fit_intercept=True)
-                        model.fit(X, Y)
-                        
-                        predictions = model.predict(X)
-                        r2 = r2_score(Y, predictions)
-                        
-                        st.markdown("### ⚙️ Regression Results")
-                        m1, m2 = st.columns(2)
-                        m1.metric("Mathematical Accuracy (R² Score)", f"{r2 * 100:.2f}%")
-                        m2.metric("Calculated Intercept", f"{model.intercept_:.4f}")
-                        
-                        new_coefs = {
-                            "Intercept": float(model.intercept_),
-                            "Press_1st": float(model.coef_[0]), "Temp_1st": float(model.coef_[1]), 
-                            "SW_Upper": float(model.coef_[2]), "Brine_Temp_1st": float(model.coef_[3]), 
-                            "Brine_Flow": float(model.coef_[4]), "LP_Steam": float(model.coef_[5]), "Steam_Temp": float(model.coef_[6])
-                        }
-                        
-                        comp_df = pd.DataFrame({
-                            "Parameter": list(new_coefs.keys()),
-                            "Current Coefficient": [st.session_state.mra_coef[k] for k in new_coefs.keys()],
-                            "Calculated OLS Coefficient": [new_coefs[k] for k in new_coefs.keys()]
-                        })
-                        st.dataframe(comp_df.style.format({"Current Coefficient": "{:.4f}", "Calculated OLS Coefficient": "{:.4f}"}), use_container_width=True, hide_index=True)
-                        
-                        st.markdown("### 💾 Commit New Model")
-                        c_apply, c_reset = st.columns(2)
-                        with c_apply:
-                            if st.button("🔥 Save New Coefficients Permanently", type="primary", use_container_width=True):
-                                st.session_state.mra_coef = new_coefs
-                                save_config(db_conn, new_coefs)
-                                st.success("✅ Coefficients updated! Reloading application...")
-                                time.sleep(1.5)
-                                st.rerun()
-                        with c_reset:
-                            if st.button("🔄 Reset to 2014 Defaults", use_container_width=True):
-                                st.session_state.mra_coef = MRA_COEF_2014.copy()
-                                save_config(db_conn, st.session_state.mra_coef)
-                                st.success("✅ Restored verified 2014 baseline model. Reloading...")
-                                time.sleep(1.5)
-                                st.rerun()
+                        if len(df_clean) > 0:
+                            # 4. Pure OLS Math
+                            X = df_clean[[x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col]]
+                            Y = df_clean[y_col]
+                            
+                            model = LinearRegression(fit_intercept=True)
+                            model.fit(X, Y)
+                            
+                            r2 = r2_score(Y, model.predict(X))
+                            
+                            st.markdown("### ⚙️ Regression Results")
+                            m1, m2 = st.columns(2)
+                            m1.metric("Mathematical Accuracy (R² Score)", f"{r2 * 100:.2f}%")
+                            m2.metric("Calculated Intercept", f"{model.intercept_:.4f}")
+                            
+                            new_coefs = {
+                                "Intercept": float(model.intercept_),
+                                "Press_1st": float(model.coef_[0]), "Temp_1st": float(model.coef_[1]), 
+                                "SW_Upper": float(model.coef_[2]), "Brine_Temp_1st": float(model.coef_[3]), 
+                                "Brine_Flow": float(model.coef_[4]), "LP_Steam": float(model.coef_[5]), "Steam_Temp": float(model.coef_[6])
+                            }
+                            
+                            comp_df = pd.DataFrame({
+                                "Parameter": list(new_coefs.keys()),
+                                "Original Excel (2014)": [st.session_state.mra_coef[k] for k in new_coefs.keys()],
+                                "Calculated Python OLS": [new_coefs[k] for k in new_coefs.keys()]
+                            })
+                            st.dataframe(comp_df.style.format({"Original Excel (2014)": "{:.4f}", "Calculated Python OLS": "{:.4f}"}), use_container_width=True, hide_index=True)
+                            
+                            st.markdown("### 💾 Commit New Model")
+                            c_apply, c_reset = st.columns(2)
+                            with c_apply:
+                                if st.button("🔥 Save New Coefficients Permanently", type="primary", use_container_width=True):
+                                    st.session_state.mra_coef = new_coefs
+                                    save_config(db_conn, new_coefs)
+                                    st.success("✅ Coefficients updated! Reloading application...")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                            with c_reset:
+                                if st.button("🔄 Reset to 2014 Defaults", use_container_width=True):
+                                    st.session_state.mra_coef = MRA_COEF_2014.copy()
+                                    save_config(db_conn, st.session_state.mra_coef)
+                                    st.success("✅ Restored verified 2014 baseline model. Reloading...")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                        else:
+                            st.error("🚨 No valid numeric data found in the selected columns. Please check your CSV.")
                                 
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
