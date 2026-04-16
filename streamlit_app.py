@@ -35,7 +35,30 @@ GOOGLE_SHEET_NAME = "MED4_Cloud_Database"
 LOCAL_DB_FILE = "MED4_Master_Database.csv"
 LOCAL_CONFIG_FILE = "mra_config.json"
 
-MRA_COEF_2014 = {"Intercept": -13.9586, "Press_1st": 0.4697, "Temp_1st": 15.0401, "SW_Upper": 1.1517, "Brine_Temp_1st": -17.7986, "Brine_Flow": -0.3292, "LP_Steam": 1.8876, "Steam_Temp": 1.2511}
+# THE FIX: These now perfectly match your native 2014-15 Excel Baseline (Lin MRA.csv)
+MRA_COEF_2014 = {
+    "Intercept": -161.5638, 
+    "Press_1st": 0.6136, 
+    "Temp_1st": 3.6392, 
+    "SW_Upper": 0.8111, 
+    "Brine_Temp_1st": -7.6638, 
+    "Brine_Flow": -0.2329, 
+    "LP_Steam": 8.2539, 
+    "Steam_Temp": 2.1924,
+    "Anti_PPM": -7.0301
+}
+
+# THE FIX: Updated to the exact averages from the 2014-15 raw data
+MRA_BASELINE = {
+    "Press_1st": 231.76, 
+    "Temp_1st": 68.47, 
+    "SW_Upper": 553.63, 
+    "Brine_Temp_1st": 65.46, 
+    "Brine_Flow": 1275.50, 
+    "LP_Steam": 71.75, 
+    "Steam_Temp": 165.54,
+    "Anti_PPM": 4.82
+}
 
 BASE_EFFECTS = pd.DataFrame({
     "Effect ID": [f"Effect {i}" for i in range(1, 12)],
@@ -103,13 +126,15 @@ def load_config(db):
         try:
             config_sheet = db["client"].spreadsheet.worksheet("Config")
             records = config_sheet.get_all_records()
-            if records:
+            if records and "Anti_PPM" in records[0]:
                 return {k: float(v) for k, v in records[0].items()}
         except Exception:
             pass 
     if os.path.exists(LOCAL_CONFIG_FILE):
         try:
-            with open(LOCAL_CONFIG_FILE, "r") as f: return json.load(f)
+            with open(LOCAL_CONFIG_FILE, "r") as f: 
+                cfg = json.load(f)
+                if "Anti_PPM" in cfg: return cfg
         except: pass
     return MRA_COEF_2014.copy()
 
@@ -317,18 +342,6 @@ def sync_var(var_name, source_key):
 def get_v(var_name): return st.session_state.vars[var_name]
 
 # ==========================================
-# 4. CONSTANTS & BASELINES
-# ==========================================
-LATENT_HEAT_STEAM_KJ_KG = 2260.0 
-MRA_BASELINE = {"Press_1st": 248.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
-
-WATER_SPECS = {
-    "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
-    "Product": {"pH": {"lim": (5.5, 7.0), "var": "p_ph"}, "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond"}, "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds"}, "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron"}, "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl"}, "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4"}}
-}
-
-
-# ==========================================
 # 5. MAIN UI APPLICATION
 # ==========================================
 def main():
@@ -343,7 +356,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. MRA Calibration Tool"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. Exact Excel MRA Emulator"])
 
     # --- CALCULATE LIVE DATA ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
@@ -366,7 +379,7 @@ def main():
     mra_data = {}
     coefs = st.session_state.mra_coef 
     
-    # MRA Calculation
+    # THE FIX: 8-Variable Prediction Formula (including Antiscalant)
     mra_data['Predicted'] = (
         coefs["Intercept"] + 
         (coefs["Press_1st"] * get_v('mra_press')) + 
@@ -375,14 +388,16 @@ def main():
         (coefs["Brine_Temp_1st"] * get_v('mra_bt1')) + 
         (coefs["Brine_Flow"] * get_v('brine_ret')) + 
         (coefs["LP_Steam"] * get_v('steam')) + 
-        (coefs["Steam_Temp"] * get_v('stm_in_t'))
+        (coefs["Steam_Temp"] * get_v('stm_in_t')) +
+        (coefs["Anti_PPM"] * get_v('chem_anti_ppm'))
     )
     
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
 
     var_data = []
-    for name, key, live_val in [("1st Effect Press", "Press_1st", get_v('mra_press')), ("1st Effect Temp", "Temp_1st", get_v('mra_t1')), ("Sea Water Upper", "SW_Upper", get_v('sw_upper')), ("1st Brine Temp", "Brine_Temp_1st", get_v('mra_bt1')), ("Brine Flow", "Brine_Flow", get_v('brine_ret')), ("LP Steam", "LP_Steam", get_v('steam')), ("Steam Temp", "Steam_Temp", get_v('stm_in_t'))]:
+    # THE FIX: Added 8th parameter to the variance table
+    for name, key, live_val in [("1st Effect Press", "Press_1st", get_v('mra_press')), ("1st Effect Temp", "Temp_1st", get_v('mra_t1')), ("Sea Water Upper", "SW_Upper", get_v('sw_upper')), ("1st Brine Temp", "Brine_Temp_1st", get_v('mra_bt1')), ("Brine Flow", "Brine_Flow", get_v('brine_ret')), ("LP Steam", "LP_Steam", get_v('steam')), ("Steam Temp", "Steam_Temp", get_v('stm_in_t')), ("Antiscalant PPM", "Anti_PPM", get_v('chem_anti_ppm'))]:
         dev = live_val - MRA_BASELINE[key]
         var_data.append([name, MRA_BASELINE[key], live_val, dev, coefs[key], dev * coefs[key]])
     mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
@@ -596,6 +611,7 @@ def main():
             st.slider("Brine Flow (m³/h)", key="t5_bflow", min_value=800.0, max_value=2000.0, on_change=sync_var, args=('brine_ret', 't5_bflow'))
             st.slider("LP Steam (TPH)", key="t5_steam", min_value=40.0, max_value=150.0, on_change=sync_var, args=('steam', 't5_steam'))
             st.slider("Steam Temp (°C)", key="t5_stm_t", min_value=140.0, max_value=220.0, on_change=sync_var, args=('stm_in_t', 't5_stm_t'))
+            st.slider("Antiscalant PPM", key="t5_anti", min_value=0.0, max_value=10.0, step=0.1, on_change=sync_var, args=('chem_anti_ppm', 't5_anti'))
 
         with calc_col:
             k1, k2, k3 = st.columns(3)
@@ -709,54 +725,50 @@ def main():
         if not SKLEARN_INSTALLED:
             st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt.")
         else:
-            st.markdown("This tool bypasses automated guessing. It perfectly mimics highlighting columns in Excel's LINEST function. To guarantee exact math, you must select the precise columns the engineer used in 2015.")
+            st.markdown("This tool bypasses automated guessing. It perfectly mimics highlighting 8 columns in Excel's LINEST function. To guarantee exact math, you must select the precise 8 columns the engineer used in your 2014-15 file.")
             
             uploaded_file = st.file_uploader("Upload your raw 2014-2015 baseline CSV here", type=["csv"])
             
             if uploaded_file is not None:
                 try:
-                    # 1. Read CSV as strings to safely handle commas
                     df_raw = pd.read_csv(uploaded_file, dtype=str)
                     df_raw.columns = df_raw.columns.str.strip()
                     
                     st.success(f"✅ File loaded. Found {len(df_raw.columns)} columns.")
                     
-                    # 2. Manual Column Mapping Interface
-                    st.markdown("### 🗺️ Map Your Excel Columns")
+                    st.markdown("### 🗺️ Map Your 8 Excel Columns")
                     col_opts = ["-- Select Column --"] + list(df_raw.columns)
                     
                     c_y, c_x1, c_x2 = st.columns(3)
-                    with c_y:  y_col = st.selectbox("Target (Y) - Gross Production", col_opts)
-                    with c_x1: x1_col = st.selectbox("X1 - 1st Effect Press", col_opts)
-                    with c_x2: x2_col = st.selectbox("X2 - 1st Effect Temp", col_opts)
+                    with c_y:  y_col = st.selectbox("Target (Y) - Gross Production", col_opts, index=col_opts.index("Gross Production") if "Gross Production" in col_opts else 0)
+                    with c_x1: x1_col = st.selectbox("X1 - 1st Effect Press", col_opts, index=col_opts.index("1st effect press") if "1st effect press" in col_opts else 0)
+                    with c_x2: x2_col = st.selectbox("X2 - 1st Effect Temp", col_opts, index=col_opts.index("1st effect temp") if "1st effect temp" in col_opts else 0)
                     
                     c_x3, c_x4, c_x5 = st.columns(3)
-                    with c_x3: x3_col = st.selectbox("X3 - Sea Water Upper", col_opts)
-                    with c_x4: x4_col = st.selectbox("X4 - 1st Brine Temp", col_opts)
-                    with c_x5: x5_col = st.selectbox("X5 - Brine Flow", col_opts)
+                    with c_x3: x3_col = st.selectbox("X3 - Sea Water Upper", col_opts, index=col_opts.index("Sea water flow to 1st effect") if "Sea water flow to 1st effect" in col_opts else 0)
+                    with c_x4: x4_col = st.selectbox("X4 - 1st Brine Temp", col_opts, index=col_opts.index("1st effect brine temp") if "1st effect brine temp" in col_opts else 0)
+                    with c_x5: x5_col = st.selectbox("X5 - Brine Flow", col_opts, index=col_opts.index("Brine flow") if "Brine flow" in col_opts else 0)
                     
-                    c_x6, c_x7, _ = st.columns(3)
-                    with c_x6: x6_col = st.selectbox("X6 - LP Steam", col_opts)
-                    with c_x7: x7_col = st.selectbox("X7 - Steam Temp", col_opts)
+                    c_x6, c_x7, c_x8 = st.columns(3)
+                    with c_x6: x6_col = st.selectbox("X6 - LP Steam", col_opts, index=col_opts.index("Steam") if "Steam" in col_opts else 0)
+                    with c_x7: x7_col = st.selectbox("X7 - Steam Temp", col_opts, index=col_opts.index("steam Temp") if "steam Temp" in col_opts else 0)
+                    with c_x8: x8_col = st.selectbox("X8 - Antiscalant PPM", col_opts, index=col_opts.index("Antiscalant PPM") if "Antiscalant PPM" in col_opts else 0)
                     
-                    selected_cols = [y_col, x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col]
+                    selected_cols = [y_col, x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col, x8_col]
                     
                     if "-- Select Column --" not in selected_cols:
                         st.divider()
                         
-                        # 3. Clean the selected data (Strip European/Indian commas)
                         df_clean = df_raw[selected_cols].copy()
                         for col in selected_cols:
                             df_clean[col] = pd.to_numeric(df_clean[col].str.replace(',', '', regex=False), errors='coerce')
                             
-                        # Drop ONLY the rows where the selected columns have blanks/NaNs
                         df_clean = df_clean.dropna()
-                        
-                        st.info(f"🧹 Data Scrubber: After removing text rows and blanks, **{len(df_clean)} pure numeric rows remain** for OLS.")
+                        st.info(f"🧹 Data Scrubber: **{len(df_clean)} pure numeric rows remain** for OLS.")
                         
                         if len(df_clean) > 0:
-                            # 4. Pure OLS Math
-                            X = df_clean[[x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col]]
+                            # THE FIX: 8-Variable Pure OLS Math
+                            X = df_clean[[x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col, x8_col]]
                             Y = df_clean[y_col]
                             
                             model = LinearRegression(fit_intercept=True)
@@ -773,7 +785,8 @@ def main():
                                 "Intercept": float(model.intercept_),
                                 "Press_1st": float(model.coef_[0]), "Temp_1st": float(model.coef_[1]), 
                                 "SW_Upper": float(model.coef_[2]), "Brine_Temp_1st": float(model.coef_[3]), 
-                                "Brine_Flow": float(model.coef_[4]), "LP_Steam": float(model.coef_[5]), "Steam_Temp": float(model.coef_[6])
+                                "Brine_Flow": float(model.coef_[4]), "LP_Steam": float(model.coef_[5]), 
+                                "Steam_Temp": float(model.coef_[6]), "Anti_PPM": float(model.coef_[7])
                             }
                             
                             comp_df = pd.DataFrame({
