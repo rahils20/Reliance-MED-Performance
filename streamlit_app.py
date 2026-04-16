@@ -20,7 +20,8 @@ except ImportError:
     GSPREAD_INSTALLED = False
 
 try:
-    from sklearn.linear_model import RidgeCV # UPGRADED TO RIDGE REGRESSION
+    from sklearn.linear_model import RidgeCV
+    from sklearn.preprocessing import StandardScaler # THE CRITICAL FIX
     from sklearn.metrics import r2_score
     SKLEARN_INSTALLED = True
 except ImportError:
@@ -718,31 +719,42 @@ def main():
                     if not all(col in df_train.columns for col in req_cols):
                         st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact Template format.")
                     else:
-                        # OUTLIER FILTER: Remove rows where plant is shut down or barely running
-                        df_train = df_train[df_train["Gross Prod"] > 100.0]
+                        # DATA SCRUBBER: Remove shutdowns, NaNs, and infinite values
+                        df_train = df_train.replace([np.inf, -np.inf], np.nan).dropna(subset=req_cols)
+                        df_train = df_train[(df_train["Gross Prod"] > 200.0) & (df_train["LP_Steam"] > 20.0)]
                         
-                        st.success(f"✅ Data Accepted: {len(df_train)} clean historical data points loaded (shutdowns ignored).")
+                        st.success(f"✅ Data Accepted: {len(df_train)} clean historical data points loaded.")
                         
                         X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]]
                         Y = df_train["Gross Prod"]
                         
+                        # --- THE FIX: FEATURE SCALING ---
+                        # We MUST scale the data so the ML algorithm treats 69°C and 1250 m3/h with equal mathematical respect
+                        scaler = StandardScaler()
+                        X_scaled = scaler.fit_transform(X)
+                        
                         # RIDGE REGRESSION ENGINE
-                        # Uses cross-validation to find the optimal L2 penalty to stop coefficient explosion
-                        model = RidgeCV(alphas=[0.1, 1.0, 10.0, 100.0, 1000.0])
-                        model.fit(X, Y)
-                        predictions = model.predict(X)
+                        model = RidgeCV(alphas=np.logspace(-2, 4, 100))
+                        model.fit(X_scaled, Y)
+                        
+                        # --- REVERT TO REAL-WORLD UNITS ---
+                        # The coefficients are currently in "Standard Deviations". We must un-scale them back to raw Engineering units.
+                        real_coefs = model.coef_ / scaler.scale_
+                        real_intercept = model.intercept_ - np.sum(real_coefs * scaler.mean_)
+
+                        predictions = model.predict(X_scaled)
                         r2 = r2_score(Y, predictions)
                         
                         st.markdown("### ⚙️ Regression Results")
                         m1, m2 = st.columns(2)
                         m1.metric("Model Accuracy (R² Score)", f"{r2 * 100:.2f}%", help="100% means the formula perfectly predicts historical production.")
-                        m2.metric("New Intercept", f"{model.intercept_:.4f}")
+                        m2.metric("New Intercept", f"{real_intercept:.4f}")
                         
                         new_coefs = {
-                            "Intercept": float(model.intercept_),
-                            "Press_1st": float(model.coef_[0]), "Temp_1st": float(model.coef_[1]), 
-                            "SW_Upper": float(model.coef_[2]), "Brine_Temp_1st": float(model.coef_[3]), 
-                            "Brine_Flow": float(model.coef_[4]), "LP_Steam": float(model.coef_[5]), "Steam_Temp": float(model.coef_[6])
+                            "Intercept": float(real_intercept),
+                            "Press_1st": float(real_coefs[0]), "Temp_1st": float(real_coefs[1]), 
+                            "SW_Upper": float(real_coefs[2]), "Brine_Temp_1st": float(real_coefs[3]), 
+                            "Brine_Flow": float(real_coefs[4]), "LP_Steam": float(real_coefs[5]), "Steam_Temp": float(real_coefs[6])
                         }
                         
                         comp_df = pd.DataFrame({
