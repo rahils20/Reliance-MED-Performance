@@ -35,7 +35,7 @@ GOOGLE_SHEET_NAME = "MED4_Cloud_Database"
 LOCAL_DB_FILE = "MED4_Master_Database.csv"
 LOCAL_CONFIG_FILE = "mra_config.json"
 
-# THE FIX: These now perfectly match your native 2014-15 Excel Baseline (Lin MRA.csv)
+# EXCEL VERIFIED 2014-2015 BASELINE COEFFICIENTS
 MRA_COEF_2014 = {
     "Intercept": -161.5638, 
     "Press_1st": 0.6136, 
@@ -48,7 +48,7 @@ MRA_COEF_2014 = {
     "Anti_PPM": -7.0301
 }
 
-# THE FIX: Updated to the exact averages from the 2014-15 raw data
+# EXCEL VERIFIED 2014-2015 BASELINE AVERAGES
 MRA_BASELINE = {
     "Press_1st": 231.76, 
     "Temp_1st": 68.47, 
@@ -341,7 +341,6 @@ def sync_var(var_name, source_key):
 
 def get_v(var_name): return st.session_state.vars[var_name]
 
-
 # ==========================================
 # 4. CONSTANTS & BASELINES
 # ==========================================
@@ -368,7 +367,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. Exact Excel MRA Emulator"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. MRA Calibration Tool"])
 
     # --- CALCULATE LIVE DATA ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
@@ -391,7 +390,7 @@ def main():
     mra_data = {}
     coefs = st.session_state.mra_coef 
     
-    # THE FIX: 8-Variable Prediction Formula (including Antiscalant)
+    # 8-Variable Prediction Formula (including Antiscalant)
     mra_data['Predicted'] = (
         coefs["Intercept"] + 
         (coefs["Press_1st"] * get_v('mra_press')) + 
@@ -408,7 +407,7 @@ def main():
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
 
     var_data = []
-    # THE FIX: Added 8th parameter to the variance table
+    # Added 8th parameter to the variance table
     for name, key, live_val in [("1st Effect Press", "Press_1st", get_v('mra_press')), ("1st Effect Temp", "Temp_1st", get_v('mra_t1')), ("Sea Water Upper", "SW_Upper", get_v('sw_upper')), ("1st Brine Temp", "Brine_Temp_1st", get_v('mra_bt1')), ("Brine Flow", "Brine_Flow", get_v('brine_ret')), ("LP Steam", "LP_Steam", get_v('steam')), ("Steam Temp", "Steam_Temp", get_v('stm_in_t')), ("Antiscalant PPM", "Anti_PPM", get_v('chem_anti_ppm'))]:
         dev = live_val - MRA_BASELINE[key]
         var_data.append([name, MRA_BASELINE[key], live_val, dev, coefs.get(key, MRA_COEF_2014[key]), dev * coefs.get(key, MRA_COEF_2014[key])])
@@ -731,62 +730,46 @@ def main():
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
 
-    # --- TAB 7: MANUAL EXCEL MRA EMULATOR ---
+    # --- TAB 7: TEMPLATE UPLOAD MODEL TRAINER (8-VARIABLES) ---
     with tabs[7]:
-        st.subheader("⚙️ Exact Excel MRA Emulator (Pure OLS)")
+        st.subheader("🤖 Pure OLS Model Calibration (Template Upload)")
         if not SKLEARN_INSTALLED:
             st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt.")
         else:
-            st.markdown("This tool bypasses automated guessing. It perfectly mimics highlighting 8 columns in Excel's LINEST function. To guarantee exact math, you must select the precise 8 columns the engineer used in your 2014-15 file.")
+            st.markdown("Download the 10-column template, paste your historical data, and upload it here. The system uses pure Ordinary Least Squares (OLS) regression to calculate the coefficients, identical to Excel's LINEST function.")
             
-            uploaded_file = st.file_uploader("Upload your raw 2014-2015 baseline CSV here", type=["csv"])
+            # The template now explicitly includes the 8th variable (Anti_PPM)
+            req_cols = ["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
+            template_df = pd.DataFrame(columns=req_cols)
+            st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
+            
+            st.divider()
+            
+            uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"])
             
             if uploaded_file is not None:
                 try:
-                    df_raw = pd.read_csv(uploaded_file, dtype=str)
-                    df_raw.columns = df_raw.columns.str.strip()
+                    df_train = pd.read_csv(uploaded_file)
                     
-                    st.success(f"✅ File loaded. Found {len(df_raw.columns)} columns.")
-                    
-                    st.markdown("### 🗺️ Map Your 8 Excel Columns")
-                    col_opts = ["-- Select Column --"] + list(df_raw.columns)
-                    
-                    c_y, c_x1, c_x2 = st.columns(3)
-                    with c_y:  y_col = st.selectbox("Target (Y) - Gross Production", col_opts, index=col_opts.index("Gross Production") if "Gross Production" in col_opts else 0)
-                    with c_x1: x1_col = st.selectbox("X1 - 1st Effect Press", col_opts, index=col_opts.index("1st effect press") if "1st effect press" in col_opts else 0)
-                    with c_x2: x2_col = st.selectbox("X2 - 1st Effect Temp", col_opts, index=col_opts.index("1st effect temp") if "1st effect temp" in col_opts else 0)
-                    
-                    c_x3, c_x4, c_x5 = st.columns(3)
-                    with c_x3: x3_col = st.selectbox("X3 - Sea Water Upper", col_opts, index=col_opts.index("Sea water flow to 1st effect") if "Sea water flow to 1st effect" in col_opts else 0)
-                    with c_x4: x4_col = st.selectbox("X4 - 1st Brine Temp", col_opts, index=col_opts.index("1st effect brine temp") if "1st effect brine temp" in col_opts else 0)
-                    with c_x5: x5_col = st.selectbox("X5 - Brine Flow", col_opts, index=col_opts.index("Brine flow") if "Brine flow" in col_opts else 0)
-                    
-                    c_x6, c_x7, c_x8 = st.columns(3)
-                    with c_x6: x6_col = st.selectbox("X6 - LP Steam", col_opts, index=col_opts.index("Steam") if "Steam" in col_opts else 0)
-                    with c_x7: x7_col = st.selectbox("X7 - Steam Temp", col_opts, index=col_opts.index("steam Temp") if "steam Temp" in col_opts else 0)
-                    with c_x8: x8_col = st.selectbox("X8 - Antiscalant PPM", col_opts, index=col_opts.index("Antiscalant PPM") if "Antiscalant PPM" in col_opts else 0)
-                    
-                    selected_cols = [y_col, x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col, x8_col]
-                    
-                    if "-- Select Column --" not in selected_cols:
-                        st.divider()
+                    if not all(col in df_train.columns for col in req_cols):
+                        st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact 10-column Template format.")
+                    else:
+                        # Drop Date for the math, and drop any rows with NaNs
+                        df_train = df_train.drop(columns=["Date"]).dropna()
                         
-                        df_clean = df_raw[selected_cols].copy()
-                        for col in selected_cols:
-                            df_clean[col] = pd.to_numeric(df_clean[col].str.replace(',', '', regex=False), errors='coerce')
-                            
-                        df_clean = df_clean.dropna()
-                        st.info(f"🧹 Data Scrubber: **{len(df_clean)} pure numeric rows remain** for OLS.")
+                        st.success(f"✅ Data Accepted: Evaluated {len(df_train)} clean operational records.")
                         
-                        if len(df_clean) > 0:
-                            # THE FIX: 8-Variable Pure OLS Math
-                            X = df_clean[[x1_col, x2_col, x3_col, x4_col, x5_col, x6_col, x7_col, x8_col]]
-                            Y = df_clean[y_col]
+                        if len(df_train) > 0:
+                            # X-Data MUST match the 8 variables
+                            X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]]
+                            Y = df_train["Gross Prod"]
                             
+                            # --- PURE OLS LINEAR REGRESSION ---
                             model = LinearRegression(fit_intercept=True)
                             model.fit(X, Y)
                             
-                            r2 = r2_score(Y, model.predict(X))
+                            predictions = model.predict(X)
+                            r2 = r2_score(Y, predictions)
                             
                             st.markdown("### ⚙️ Regression Results")
                             m1, m2 = st.columns(2)
@@ -803,10 +786,10 @@ def main():
                             
                             comp_df = pd.DataFrame({
                                 "Parameter": list(new_coefs.keys()),
-                                "Original Excel (2014)": [st.session_state.mra_coef.get(k, MRA_COEF_2014[k]) for k in new_coefs.keys()],
-                                "Calculated Python OLS": [new_coefs[k] for k in new_coefs.keys()]
+                                "Current Coefficient": [st.session_state.mra_coef.get(k, MRA_COEF_2014[k]) for k in new_coefs.keys()],
+                                "Calculated OLS Coefficient": [new_coefs[k] for k in new_coefs.keys()]
                             })
-                            st.dataframe(comp_df.style.format({"Original Excel (2014)": "{:.4f}", "Calculated Python OLS": "{:.4f}"}), use_container_width=True, hide_index=True)
+                            st.dataframe(comp_df.style.format({"Current Coefficient": "{:.4f}", "Calculated OLS Coefficient": "{:.4f}"}), use_container_width=True, hide_index=True)
                             
                             st.markdown("### 💾 Commit New Model")
                             c_apply, c_reset = st.columns(2)
@@ -825,7 +808,7 @@ def main():
                                     time.sleep(1.5)
                                     st.rerun()
                         else:
-                            st.error("🚨 No valid numeric data found in the selected columns. Please check your CSV.")
+                            st.error("🚨 No valid numeric data found. Please ensure the CSV is properly populated.")
                                 
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
