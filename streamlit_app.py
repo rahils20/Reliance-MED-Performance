@@ -20,7 +20,7 @@ except ImportError:
     GSPREAD_INSTALLED = False
 
 try:
-    from sklearn.linear_model import LinearRegression
+    from sklearn.linear_model import RidgeCV # UPGRADED TO RIDGE REGRESSION
     from sklearn.metrics import r2_score
     SKLEARN_INSTALLED = True
 except ImportError:
@@ -130,78 +130,36 @@ def save_config(db, coef_dict):
 db_conn = init_db_connection()
 
 # ==========================================
-# 2. BULLETPROOF SYNCHRONIZATION ENGINE
+# 2. REPORT & CSV EXPORT GENERATORS
 # ==========================================
-DEFAULTS = {
-    'steam': 73.0, 'desal': 740.0, 'gross': 790.0,
-    'sw_upper': 775.0, 'sw_total': 2100.0, 'brine_ret': 1250.0,
-    'sw_in_t': 30.0, 'brine_out_t': 41.0, 'stm_in_t': 179.0, 'vap_out_t': 70.0,
-    'mra_press': 248.0, 'mra_t1': 69.5, 'mra_bt1': 66.5,
-    'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0,
-    'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
-    'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05,
-    'p_cl': 0.0, 'p_so4': 0.0,
-    'chem_anti_ppm': 6.0, 'chem_anti_cons': 13.5,
-    'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
-    'skip_eff': False, 'skip_wq': False
-}
+def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra):
+    data_dict = {
+        "Date": str(date),
+        "Sea water Upper": ops['SW Upper'],
+        "Sea water feed": ops['SW Total'],
+        "Brine Water Return": ops['Brine Return'],
+        "Desal Production": ops['Desal'],
+        "LP Steam Consumption": ops['Steam'],
+        "Gross Production": ops['Gross Prod'],
+        "Recovery": round(ops['Recovery'], 2),
+        "Gain Output Ratio": round(ops['GOR'], 2),
+        "Steam Economy": round(ops['Economy'], 4),
+        "Overall HTC": round(ops['HTC'], 2),
+        "Fouling Factor": round(ops['Fouling'], 6),
+        "MRA Residual": round(mra['Residual'], 2),
+        "Antiscalant Dosing (PPM)": chem_data['anti_ppm'],
+        "Antiscalant Consumption (kg/hr)": chem_data['anti_cons'],
+        "Antifoam Dosing (PPM)": chem_data['foam_ppm'],
+        "Antifoam Consumption (kg/hr)": chem_data['foam_cons']
+    }
+    for param, details in w_data['Feed'].items(): data_dict[f"Feed Water - {param}"] = details['val']
+    for param, details in w_data['Product'].items(): data_dict[f"Desal Product - {param}"] = details['val']
+    for idx, row in display_effect_df.iterrows():
+        data_dict[f"{row['Effect ID']} Vapor Temp"] = row['Live Vapor (°C)']
+        data_dict[f"{row['Effect ID']} Brine Temp"] = row['Live Brine (°C)']
+    df = pd.DataFrame([data_dict])
+    return df.to_csv(index=False).encode('utf-8')
 
-SYNC_MAP = {
-    'steam': ['in_steam', 't1_steam', 't5_steam'], 'desal': ['in_desal', 't1_desal'], 'gross': ['in_gross', 't1_gross'],
-    'sw_upper': ['in_sw_up', 't1_sw_up', 't5_sw_up'], 'sw_total': ['in_sw_tot', 't1_sw_tot', 't4_sw_tot'], 'brine_ret': ['in_brine', 't1_brine', 't5_bflow'],
-    'sw_in_t': ['in_sw_in', 't2_sw_in'], 'brine_out_t': ['in_brine_out', 't2_brine_out'], 'stm_in_t': ['in_stm_in', 't2_stm_in', 't5_stm_t'], 'vap_out_t': ['in_vap_out', 't2_vap_out'],
-    'mra_press': ['in_press', 't5_press'], 'mra_t1': ['in_t1', 't5_t1'], 'mra_bt1': ['in_bt1', 't5_bt1'],
-    'f_ph': ['in_f_ph', 't3_f_ph'], 'f_turb': ['in_f_turb', 't3_f_turb'], 'f_tss': ['in_f_tss', 't3_f_tss'], 'f_tds': ['in_f_tds', 't3_f_tds'],
-    'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
-    'p_ph': ['in_p_ph', 't3_p_ph'], 'p_cond': ['in_p_cond', 't3_p_cond'], 'p_tds': ['in_p_tds', 't3_p_tds'], 'p_iron': ['in_p_iron', 't3_p_iron'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
-    'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
-    'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
-    'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
-}
-
-if 'vars' not in st.session_state: st.session_state.vars = DEFAULTS.copy()
-for k, v in DEFAULTS.items():
-    if k not in st.session_state.vars: st.session_state.vars[k] = v
-
-if 'sync_initialized' not in st.session_state:
-    for var_name, keys in SYNC_MAP.items():
-        for k in keys: 
-            if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
-    st.session_state.sync_initialized = True
-
-# Initialize or fix shared effect DF format
-if 'shared_effect_df' not in st.session_state or 'Vapor Temp (°C)' in st.session_state.shared_effect_df.columns:
-    st.session_state.shared_effect_df = pd.DataFrame({
-        "Effect ID": [f"Effect {i}" for i in range(1, 12)], 
-        "Live Vapor (°C)": np.round(np.linspace(69.0, 42.0, 11), 1), 
-        "Live Brine (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
-    })
-
-if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
-if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
-
-def sync_var(var_name, source_key):
-    new_val = st.session_state[source_key]
-    st.session_state.vars[var_name] = new_val
-    for target_key in SYNC_MAP[var_name]:
-        if target_key != source_key: st.session_state[target_key] = new_val
-
-def get_v(var_name): return st.session_state.vars[var_name]
-
-# ==========================================
-# 3. CONSTANTS & BASELINES
-# ==========================================
-LATENT_HEAT_STEAM_KJ_KG = 2260.0 
-MRA_BASELINE = {"Press_1st": 248.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
-
-WATER_SPECS = {
-    "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
-    "Product": {"pH": {"lim": (5.5, 7.0), "var": "p_ph"}, "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond"}, "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds"}, "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron"}, "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl"}, "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4"}}
-}
-
-# ==========================================
-# 4. REPORT GENERATORS (DOCX)
-# ==========================================
 def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_data, mra, skip_eff, skip_wq):
     doc = Document()
     doc.add_heading('MED-4 Daily Operational & Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -299,6 +257,76 @@ def generate_monthly_report(df_month, month_str, year_str):
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
+
+# ==========================================
+# 3. BULLETPROOF SYNCHRONIZATION ENGINE
+# ==========================================
+DEFAULTS = {
+    'steam': 73.0, 'desal': 740.0, 'gross': 790.0,
+    'sw_upper': 775.0, 'sw_total': 2100.0, 'brine_ret': 1250.0,
+    'sw_in_t': 30.0, 'brine_out_t': 41.0, 'stm_in_t': 179.0, 'vap_out_t': 70.0,
+    'mra_press': 248.0, 'mra_t1': 69.5, 'mra_bt1': 66.5,
+    'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0,
+    'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
+    'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05,
+    'p_cl': 0.0, 'p_so4': 0.0,
+    'chem_anti_ppm': 6.0, 'chem_anti_cons': 13.5,
+    'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
+    'skip_eff': False, 'skip_wq': False
+}
+
+SYNC_MAP = {
+    'steam': ['in_steam', 't1_steam', 't5_steam'], 'desal': ['in_desal', 't1_desal'], 'gross': ['in_gross', 't1_gross'],
+    'sw_upper': ['in_sw_up', 't1_sw_up', 't5_sw_up'], 'sw_total': ['in_sw_tot', 't1_sw_tot', 't4_sw_tot'], 'brine_ret': ['in_brine', 't1_brine', 't5_bflow'],
+    'sw_in_t': ['in_sw_in', 't2_sw_in'], 'brine_out_t': ['in_brine_out', 't2_brine_out'], 'stm_in_t': ['in_stm_in', 't2_stm_in', 't5_stm_t'], 'vap_out_t': ['in_vap_out', 't2_vap_out'],
+    'mra_press': ['in_press', 't5_press'], 'mra_t1': ['in_t1', 't5_t1'], 'mra_bt1': ['in_bt1', 't5_bt1'],
+    'f_ph': ['in_f_ph', 't3_f_ph'], 'f_turb': ['in_f_turb', 't3_f_turb'], 'f_tss': ['in_f_tss', 't3_f_tss'], 'f_tds': ['in_f_tds', 't3_f_tds'],
+    'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
+    'p_ph': ['in_p_ph', 't3_p_ph'], 'p_cond': ['in_p_cond', 't3_p_cond'], 'p_tds': ['in_p_tds', 't3_p_tds'], 'p_iron': ['in_p_iron', 't3_p_iron'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
+    'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
+    'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
+    'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
+}
+
+if 'vars' not in st.session_state: st.session_state.vars = DEFAULTS.copy()
+for k, v in DEFAULTS.items():
+    if k not in st.session_state.vars: st.session_state.vars[k] = v
+
+if 'sync_initialized' not in st.session_state:
+    for var_name, keys in SYNC_MAP.items():
+        for k in keys: 
+            if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
+    st.session_state.sync_initialized = True
+
+if 'shared_effect_df' not in st.session_state or 'Vapor Temp (°C)' in st.session_state.shared_effect_df.columns:
+    st.session_state.shared_effect_df = pd.DataFrame({
+        "Effect ID": [f"Effect {i}" for i in range(1, 12)], 
+        "Live Vapor (°C)": np.round(np.linspace(69.0, 42.0, 11), 1), 
+        "Live Brine (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
+    })
+
+if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
+if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
+
+def sync_var(var_name, source_key):
+    new_val = st.session_state[source_key]
+    st.session_state.vars[var_name] = new_val
+    for target_key in SYNC_MAP[var_name]:
+        if target_key != source_key: st.session_state[target_key] = new_val
+
+def get_v(var_name): return st.session_state.vars[var_name]
+
+# ==========================================
+# 4. CONSTANTS & BASELINES
+# ==========================================
+LATENT_HEAT_STEAM_KJ_KG = 2260.0 
+MRA_BASELINE = {"Press_1st": 248.0, "Temp_1st": 69.5, "SW_Upper": 775.0, "Brine_Temp_1st": 66.5, "Brine_Flow": 1250.0, "LP_Steam": 72.0, "Steam_Temp": 179.0}
+
+WATER_SPECS = {
+    "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
+    "Product": {"pH": {"lim": (5.5, 7.0), "var": "p_ph"}, "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond"}, "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds"}, "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron"}, "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl"}, "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4"}}
+}
+
 
 # ==========================================
 # 5. MAIN UI APPLICATION
@@ -594,7 +622,7 @@ def main():
 
             st.divider()
             st.markdown("### 💾 Commit Today's Data")
-            c_pwd, c_save, c_export = st.columns([2, 1, 1])
+            c_pwd, c_save, c_export, c_csv = st.columns([1.5, 1, 1, 1])
             with c_pwd:
                 pwd_append = st.text_input("Master Password", type="password", key="pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Commit")
             with c_save:
@@ -613,6 +641,9 @@ def main():
             with c_export:
                 word_file = generate_comprehensive_report(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'))
                 st.download_button("📄 Export Report (.docx)", data=word_file, file_name=f"MED4_Daily_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+            with c_csv:
+                csv_file = generate_daily_csv(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data)
+                st.download_button("📊 Export Report (.csv)", data=csv_file, file_name=f"MED4_Daily_{log_date}.csv", mime="text/csv", use_container_width=True)
 
         with rep_tabs[1]:
             st.markdown("#### 📆 Editable Master Log Database")
@@ -662,11 +693,11 @@ def main():
 
     # --- TAB 7: MODEL TRAINER (OLS) ---
     with tabs[7]:
-        st.subheader("🤖 Self-Calibrating MRA Engine (OLS Regression)")
+        st.subheader("🤖 Self-Calibrating MRA Engine (Ridge Regression)")
         if not SKLEARN_INSTALLED:
             st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt to unlock the Machine Learning engine.")
         else:
-            st.markdown("Upload clean baseline historical data to mathematically recalibrate the MRA formula.")
+            st.markdown("Upload clean baseline historical data to mathematically recalibrate the MRA formula using L2 Regularization (stabilizes highly correlated thermal variables).")
             
             template_df = pd.DataFrame(columns=["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"])
             st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
@@ -687,12 +718,17 @@ def main():
                     if not all(col in df_train.columns for col in req_cols):
                         st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact Template format.")
                     else:
-                        st.success(f"✅ Data Accepted: {len(df_train)} historical data points loaded.")
+                        # OUTLIER FILTER: Remove rows where plant is shut down or barely running
+                        df_train = df_train[df_train["Gross Prod"] > 100.0]
+                        
+                        st.success(f"✅ Data Accepted: {len(df_train)} clean historical data points loaded (shutdowns ignored).")
                         
                         X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp"]]
                         Y = df_train["Gross Prod"]
                         
-                        model = LinearRegression()
+                        # RIDGE REGRESSION ENGINE
+                        # Uses cross-validation to find the optimal L2 penalty to stop coefficient explosion
+                        model = RidgeCV(alphas=[0.1, 1.0, 10.0, 100.0, 1000.0])
                         model.fit(X, Y)
                         predictions = model.predict(X)
                         r2 = r2_score(Y, predictions)
