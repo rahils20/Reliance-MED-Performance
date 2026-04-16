@@ -295,7 +295,7 @@ DEFAULTS = {
     'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
     'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05,
     'p_cl': 0.0, 'p_so4': 0.0,
-    'chem_anti_ppm': 6.0, 'chem_anti_cons': 13.5,
+    'chem_anti_ppm': 4.8, 'chem_anti_cons': 13.5,
     'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
     'skip_eff': False, 'skip_wq': False
 }
@@ -308,7 +308,7 @@ SYNC_MAP = {
     'f_ph': ['in_f_ph', 't3_f_ph'], 'f_turb': ['in_f_turb', 't3_f_turb'], 'f_tss': ['in_f_tss', 't3_f_tss'], 'f_tds': ['in_f_tds', 't3_f_tds'],
     'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
     'p_ph': ['in_p_ph', 't3_p_ph'], 'p_cond': ['in_p_cond', 't3_p_cond'], 'p_tds': ['in_p_tds', 't3_p_tds'], 'p_iron': ['in_p_iron', 't3_p_iron'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
-    'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
+    'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm', 't5_anti'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
     'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
     'skip_eff': ['in_skip_eff'], 'skip_wq': ['in_skip_wq']
 }
@@ -340,6 +340,18 @@ def sync_var(var_name, source_key):
         if target_key != source_key: st.session_state[target_key] = new_val
 
 def get_v(var_name): return st.session_state.vars[var_name]
+
+
+# ==========================================
+# 4. CONSTANTS & BASELINES
+# ==========================================
+LATENT_HEAT_STEAM_KJ_KG = 2260.0 
+
+WATER_SPECS = {
+    "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
+    "Product": {"pH": {"lim": (5.5, 7.0), "var": "p_ph"}, "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond"}, "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds"}, "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron"}, "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl"}, "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4"}}
+}
+
 
 # ==========================================
 # 5. MAIN UI APPLICATION
@@ -389,7 +401,7 @@ def main():
         (coefs["Brine_Flow"] * get_v('brine_ret')) + 
         (coefs["LP_Steam"] * get_v('steam')) + 
         (coefs["Steam_Temp"] * get_v('stm_in_t')) +
-        (coefs["Anti_PPM"] * get_v('chem_anti_ppm'))
+        (coefs.get("Anti_PPM", MRA_COEF_2014["Anti_PPM"]) * get_v('chem_anti_ppm'))
     )
     
     mra_data['Actual'] = ops_data['Gross Prod']
@@ -399,7 +411,7 @@ def main():
     # THE FIX: Added 8th parameter to the variance table
     for name, key, live_val in [("1st Effect Press", "Press_1st", get_v('mra_press')), ("1st Effect Temp", "Temp_1st", get_v('mra_t1')), ("Sea Water Upper", "SW_Upper", get_v('sw_upper')), ("1st Brine Temp", "Brine_Temp_1st", get_v('mra_bt1')), ("Brine Flow", "Brine_Flow", get_v('brine_ret')), ("LP Steam", "LP_Steam", get_v('steam')), ("Steam Temp", "Steam_Temp", get_v('stm_in_t')), ("Antiscalant PPM", "Anti_PPM", get_v('chem_anti_ppm'))]:
         dev = live_val - MRA_BASELINE[key]
-        var_data.append([name, MRA_BASELINE[key], live_val, dev, coefs[key], dev * coefs[key]])
+        var_data.append([name, MRA_BASELINE[key], live_val, dev, coefs.get(key, MRA_COEF_2014[key]), dev * coefs.get(key, MRA_COEF_2014[key])])
     mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
     water_data = {'Feed': {}, 'Product': {}}
@@ -791,7 +803,7 @@ def main():
                             
                             comp_df = pd.DataFrame({
                                 "Parameter": list(new_coefs.keys()),
-                                "Original Excel (2014)": [st.session_state.mra_coef[k] for k in new_coefs.keys()],
+                                "Original Excel (2014)": [st.session_state.mra_coef.get(k, MRA_COEF_2014[k]) for k in new_coefs.keys()],
                                 "Calculated Python OLS": [new_coefs[k] for k in new_coefs.keys()]
                             })
                             st.dataframe(comp_df.style.format({"Original Excel (2014)": "{:.4f}", "Calculated Python OLS": "{:.4f}"}), use_container_width=True, hide_index=True)
