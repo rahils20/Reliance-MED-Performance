@@ -245,7 +245,11 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
             rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Desal Product', f"{data['min']}-{data['max']}", str(data['val'])
 
     doc.add_heading('6. MRA Fouling Indicator', level=1)
-    doc.add_paragraph(f"Actual Gross: {mra['Actual']:.1f} m³/h | MRA Predicted: {mra['Predicted']:.1f} m³/h | Residual: {mra['Residual']:.1f} m³/h")
+    
+    # PDF % Difference Logic added to Word Doc too
+    diff_pct = (mra['Residual'] / mra['Predicted']) * 100 if mra['Predicted'] > 0 else 0
+    doc.add_paragraph(f"Actual Gross: {mra['Actual']:.1f} m³/h | MRA Predicted: {mra['Predicted']:.1f} m³/h | Difference: {diff_pct:.1f}%")
+    
     t_mra = doc.add_table(rows=1, cols=5); t_mra.style = 'Table Grid'
     for i, h in enumerate(['Parameter', 'Baseline', 'Live Input', 'Deviation', 'Impact']): t_mra.rows[0].cells[i].text = h
     for idx, row in mra['Variance_DF'].iterrows():
@@ -665,9 +669,17 @@ def main():
             k1, k2, k3 = st.columns(3)
             k1.metric("Actual Gross SCADA", f"{mra_data['Actual']:.1f} m³/h")
             k2.metric("MRA Predicted", f"{mra_data['Predicted']:.1f} m³/h")
-            if mra_data['Residual'] < -15.0: k3.error(f"Residual: {mra_data['Residual']:.1f} (FOULING)")
-            elif mra_data['Residual'] > 15.0: k3.success(f"Residual: {mra_data['Residual']:.1f} (CLEAN)")
-            else: k3.info(f"Residual: {mra_data['Residual']:.1f} (NORMAL)")
+            
+            # THE FIX: Percentage Based Alert Logic
+            diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
+            
+            if diff_pct <= -5.0:
+                k3.error(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Please clean the machine")
+            elif diff_pct <= -4.0:
+                k3.warning(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Increase antiscalant dosing")
+            else:
+                k3.success(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - CLEAN")
+                
             st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
     # --- TAB 6: ENTERPRISE REPORTING SUITE ---
@@ -677,10 +689,23 @@ def main():
         
         with rep_tabs[0]:
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("Date", log_date.strftime('%d/%m/%Y'))
+            m_col1.metric("Date", log_date.strftime('%d/%m/%Y')) 
             m_col2.metric("Gross Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
             m_col3.metric("System GOR", f"{ops_data['GOR']:.2f}", delta=f"{ops_data['GOR'] - 10.5:.2f} from Target" if ops_data['GOR'] < 10.5 else None)
-            m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta="Stable" if mra_data['Residual'] >= -15 else "Fouling", delta_color="normal" if mra_data['Residual'] >= -15 else "inverse")
+            
+            # THE FIX: Percentage Based Reporting Dashboard
+            diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
+            if diff_pct <= -5.0:
+                delta_text = f"{diff_pct:.1f}% (Please clean machine)"
+                d_color = "inverse"
+            elif diff_pct <= -4.0:
+                delta_text = f"{diff_pct:.1f}% (Increase antiscalant)"
+                d_color = "inverse"
+            else:
+                delta_text = f"{diff_pct:.1f}% (Clean)"
+                d_color = "normal"
+                
+            m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta=delta_text, delta_color=d_color)
             
             st.divider()
             graph_col1, graph_col2 = st.columns(2)
@@ -763,7 +788,6 @@ def main():
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'], errors='coerce')
                 df_logs['Recovery (%)'] = np.where(pd.to_numeric(df_logs['SW Feed (m3/h)'], errors='coerce') > 0, (pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce') / pd.to_numeric(df_logs['SW Feed (m3/h)'], errors='coerce')) * 100, 0)
                 
-                # THE FIX: Ensuring the values are explicitly cast as floats to avoid text-dropping errors
                 df_logs['Actual Production'] = pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce')
                 df_logs['Residual_Val'] = pd.to_numeric(df_logs['Residual'], errors='coerce')
                 df_logs['Predicted Production'] = df_logs['Actual Production'] - df_logs['Residual_Val']
@@ -784,7 +808,6 @@ def main():
 
                 st.divider()
                 
-                # THE FIX: Added Dash array to Predicted so the solid Actual line shines through if they perfectly overlap
                 q_col3, q_col4 = st.columns(2)
                 with q_col3:
                     st.markdown("#### ⚖️ Actual vs. Predicted Production")
@@ -935,7 +958,6 @@ def main():
                     
                     if len(df_bulk) > 0:
                         
-                        # THE FIX: If any specific sensor column is missing/blank, temporarily fill it with the baseline average
                         for col_name, baseline_val in zip(
                             ['Press_1st', 'Temp_1st', 'SW_Upper', 'Brine_Temp_1st', 'Brine_Flow', 'Steam (TPH)', 'Steam_Temp', 'Anti_PPM'],
                             [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75, 165.54, 4.82]
