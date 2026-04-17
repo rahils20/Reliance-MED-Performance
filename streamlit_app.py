@@ -108,7 +108,6 @@ def load_database(db):
     return pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual", "Antiscalant (kg)", "Antifoam (kg)"])
 
 def save_database(db, df):
-    # Enforces standard backend date format
     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
     if db["type"] == "cloud":
@@ -361,11 +360,11 @@ def main():
     except: st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
     st.sidebar.divider()
     
-    # 1) THE FIX: Enforce DD/MM/YYYY formatting on the main date picker
+    # THE FIX: Native Indian Date Formatting
     log_date = st.sidebar.date_input("Date", datetime.date.today(), format="DD/MM/YYYY")
-    log_date_str = log_date.strftime('%Y-%m-%d')
+    log_date_str = log_date.strftime('%Y-%m-%d') # Backend standard string
     
-    # 2) THE FIX: Auto-load inputs if the selected date exists in the master database
+    # THE FIX: Database Listener - Auto-load previously saved inputs without crashing
     if 'last_selected_date' not in st.session_state:
         st.session_state.last_selected_date = None
 
@@ -373,37 +372,39 @@ def main():
         st.session_state.last_selected_date = log_date_str
         
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
-            dates_in_db = pd.to_datetime(st.session_state.daily_logs['Date']).dt.strftime('%Y-%m-%d').values
+            # Ensure DB dates match the comparison format
+            dates_in_db = pd.to_datetime(st.session_state.daily_logs['Date'], errors='coerce').dt.strftime('%Y-%m-%d').values
             if log_date_str in dates_in_db:
+                # Find the row for this date
                 row_idx = np.where(dates_in_db == log_date_str)[0][0]
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
                 db_to_var_mapping = {
-                    'gross': 'Gross Prod (m3/h)',
-                    'desal': 'Desal (m3/h)',
-                    'steam': 'Steam (TPH)',
-                    'sw_total': 'SW Feed (m3/h)',
-                    'chem_anti_cons': 'Antiscalant (kg)',
-                    'chem_foam_cons': 'Antifoam (kg)',
-                    'mra_press': 'Press_1st',
-                    'mra_t1': 'Temp_1st',
-                    'sw_upper': 'SW_Upper',
-                    'mra_bt1': 'Brine_Temp_1st',
-                    'brine_ret': 'Brine_Flow',
-                    'stm_in_t': 'Steam_Temp',
-                    'chem_anti_ppm': 'Anti_PPM'
+                    'gross': 'Gross Prod (m3/h)', 'desal': 'Desal (m3/h)', 'steam': 'Steam (TPH)',
+                    'sw_total': 'SW Feed (m3/h)', 'chem_anti_cons': 'Antiscalant (kg)', 'chem_foam_cons': 'Antifoam (kg)',
+                    'mra_press': 'Press_1st', 'mra_t1': 'Temp_1st', 'sw_upper': 'SW_Upper',
+                    'mra_bt1': 'Brine_Temp_1st', 'brine_ret': 'Brine_Flow', 'stm_in_t': 'Steam_Temp',
+                    'chem_anti_ppm': 'Anti_PPM', 'sw_in_t': 'SW_In_Temp', 'brine_out_t': 'Brine_Out_Temp',
+                    'vap_out_t': 'Vap_Out_Temp'
                 }
                 
                 loaded_vars = False
                 for var_key, col_name in db_to_var_mapping.items():
                     if col_name in row.index and pd.notna(row[col_name]):
-                        st.session_state.vars[var_key] = float(row[col_name])
-                        for tk in SYNC_MAP[var_key]:
-                            st.session_state[tk] = st.session_state.vars[var_key]
-                        loaded_vars = True
+                        try:
+                            # CRASH PROTECTION: Strip commas and force float conversion. Fail silently if data is dirty.
+                            val_str = str(row[col_name]).replace(',', '').strip()
+                            if val_str and val_str.lower() not in ['nan', 'none', 'null', 'na']:
+                                val = float(val_str)
+                                st.session_state.vars[var_key] = val
+                                for tk in SYNC_MAP[var_key]:
+                                    st.session_state[tk] = val
+                                loaded_vars = True
+                        except Exception:
+                            pass 
                 
                 if loaded_vars:
-                    st.sidebar.success(f"📅 Auto-loaded data for {log_date.strftime('%d/%m/%Y')}")
+                    st.sidebar.success(f"📅 Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
 
     area_m2 = st.sidebar.number_input("Overall Surface Area (m²)", value=1757.49)
     
@@ -411,7 +412,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. MRA Calibration Tool"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "⚙️ 7. MRA Calibration Tool", "📤 8. Bulk Uploads"])
 
     # --- CALCULATE LIVE DATA ---
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
@@ -711,7 +712,7 @@ def main():
             with c_save:
                 if st.button("💾 Append Data", use_container_width=True):
                     if pwd_append == "12345678":
-                        # THE FIX: We now explicitly log ALL inputs to the database so they auto-load perfectly next time
+                        # THE FIX: Added the 3 temperatures needed for HTC to save to the database so they auto-load correctly
                         new_log = pd.DataFrame({
                             "Date": [log_date_str], 
                             "Gross Prod (m3/h)": [ops_data['Gross Prod']], "Desal (m3/h)": [ops_data['Desal']], 
@@ -722,7 +723,9 @@ def main():
                             "Press_1st": [get_v('mra_press')], "Temp_1st": [get_v('mra_t1')], 
                             "SW_Upper": [get_v('sw_upper')], "Brine_Temp_1st": [get_v('mra_bt1')], 
                             "Brine_Flow": [get_v('brine_ret')], "Steam_Temp": [get_v('stm_in_t')], 
-                            "Anti_PPM": [get_v('chem_anti_ppm')]
+                            "Anti_PPM": [get_v('chem_anti_ppm')],
+                            "SW_In_Temp": [get_v('sw_in_t')], "Brine_Out_Temp": [get_v('brine_out_t')],
+                            "Vap_Out_Temp": [get_v('vap_out_t')]
                         })
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                         save_database(db_conn, st.session_state.daily_logs)
@@ -781,7 +784,7 @@ def main():
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
 
-    # --- TAB 7: TEMPLATE UPLOAD MODEL TRAINER (10-COLUMNS) ---
+    # --- TAB 7: TEMPLATE UPLOAD MODEL TRAINER ---
     with tabs[7]:
         st.subheader("🤖 Pure OLS Model Calibration (Template Upload)")
         if not SKLEARN_INSTALLED:
@@ -810,7 +813,7 @@ def main():
             
             st.divider()
             
-            uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"])
+            uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"], key="mra_trainer")
             
             if uploaded_file is not None:
                 try:
@@ -823,7 +826,7 @@ def main():
                         for col in req_cols:
                             if col != "Date":
                                 if df_train[col].dtype == object:
-                                    df_train[col] = pd.to_numeric(df_train[col].str.replace(',', '', regex=False), errors='coerce')
+                                    df_train[col] = pd.to_numeric(df_train[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                         
                         df_train = df_train.dropna(subset=[c for c in req_cols if c != "Date"])
                         
@@ -874,6 +877,126 @@ def main():
                                 
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
+
+    # --- TAB 8: BULK UPLOAD ---
+    with tabs[8]:
+        st.subheader("📤 Bulk Data Upload & Sync")
+        st.markdown("Download the Bulk Upload Template, fill in your daily historical data, and upload it here. The system will automatically calculate all KPIs, MRA Residuals, and HTC for every row, allowing you to quickly backfill your Master Database.")
+        
+        # Define all 17 columns needed to perfectly replicate the dashboard calculations in bulk
+        bulk_cols = [
+            "Date (DD/MM/YYYY)", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", 
+            "SW_Upper", "Brine_Flow", "Press_1st", "Temp_1st", "Brine_Temp_1st", "Steam_Temp", 
+            "SW_In_Temp", "Brine_Out_Temp", "Vap_Out_Temp", "Anti_PPM", "Antiscalant (kg)", "Antifoam (kg)"
+        ]
+        
+        bulk_template = pd.DataFrame(columns=bulk_cols)
+        st.download_button(label="1️⃣ Download Bulk Upload Template", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='MED4_Bulk_Template.csv', mime='text/csv')
+        
+        st.divider()
+        
+        bulk_file = st.file_uploader("2️⃣ Upload Populated Bulk Data", type=["csv"], key="bulk_uploader")
+        
+        if bulk_file is not None:
+            try:
+                df_bulk = pd.read_csv(bulk_file)
+                missing = [c for c in bulk_cols if c not in df_bulk.columns]
+                
+                if missing:
+                    st.error(f"❌ Uploaded CSV is missing required columns: {', '.join(missing)}")
+                else:
+                    # Clean the data (strip commas, force numbers)
+                    num_cols = [c for c in bulk_cols if c != "Date (DD/MM/YYYY)"]
+                    for col in num_cols:
+                        if df_bulk[col].dtype == object:
+                            df_bulk[col] = pd.to_numeric(df_bulk[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
+                    
+                    # Drop rows where the primary target is missing
+                    df_bulk = df_bulk.dropna(subset=["Date (DD/MM/YYYY)", "Gross Prod (m3/h)"])
+                    
+                    if len(df_bulk) > 0:
+                        # Standardize dates to YYYY-MM-DD for the backend database sorting
+                        df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date (DD/MM/YYYY)'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+                        
+                        # 1. Calculate GOR
+                        df_bulk['GOR'] = np.where(df_bulk['Steam (TPH)'] > 0, df_bulk['Gross Prod (m3/h)'] / df_bulk['Steam (TPH)'], 0)
+                        
+                        # 2. Calculate Predicted MRA & Residual
+                        df_bulk['Predicted'] = (
+                            coefs["Intercept"] + 
+                            (coefs["Press_1st"] * df_bulk['Press_1st']) + 
+                            (coefs["Temp_1st"] * df_bulk['Temp_1st']) + 
+                            (coefs["SW_Upper"] * df_bulk['SW_Upper']) + 
+                            (coefs["Brine_Temp_1st"] * df_bulk['Brine_Temp_1st']) + 
+                            (coefs["Brine_Flow"] * df_bulk['Brine_Flow']) + 
+                            (coefs["LP_Steam"] * df_bulk['Steam (TPH)']) + 
+                            (coefs["Steam_Temp"] * df_bulk['Steam_Temp']) +
+                            (coefs.get("Anti_PPM", MRA_COEF_2014["Anti_PPM"]) * df_bulk['Anti_PPM'])
+                        )
+                        df_bulk['Residual'] = df_bulk['Gross Prod (m3/h)'] - df_bulk['Predicted']
+                        
+                        # 3. Calculate Overall HTC
+                        dt1 = df_bulk['Steam_Temp'] - df_bulk['Brine_Out_Temp']
+                        dt2 = df_bulk['Vap_Out_Temp'] - df_bulk['SW_In_Temp']
+                        
+                        # Prevent division by zero or Log of negative numbers
+                        valid_dt = (dt1 > 0) & (dt2 > 0) & (dt1 != dt2)
+                        
+                        lmtd = np.where(valid_dt, (dt1 - dt2) / np.log(dt1 / dt2), 0)
+                        q_act = df_bulk['SW Feed (m3/h)'] * (df_bulk['Brine_Out_Temp'] - df_bulk['SW_In_Temp']) * 0.930
+                        
+                        df_bulk['Overall HTC'] = np.where(lmtd > 0, (q_act / (area_m2 * lmtd)) * 1000, 0)
+                        
+                        # Prepare the final dataframe perfectly aligned with the Master Database
+                        db_ready_df = pd.DataFrame({
+                            "Date": df_bulk['Date_Clean'],
+                            "Gross Prod (m3/h)": df_bulk['Gross Prod (m3/h)'],
+                            "Desal (m3/h)": df_bulk['Desal (m3/h)'],
+                            "Steam (TPH)": df_bulk['Steam (TPH)'],
+                            "SW Feed (m3/h)": df_bulk['SW Feed (m3/h)'],
+                            "GOR": df_bulk['GOR'].round(2),
+                            "Overall HTC": df_bulk['Overall HTC'].round(2),
+                            "Residual": df_bulk['Residual'].round(1),
+                            "Antiscalant (kg)": df_bulk['Antiscalant (kg)'],
+                            "Antifoam (kg)": df_bulk['Antifoam (kg)'],
+                            "Press_1st": df_bulk['Press_1st'],
+                            "Temp_1st": df_bulk['Temp_1st'],
+                            "SW_Upper": df_bulk['SW_Upper'],
+                            "Brine_Temp_1st": df_bulk['Brine_Temp_1st'],
+                            "Brine_Flow": df_bulk['Brine_Flow'],
+                            "Steam_Temp": df_bulk['Steam_Temp'],
+                            "Anti_PPM": df_bulk['Anti_PPM'],
+                            "SW_In_Temp": df_bulk['SW_In_Temp'],
+                            "Brine_Out_Temp": df_bulk['Brine_Out_Temp'],
+                            "Vap_Out_Temp": df_bulk['Vap_Out_Temp']
+                        })
+                        
+                        st.success(f"✅ Automatically calculated KPIs, HTC, and Residuals for {len(db_ready_df)} valid rows.")
+                        st.dataframe(db_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
+                        
+                        st.markdown("### 💾 Commit Bulk Data")
+                        c_pwd, c_save = st.columns([2, 2])
+                        with c_pwd:
+                            pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+                        with c_save:
+                            if st.button("🔄 Append all to Master Database", use_container_width=True):
+                                if pwd_bulk == "12345678":
+                                    st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
+                                    
+                                    # Overwrite duplicates so the newest upload always takes priority for a specific date
+                                    st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
+                                    
+                                    save_database(db_conn, st.session_state.daily_logs)
+                                    st.success("✅ Bulk Data Successfully Synced to Database!")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                elif pwd_bulk != "": 
+                                    st.error("❌ Incorrect Password.")
+                    else:
+                        st.error("🚨 No valid data found in CSV.")
+                        
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
 
 if __name__ == "__main__":
     main()
