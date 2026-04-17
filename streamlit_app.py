@@ -105,9 +105,10 @@ def load_database(db):
         except: pass
     if os.path.exists(LOCAL_DB_FILE):
         return pd.read_csv(LOCAL_DB_FILE)
-    return pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual", "Antiscalant (kg)", "Antifoam (kg)"])
+    return pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "Steam_Temp", "Anti_PPM", "SW_In_Temp", "Brine_Out_Temp", "Vap_Out_Temp"])
 
 def save_database(db, df):
+    # Enforces standard backend date format
     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
     if db["type"] == "cloud":
@@ -341,6 +342,7 @@ def sync_var(var_name, source_key):
 
 def get_v(var_name): return st.session_state.vars[var_name]
 
+
 # ==========================================
 # 4. CONSTANTS & BASELINES
 # ==========================================
@@ -360,11 +362,9 @@ def main():
     except: st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
     st.sidebar.divider()
     
-    # THE FIX: Native Indian Date Formatting
     log_date = st.sidebar.date_input("Date", datetime.date.today(), format="DD/MM/YYYY")
     log_date_str = log_date.strftime('%Y-%m-%d') # Backend standard string
     
-    # THE FIX: Database Listener - Auto-load previously saved inputs without crashing
     if 'last_selected_date' not in st.session_state:
         st.session_state.last_selected_date = None
 
@@ -372,10 +372,8 @@ def main():
         st.session_state.last_selected_date = log_date_str
         
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
-            # Ensure DB dates match the comparison format
             dates_in_db = pd.to_datetime(st.session_state.daily_logs['Date'], errors='coerce').dt.strftime('%Y-%m-%d').values
             if log_date_str in dates_in_db:
-                # Find the row for this date
                 row_idx = np.where(dates_in_db == log_date_str)[0][0]
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
@@ -392,7 +390,6 @@ def main():
                 for var_key, col_name in db_to_var_mapping.items():
                     if col_name in row.index and pd.notna(row[col_name]):
                         try:
-                            # CRASH PROTECTION: Strip commas and force float conversion. Fail silently if data is dirty.
                             val_str = str(row[col_name]).replace(',', '').strip()
                             if val_str and val_str.lower() not in ['nan', 'none', 'null', 'na']:
                                 val = float(val_str)
@@ -712,7 +709,6 @@ def main():
             with c_save:
                 if st.button("💾 Append Data", use_container_width=True):
                     if pwd_append == "12345678":
-                        # THE FIX: Added the 3 temperatures needed for HTC to save to the database so they auto-load correctly
                         new_log = pd.DataFrame({
                             "Date": [log_date_str], 
                             "Gross Prod (m3/h)": [ops_data['Gross Prod']], "Desal (m3/h)": [ops_data['Desal']], 
@@ -772,6 +768,10 @@ def main():
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'])
                 df_logs['Recovery (%)'] = np.where(df_logs['SW Feed (m3/h)'] > 0, (df_logs['Gross Prod (m3/h)'] / df_logs['SW Feed (m3/h)']) * 100, 0)
                 
+                # We need to re-calculate "Predicted" dynamically to plot the new graph accurately
+                # In case previous database versions lacked the "Predicted" column.
+                df_logs['Predicted MRA'] = df_logs['Gross Prod (m3/h)'] - df_logs['Residual']
+                
                 q_col1, q_col2 = st.columns(2)
                 with q_col1:
                     st.markdown("#### 📉 Recovery Trend")
@@ -784,13 +784,38 @@ def main():
                         htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
 
+                st.divider()
+                
+                q_col3, q_col4 = st.columns(2)
+                with q_col3:
+                    st.markdown("#### ⚖️ Actual vs. Predicted Production")
+                    if len(df_logs) > 1:
+                        # Reshape the data for overlapping lines
+                        fold_df = df_logs[['Date', 'Gross Prod (m3/h)', 'Predicted MRA']].melt('Date', var_name='Metric', value_name='Production (m³/h)')
+                        
+                        prod_chart = alt.Chart(fold_df).mark_line(point=True).encode(
+                            x=alt.X('Date:T', title="Date"),
+                            y=alt.Y('Production (m³/h):Q', scale=alt.Scale(zero=False)),
+                            color=alt.Color('Metric:N', scale=alt.Scale(domain=['Gross Prod (m3/h)', 'Predicted MRA'], range=['#1f77b4', '#ff7f0e'])),
+                            tooltip=['Date:T', 'Metric', 'Production (m³/h)']
+                        )
+                        st.altair_chart(prod_chart, use_container_width=True)
+                with q_col4:
+                    st.markdown("#### 💰 System GOR Trend")
+                    if len(df_logs) > 1:
+                        gor_chart = alt.Chart(df_logs).mark_line(point=True, color='green').encode(
+                            x=alt.X('Date:T', title="Date"),
+                            y=alt.Y('GOR:Q', scale=alt.Scale(zero=False)),
+                            tooltip=['Date:T', 'GOR']
+                        )
+                        st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
+
     # --- TAB 7: TEMPLATE UPLOAD MODEL TRAINER ---
     with tabs[7]:
         st.subheader("🤖 Pure OLS Model Calibration (Template Upload)")
         if not SKLEARN_INSTALLED:
             st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt.")
         else:
-            # THE FIX: Escaped the Reset button so you can click it at any time!
             st.markdown("### 💾 Manage Baseline Model")
             st.markdown("If you wish to revert to the mathematically verified 2014-15 baseline, you can reset the system at any time.")
             c_reset, _ = st.columns([1, 1])
@@ -911,17 +936,26 @@ def main():
                         if df_bulk[col].dtype == object:
                             df_bulk[col] = pd.to_numeric(df_bulk[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                     
-                    # Drop rows where the primary target is missing
+                    # Drop rows where the primary targets (Date or Gross Prod) are missing
                     df_bulk = df_bulk.dropna(subset=["Date (DD/MM/YYYY)", "Gross Prod (m3/h)"])
                     
                     if len(df_bulk) > 0:
+                        
+                        # THE FIX: If any specific sensor column is missing/blank, temporarily fill it with the baseline average
+                        # This prevents the entire Residual math engine from collapsing to 'NaN'
+                        for col_name, baseline_val in zip(
+                            ['Press_1st', 'Temp_1st', 'SW_Upper', 'Brine_Temp_1st', 'Brine_Flow', 'Steam (TPH)', 'Steam_Temp', 'Anti_PPM'],
+                            [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75, 165.54, 4.82]
+                        ):
+                            df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
+                            
                         # Standardize dates to YYYY-MM-DD for the backend database sorting
                         df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date (DD/MM/YYYY)'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
                         
                         # 1. Calculate GOR
                         df_bulk['GOR'] = np.where(df_bulk['Steam (TPH)'] > 0, df_bulk['Gross Prod (m3/h)'] / df_bulk['Steam (TPH)'], 0)
                         
-                        # 2. Calculate Predicted MRA & Residual
+                        # 2. Calculate Predicted MRA & Residual safely
                         df_bulk['Predicted'] = (
                             coefs["Intercept"] + 
                             (coefs["Press_1st"] * df_bulk['Press_1st']) + 
@@ -935,7 +969,12 @@ def main():
                         )
                         df_bulk['Residual'] = df_bulk['Gross Prod (m3/h)'] - df_bulk['Predicted']
                         
-                        # 3. Calculate Overall HTC
+                        # 3. Calculate Overall HTC safely
+                        df_bulk['SW_In_Temp'] = df_bulk['SW_In_Temp'].fillna(30.0)
+                        df_bulk['Brine_Out_Temp'] = df_bulk['Brine_Out_Temp'].fillna(41.0)
+                        df_bulk['Vap_Out_Temp'] = df_bulk['Vap_Out_Temp'].fillna(70.0)
+                        df_bulk['SW Feed (m3/h)'] = df_bulk['SW Feed (m3/h)'].fillna(2100.0)
+                        
                         dt1 = df_bulk['Steam_Temp'] - df_bulk['Brine_Out_Temp']
                         dt2 = df_bulk['Vap_Out_Temp'] - df_bulk['SW_In_Temp']
                         
@@ -951,14 +990,14 @@ def main():
                         db_ready_df = pd.DataFrame({
                             "Date": df_bulk['Date_Clean'],
                             "Gross Prod (m3/h)": df_bulk['Gross Prod (m3/h)'],
-                            "Desal (m3/h)": df_bulk['Desal (m3/h)'],
+                            "Desal (m3/h)": df_bulk['Desal (m3/h)'].fillna(0),
                             "Steam (TPH)": df_bulk['Steam (TPH)'],
                             "SW Feed (m3/h)": df_bulk['SW Feed (m3/h)'],
                             "GOR": df_bulk['GOR'].round(2),
                             "Overall HTC": df_bulk['Overall HTC'].round(2),
                             "Residual": df_bulk['Residual'].round(1),
-                            "Antiscalant (kg)": df_bulk['Antiscalant (kg)'],
-                            "Antifoam (kg)": df_bulk['Antifoam (kg)'],
+                            "Antiscalant (kg)": df_bulk['Antiscalant (kg)'].fillna(0),
+                            "Antifoam (kg)": df_bulk['Antifoam (kg)'].fillna(0),
                             "Press_1st": df_bulk['Press_1st'],
                             "Temp_1st": df_bulk['Temp_1st'],
                             "SW_Upper": df_bulk['SW_Upper'],
