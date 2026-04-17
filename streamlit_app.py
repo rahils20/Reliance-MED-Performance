@@ -108,7 +108,6 @@ def load_database(db):
     return pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "Steam_Temp", "Anti_PPM", "SW_In_Temp", "Brine_Out_Temp", "Vap_Out_Temp"])
 
 def save_database(db, df):
-    # Enforces standard backend date format
     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
     if db["type"] == "cloud":
@@ -160,7 +159,7 @@ db_conn = init_db_connection()
 # ==========================================
 def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra):
     data_dict = {
-        "Date": date.strftime('%d/%m/%Y'), # Indian format
+        "Date": date.strftime('%d/%m/%Y'),
         "Sea water Upper": ops['SW Upper'],
         "Sea water feed": ops['SW Total'],
         "Brine Water Return": ops['Brine Return'],
@@ -193,7 +192,7 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     p.add_run('Prepared by: ').bold = True
     p.add_run('Chembond Chemicals Ltd.\n')
     p.add_run('Date: ').bold = True
-    p.add_run(date.strftime('%d/%m/%Y')) # Indian format
+    p.add_run(date.strftime('%d/%m/%Y'))
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     doc.add_heading('1. Executive Summary', level=1)
@@ -342,7 +341,6 @@ def sync_var(var_name, source_key):
 
 def get_v(var_name): return st.session_state.vars[var_name]
 
-
 # ==========================================
 # 4. CONSTANTS & BASELINES
 # ==========================================
@@ -363,7 +361,7 @@ def main():
     st.sidebar.divider()
     
     log_date = st.sidebar.date_input("Date", datetime.date.today(), format="DD/MM/YYYY")
-    log_date_str = log_date.strftime('%Y-%m-%d') # Backend standard string
+    log_date_str = log_date.strftime('%Y-%m-%d')
     
     if 'last_selected_date' not in st.session_state:
         st.session_state.last_selected_date = None
@@ -432,7 +430,6 @@ def main():
     mra_data = {}
     coefs = st.session_state.mra_coef 
     
-    # 8-Variable Prediction Formula
     mra_data['Predicted'] = (
         coefs["Intercept"] + 
         (coefs["Press_1st"] * get_v('mra_press')) + 
@@ -449,7 +446,6 @@ def main():
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
 
     var_data = []
-    # Added 8th parameter to the variance table
     for name, key, live_val in [("1st Effect Press", "Press_1st", get_v('mra_press')), ("1st Effect Temp", "Temp_1st", get_v('mra_t1')), ("Sea Water Upper", "SW_Upper", get_v('sw_upper')), ("1st Brine Temp", "Brine_Temp_1st", get_v('mra_bt1')), ("Brine Flow", "Brine_Flow", get_v('brine_ret')), ("LP Steam", "LP_Steam", get_v('steam')), ("Steam Temp", "Steam_Temp", get_v('stm_in_t')), ("Antiscalant PPM", "Anti_PPM", get_v('chem_anti_ppm'))]:
         dev = live_val - MRA_BASELINE[key]
         var_data.append([name, MRA_BASELINE[key], live_val, dev, coefs.get(key, MRA_COEF_2014[key]), dev * coefs.get(key, MRA_COEF_2014[key])])
@@ -464,7 +460,6 @@ def main():
 
     chem_data = {'anti_ppm': get_v('chem_anti_ppm'), 'anti_cons': get_v('chem_anti_cons'), 'foam_ppm': get_v('chem_foam_ppm'), 'foam_cons': get_v('chem_foam_cons')}
     
-    # Merge effect data for global access
     display_effect_df = pd.merge(BASE_EFFECTS, st.session_state.shared_effect_df, on="Effect ID")
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)"]]
 
@@ -682,7 +677,7 @@ def main():
         
         with rep_tabs[0]:
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("Date", log_date.strftime('%d/%m/%Y')) # Indian formatting
+            m_col1.metric("Date", log_date.strftime('%d/%m/%Y'))
             m_col2.metric("Gross Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
             m_col3.metric("System GOR", f"{ops_data['GOR']:.2f}", delta=f"{ops_data['GOR'] - 10.5:.2f} from Target" if ops_data['GOR'] < 10.5 else None)
             m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta="Stable" if mra_data['Residual'] >= -15 else "Fouling", delta_color="normal" if mra_data['Residual'] >= -15 else "inverse")
@@ -765,39 +760,43 @@ def main():
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'])
-                df_logs['Recovery (%)'] = np.where(df_logs['SW Feed (m3/h)'] > 0, (df_logs['Gross Prod (m3/h)'] / df_logs['SW Feed (m3/h)']) * 100, 0)
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'], errors='coerce')
+                df_logs['Recovery (%)'] = np.where(pd.to_numeric(df_logs['SW Feed (m3/h)'], errors='coerce') > 0, (pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce') / pd.to_numeric(df_logs['SW Feed (m3/h)'], errors='coerce')) * 100, 0)
                 
-                # We need to re-calculate "Predicted" dynamically to plot the new graph accurately
-                # In case previous database versions lacked the "Predicted" column.
-                df_logs['Predicted MRA'] = df_logs['Gross Prod (m3/h)'] - df_logs['Residual']
+                # THE FIX: Ensuring the values are explicitly cast as floats to avoid text-dropping errors
+                df_logs['Actual Production'] = pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce')
+                df_logs['Residual_Val'] = pd.to_numeric(df_logs['Residual'], errors='coerce')
+                df_logs['Predicted Production'] = df_logs['Actual Production'] - df_logs['Residual_Val']
+                df_logs['Overall_HTC_Val'] = pd.to_numeric(df_logs['Overall HTC'], errors='coerce')
+                df_logs['GOR_Val'] = pd.to_numeric(df_logs['GOR'], errors='coerce')
                 
                 q_col1, q_col2 = st.columns(2)
                 with q_col1:
                     st.markdown("#### 📉 Recovery Trend")
                     if len(df_logs) > 1:
-                        rec_chart = alt.Chart(df_logs).mark_circle().encode(x='Date:T', y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
+                        rec_chart = alt.Chart(df_logs).mark_circle().encode(x=alt.X('Date:T', title="Date"), y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red'), use_container_width=True)
                 with q_col2:
                     st.markdown("#### 🌡️ HTC Degradation")
                     if len(df_logs) > 1:
-                        htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x='Date:T', y=alt.Y('Overall HTC:Q', scale=alt.Scale(zero=False)))
-                        st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall HTC').mark_line(color='black'), use_container_width=True)
+                        htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Date"), y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)"))
+                        st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall_HTC_Val').mark_line(color='black'), use_container_width=True)
 
                 st.divider()
                 
+                # THE FIX: Added Dash array to Predicted so the solid Actual line shines through if they perfectly overlap
                 q_col3, q_col4 = st.columns(2)
                 with q_col3:
                     st.markdown("#### ⚖️ Actual vs. Predicted Production")
                     if len(df_logs) > 1:
-                        # Reshape the data for overlapping lines
-                        fold_df = df_logs[['Date', 'Gross Prod (m3/h)', 'Predicted MRA']].melt('Date', var_name='Metric', value_name='Production (m³/h)')
+                        fold_df = df_logs[['Date', 'Actual Production', 'Predicted Production']].melt('Date', var_name='Metric', value_name='Volume (m³/h)')
                         
                         prod_chart = alt.Chart(fold_df).mark_line(point=True).encode(
                             x=alt.X('Date:T', title="Date"),
-                            y=alt.Y('Production (m³/h):Q', scale=alt.Scale(zero=False)),
-                            color=alt.Color('Metric:N', scale=alt.Scale(domain=['Gross Prod (m3/h)', 'Predicted MRA'], range=['#1f77b4', '#ff7f0e'])),
-                            tooltip=['Date:T', 'Metric', 'Production (m³/h)']
+                            y=alt.Y('Volume (m³/h):Q', scale=alt.Scale(zero=False)),
+                            color=alt.Color('Metric:N', scale=alt.Scale(domain=['Actual Production', 'Predicted Production'], range=['#1f77b4', '#ff7f0e'])),
+                            strokeDash=alt.condition(alt.datum.Metric == 'Predicted Production', alt.value([5, 5]), alt.value([0])),
+                            tooltip=['Date:T', 'Metric', 'Volume (m³/h)']
                         )
                         st.altair_chart(prod_chart, use_container_width=True)
                 with q_col4:
@@ -805,10 +804,10 @@ def main():
                     if len(df_logs) > 1:
                         gor_chart = alt.Chart(df_logs).mark_line(point=True, color='green').encode(
                             x=alt.X('Date:T', title="Date"),
-                            y=alt.Y('GOR:Q', scale=alt.Scale(zero=False)),
-                            tooltip=['Date:T', 'GOR']
+                            y=alt.Y('GOR_Val:Q', scale=alt.Scale(zero=False), title="Gain Output Ratio"),
+                            tooltip=['Date:T', 'GOR_Val']
                         )
-                        st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
+                        st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR_Val').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
 
     # --- TAB 7: TEMPLATE UPLOAD MODEL TRAINER ---
     with tabs[7]:
@@ -847,7 +846,6 @@ def main():
                     if not all(col in df_train.columns for col in req_cols):
                         st.error(f"❌ Uploaded CSV is missing required columns. Please use the exact 10-column Template format.")
                     else:
-                        # Data Scrubber: Strip commas if present, convert to numeric
                         for col in req_cols:
                             if col != "Date":
                                 if df_train[col].dtype == object:
@@ -861,7 +859,6 @@ def main():
                             X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]]
                             Y = df_train["Gross Prod"]
                             
-                            # --- PURE OLS LINEAR REGRESSION ---
                             model = LinearRegression(fit_intercept=True)
                             model.fit(X, Y)
                             
@@ -908,7 +905,6 @@ def main():
         st.subheader("📤 Bulk Data Upload & Sync")
         st.markdown("Download the Bulk Upload Template, fill in your daily historical data, and upload it here. The system will automatically calculate all KPIs, MRA Residuals, and HTC for every row, allowing you to quickly backfill your Master Database.")
         
-        # Define all 17 columns needed to perfectly replicate the dashboard calculations in bulk
         bulk_cols = [
             "Date (DD/MM/YYYY)", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", 
             "SW_Upper", "Brine_Flow", "Press_1st", "Temp_1st", "Brine_Temp_1st", "Steam_Temp", 
@@ -930,32 +926,26 @@ def main():
                 if missing:
                     st.error(f"❌ Uploaded CSV is missing required columns: {', '.join(missing)}")
                 else:
-                    # Clean the data (strip commas, force numbers)
                     num_cols = [c for c in bulk_cols if c != "Date (DD/MM/YYYY)"]
                     for col in num_cols:
                         if df_bulk[col].dtype == object:
                             df_bulk[col] = pd.to_numeric(df_bulk[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                     
-                    # Drop rows where the primary targets (Date or Gross Prod) are missing
                     df_bulk = df_bulk.dropna(subset=["Date (DD/MM/YYYY)", "Gross Prod (m3/h)"])
                     
                     if len(df_bulk) > 0:
                         
                         # THE FIX: If any specific sensor column is missing/blank, temporarily fill it with the baseline average
-                        # This prevents the entire Residual math engine from collapsing to 'NaN'
                         for col_name, baseline_val in zip(
                             ['Press_1st', 'Temp_1st', 'SW_Upper', 'Brine_Temp_1st', 'Brine_Flow', 'Steam (TPH)', 'Steam_Temp', 'Anti_PPM'],
                             [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75, 165.54, 4.82]
                         ):
                             df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
                             
-                        # Standardize dates to YYYY-MM-DD for the backend database sorting
                         df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date (DD/MM/YYYY)'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
                         
-                        # 1. Calculate GOR
                         df_bulk['GOR'] = np.where(df_bulk['Steam (TPH)'] > 0, df_bulk['Gross Prod (m3/h)'] / df_bulk['Steam (TPH)'], 0)
                         
-                        # 2. Calculate Predicted MRA & Residual safely
                         df_bulk['Predicted'] = (
                             coefs["Intercept"] + 
                             (coefs["Press_1st"] * df_bulk['Press_1st']) + 
@@ -969,7 +959,6 @@ def main():
                         )
                         df_bulk['Residual'] = df_bulk['Gross Prod (m3/h)'] - df_bulk['Predicted']
                         
-                        # 3. Calculate Overall HTC safely
                         df_bulk['SW_In_Temp'] = df_bulk['SW_In_Temp'].fillna(30.0)
                         df_bulk['Brine_Out_Temp'] = df_bulk['Brine_Out_Temp'].fillna(41.0)
                         df_bulk['Vap_Out_Temp'] = df_bulk['Vap_Out_Temp'].fillna(70.0)
@@ -978,7 +967,6 @@ def main():
                         dt1 = df_bulk['Steam_Temp'] - df_bulk['Brine_Out_Temp']
                         dt2 = df_bulk['Vap_Out_Temp'] - df_bulk['SW_In_Temp']
                         
-                        # Prevent division by zero or Log of negative numbers
                         valid_dt = (dt1 > 0) & (dt2 > 0) & (dt1 != dt2)
                         
                         lmtd = np.where(valid_dt, (dt1 - dt2) / np.log(dt1 / dt2), 0)
@@ -986,7 +974,6 @@ def main():
                         
                         df_bulk['Overall HTC'] = np.where(lmtd > 0, (q_act / (area_m2 * lmtd)) * 1000, 0)
                         
-                        # Prepare the final dataframe perfectly aligned with the Master Database
                         db_ready_df = pd.DataFrame({
                             "Date": df_bulk['Date_Clean'],
                             "Gross Prod (m3/h)": df_bulk['Gross Prod (m3/h)'],
@@ -1022,7 +1009,6 @@ def main():
                                 if pwd_bulk == "12345678":
                                     st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
                                     
-                                    # Overwrite duplicates so the newest upload always takes priority for a specific date
                                     st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                                     
                                     save_database(db_conn, st.session_state.daily_logs)
