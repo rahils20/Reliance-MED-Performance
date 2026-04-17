@@ -108,6 +108,7 @@ def load_database(db):
     return pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual", "Antiscalant (kg)", "Antifoam (kg)"])
 
 def save_database(db, df):
+    # Enforces standard backend date format
     df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
     if db["type"] == "cloud":
@@ -159,7 +160,7 @@ db_conn = init_db_connection()
 # ==========================================
 def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra):
     data_dict = {
-        "Date": str(date),
+        "Date": date.strftime('%d/%m/%Y'), # Indian format
         "Sea water Upper": ops['SW Upper'],
         "Sea water feed": ops['SW Total'],
         "Brine Water Return": ops['Brine Return'],
@@ -192,11 +193,11 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     p.add_run('Prepared by: ').bold = True
     p.add_run('Chembond Chemicals Ltd.\n')
     p.add_run('Date: ').bold = True
-    p.add_run(str(date))
+    p.add_run(date.strftime('%d/%m/%Y')) # Indian format
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     doc.add_heading('1. Executive Summary', level=1)
-    doc.add_paragraph(f"On {date}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
+    doc.add_paragraph(f"On {date.strftime('%d/%m/%Y')}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
 
     doc.add_heading('2. Operational Data Summary', level=1)
     t_ops = doc.add_table(rows=1, cols=4); t_ops.style = 'Table Grid'
@@ -275,7 +276,7 @@ def generate_monthly_report(df_month, month_str, year_str):
     for i, h in enumerate(['Date', 'Gross Prod', 'GOR', 'HTC', 'Residual']): t_log.rows[0].cells[i].text = h
     for _, row in df_month.iterrows():
         rc = t_log.add_row().cells
-        try: date_str = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
+        try: date_str = pd.to_datetime(row['Date']).strftime('%d/%m/%Y')
         except: date_str = str(row['Date'])
         rc[0].text, rc[1].text, rc[2].text, rc[3].text, rc[4].text = date_str, f"{row['Gross Prod (m3/h)']:.1f}", f"{row['GOR']:.2f}", f"{row['Overall HTC']:.1f}", f"{row['Residual']:.1f}"
 
@@ -286,7 +287,6 @@ def generate_monthly_report(df_month, month_str, year_str):
 # ==========================================
 # 3. BULLETPROOF SYNCHRONIZATION ENGINE
 # ==========================================
-# THE FIX: ALL DEFAULTS EXACTLY MATCH 2014 AVERAGES SO PREDICTION STARTS PERFECTLY AT ~801 M3/HR
 DEFAULTS = {
     'steam': 71.75, 'desal': 800.0, 'gross': 801.4,
     'sw_upper': 553.63, 'sw_total': 2100.0, 'brine_ret': 1275.5,
@@ -352,6 +352,7 @@ WATER_SPECS = {
     "Product": {"pH": {"lim": (5.5, 7.0), "var": "p_ph"}, "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond"}, "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds"}, "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron"}, "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl"}, "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4"}}
 }
 
+
 # ==========================================
 # 5. MAIN UI APPLICATION
 # ==========================================
@@ -360,7 +361,50 @@ def main():
     except: st.sidebar.markdown("### 🔹 CHEMBOND CHEMICALS LTD.") 
     st.sidebar.divider()
     
-    log_date = st.sidebar.date_input("Date", datetime.date.today())
+    # 1) THE FIX: Enforce DD/MM/YYYY formatting on the main date picker
+    log_date = st.sidebar.date_input("Date", datetime.date.today(), format="DD/MM/YYYY")
+    log_date_str = log_date.strftime('%Y-%m-%d')
+    
+    # 2) THE FIX: Auto-load inputs if the selected date exists in the master database
+    if 'last_selected_date' not in st.session_state:
+        st.session_state.last_selected_date = None
+
+    if log_date_str != st.session_state.last_selected_date:
+        st.session_state.last_selected_date = log_date_str
+        
+        if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
+            dates_in_db = pd.to_datetime(st.session_state.daily_logs['Date']).dt.strftime('%Y-%m-%d').values
+            if log_date_str in dates_in_db:
+                row_idx = np.where(dates_in_db == log_date_str)[0][0]
+                row = st.session_state.daily_logs.iloc[row_idx]
+                
+                db_to_var_mapping = {
+                    'gross': 'Gross Prod (m3/h)',
+                    'desal': 'Desal (m3/h)',
+                    'steam': 'Steam (TPH)',
+                    'sw_total': 'SW Feed (m3/h)',
+                    'chem_anti_cons': 'Antiscalant (kg)',
+                    'chem_foam_cons': 'Antifoam (kg)',
+                    'mra_press': 'Press_1st',
+                    'mra_t1': 'Temp_1st',
+                    'sw_upper': 'SW_Upper',
+                    'mra_bt1': 'Brine_Temp_1st',
+                    'brine_ret': 'Brine_Flow',
+                    'stm_in_t': 'Steam_Temp',
+                    'chem_anti_ppm': 'Anti_PPM'
+                }
+                
+                loaded_vars = False
+                for var_key, col_name in db_to_var_mapping.items():
+                    if col_name in row.index and pd.notna(row[col_name]):
+                        st.session_state.vars[var_key] = float(row[col_name])
+                        for tk in SYNC_MAP[var_key]:
+                            st.session_state[tk] = st.session_state.vars[var_key]
+                        loaded_vars = True
+                
+                if loaded_vars:
+                    st.sidebar.success(f"📅 Auto-loaded data for {log_date.strftime('%d/%m/%Y')}")
+
     area_m2 = st.sidebar.number_input("Overall Surface Area (m²)", value=1757.49)
     
     if db_conn["type"] == "cloud": st.sidebar.success("☁️ Connected to Cloud Database")
@@ -640,7 +684,7 @@ def main():
         
         with rep_tabs[0]:
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("Date", str(log_date))
+            m_col1.metric("Date", log_date.strftime('%d/%m/%Y')) # Indian formatting
             m_col2.metric("Gross Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
             m_col3.metric("System GOR", f"{ops_data['GOR']:.2f}", delta=f"{ops_data['GOR'] - 10.5:.2f} from Target" if ops_data['GOR'] < 10.5 else None)
             m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta="Stable" if mra_data['Residual'] >= -15 else "Fouling", delta_color="normal" if mra_data['Residual'] >= -15 else "inverse")
@@ -667,11 +711,18 @@ def main():
             with c_save:
                 if st.button("💾 Append Data", use_container_width=True):
                     if pwd_append == "12345678":
+                        # THE FIX: We now explicitly log ALL inputs to the database so they auto-load perfectly next time
                         new_log = pd.DataFrame({
-                            "Date": [log_date], "Gross Prod (m3/h)": [ops_data['Gross Prod']], "Desal (m3/h)": [ops_data['Desal']], 
-                            "Steam (TPH)": [ops_data['Steam']], "SW Feed (m3/h)": [ops_data['SW Total']], "GOR": [round(ops_data['GOR'], 2)], 
-                            "Overall HTC": [round(ops_data['HTC'], 2)], "Residual": [round(mra_data['Residual'], 1)],
-                            "Antiscalant (kg)": [chem_data['anti_cons']], "Antifoam (kg)": [chem_data['foam_cons']]
+                            "Date": [log_date_str], 
+                            "Gross Prod (m3/h)": [ops_data['Gross Prod']], "Desal (m3/h)": [ops_data['Desal']], 
+                            "Steam (TPH)": [ops_data['Steam']], "SW Feed (m3/h)": [ops_data['SW Total']], 
+                            "GOR": [round(ops_data['GOR'], 2)], "Overall HTC": [round(ops_data['HTC'], 2)], 
+                            "Residual": [round(mra_data['Residual'], 1)],
+                            "Antiscalant (kg)": [chem_data['anti_cons']], "Antifoam (kg)": [chem_data['foam_cons']],
+                            "Press_1st": [get_v('mra_press')], "Temp_1st": [get_v('mra_t1')], 
+                            "SW_Upper": [get_v('sw_upper')], "Brine_Temp_1st": [get_v('mra_bt1')], 
+                            "Brine_Flow": [get_v('brine_ret')], "Steam_Temp": [get_v('stm_in_t')], 
+                            "Anti_PPM": [get_v('chem_anti_ppm')]
                         })
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                         save_database(db_conn, st.session_state.daily_logs)
@@ -679,10 +730,10 @@ def main():
                     elif pwd_append != "": st.error("❌ Incorrect Password.")
             with c_export:
                 word_file = generate_comprehensive_report(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'))
-                st.download_button("📄 Export Report (.docx)", data=word_file, file_name=f"MED4_Daily_{log_date}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                st.download_button("📄 Export Report (.docx)", data=word_file, file_name=f"MED4_Daily_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
             with c_csv:
                 csv_file = generate_daily_csv(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data)
-                st.download_button("📊 Export Report (.csv)", data=csv_file, file_name=f"MED4_Daily_{log_date}.csv", mime="text/csv", use_container_width=True)
+                st.download_button("📊 Export Report (.csv)", data=csv_file, file_name=f"MED4_Daily_{log_date_str}.csv", mime="text/csv", use_container_width=True)
 
         with rep_tabs[1]:
             st.markdown("#### 📆 Editable Master Log Database")
@@ -736,9 +787,23 @@ def main():
         if not SKLEARN_INSTALLED:
             st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt.")
         else:
+            # THE FIX: Escaped the Reset button so you can click it at any time!
+            st.markdown("### 💾 Manage Baseline Model")
+            st.markdown("If you wish to revert to the mathematically verified 2014-15 baseline, you can reset the system at any time.")
+            c_reset, _ = st.columns([1, 1])
+            with c_reset:
+                if st.button("🔄 Factory Reset to 2014 Defaults", use_container_width=True):
+                    st.session_state.mra_coef = MRA_COEF_2014.copy()
+                    save_config(db_conn, st.session_state.mra_coef)
+                    st.success("✅ Restored verified 2014 baseline model. Reloading...")
+                    time.sleep(1.5)
+                    st.rerun()
+
+            st.divider()
+
+            st.markdown("### 📊 Upload New Baseline (Step-Test Data)")
             st.markdown("Download the 10-column template, paste your historical data, and upload it here. The system uses pure Ordinary Least Squares (OLS) regression to calculate the coefficients, identical to Excel's LINEST function.")
             
-            # The template explicitly includes all 10 columns
             req_cols = ["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
             template_df = pd.DataFrame(columns=req_cols)
             st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
@@ -796,19 +861,12 @@ def main():
                             st.dataframe(comp_df.style.format({"Current Coefficient": "{:.4f}", "Calculated OLS Coefficient": "{:.4f}"}), use_container_width=True, hide_index=True)
                             
                             st.markdown("### 💾 Commit New Model")
-                            c_apply, c_reset = st.columns(2)
+                            c_apply, _ = st.columns(2)
                             with c_apply:
                                 if st.button("🔥 Save New Coefficients Permanently", type="primary", use_container_width=True):
                                     st.session_state.mra_coef = new_coefs
                                     save_config(db_conn, new_coefs)
                                     st.success("✅ Coefficients updated! Reloading application...")
-                                    time.sleep(1.5)
-                                    st.rerun()
-                            with c_reset:
-                                if st.button("🔄 Reset to 2014 Defaults", use_container_width=True):
-                                    st.session_state.mra_coef = MRA_COEF_2014.copy()
-                                    save_config(db_conn, st.session_state.mra_coef)
-                                    st.success("✅ Restored verified 2014 baseline model. Reloading...")
                                     time.sleep(1.5)
                                     st.rerun()
                         else:
