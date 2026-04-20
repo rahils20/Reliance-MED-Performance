@@ -9,6 +9,7 @@ import json
 import time
 import altair as alt
 import joblib
+import re
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -270,7 +271,7 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     for i, h in enumerate(['Parameter', 'Baseline', 'Live Input', 'Deviation', 'Impact']): t_mra.rows[0].cells[i].text = h
     for idx, row in mra['Variance_DF'].iterrows():
         rc = t_mra.add_row().cells
-        rc[0].text, rc[1].text, rc[2].text, rc[3].text, rc[4].text = str(row['Parameter']), f"{row['Baseline']:.1f}", f"{row['Live Input']:.1f}", f"{row['Deviation']:+.1f}", f"{row['Impact (TPH)']}"
+        rc[0].text, rc[1].text, rc[2].text, rc[3].text, rc[4].text = str(row['Parameter']), f"{row['Baseline']:.1f}", f"{row['Live Input']:.1f}", f"{row['Deviation']:+.1f}", str(row['Impact (TPH)'])
 
     bio = io.BytesIO()
     doc.save(bio)
@@ -348,6 +349,10 @@ if 'shared_effect_df' not in st.session_state or 'Vapor Temp (°C)' in st.sessio
 if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
 if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
 
+# Initialize Chatbot state
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "Hello! I am the MED-4 Support Assistant. Ask me anything about MRA, HTC, OLS, Bulk Uploads, or software functionality."}]
+
 def sync_var(var_name, source_key):
     new_val = st.session_state[source_key]
     st.session_state.vars[var_name] = new_val
@@ -411,7 +416,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. AI Model Select", "📤 8. Bulk Uploads"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. AI Model Select", "📤 8. Bulk Uploads", "💬 9. Support"])
 
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
@@ -456,19 +461,15 @@ def main():
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
 
-    # THE FIX: Safely handling Variance Table for AI Models using pure NaNs to prevent formatting crashes
     var_data = []
     param_keys = ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
     param_names = ["1st Effect Press", "1st Effect Temp", "Sea Water Upper", "1st Brine Temp", "Brine Flow", "LP Steam", "Steam Temp", "Antiscalant PPM"]
     
     for i in range(8):
         dev = live_input_arr[i] - MRA_BASELINE[param_keys[i]]
-        weight = coefs.get(param_keys[i], 0.0) # Always fetch as a float (Importance or Coef)
-        if model_type == "OLS":
-            impact = dev * weight
-        else:
-            impact = np.nan # AI models do not have linear dev impact
-            
+        weight = coefs.get(param_keys[i], 0.0) 
+        if model_type == "OLS": impact = dev * weight
+        else: impact = np.nan 
         var_data.append([param_names[i], MRA_BASELINE[param_keys[i]], live_input_arr[i], dev, weight, impact])
             
     mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
@@ -673,8 +674,6 @@ def main():
                 
             if model_type != "OLS":
                 st.info("ℹ️ **AI Model Active:** Variance Impact breakdown is only available for purely linear OLS models.")
-                
-            # THE FIX: na_rep="-" perfectly handles the NaNs from the AI model so the app never crashes!
             st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
     with tabs[6]:
@@ -888,15 +887,12 @@ def main():
                             X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]]
                             Y = df_train["Gross Prod"]
                             
-                            # 1. OLS
                             model_ols = LinearRegression(fit_intercept=True).fit(X, Y)
                             r2_ols = r2_score(Y, model_ols.predict(X))
                             
-                            # 2. Random Forest
                             model_rf = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, Y)
                             r2_rf = r2_score(Y, model_rf.predict(X))
                             
-                            # 3. XGBoost
                             if XGB_INSTALLED:
                                 model_xgb = xgb.XGBRegressor(n_estimators=100, random_state=42).fit(X, Y)
                                 r2_xgb = r2_score(Y, model_xgb.predict(X))
@@ -1065,6 +1061,49 @@ def main():
                         st.error("🚨 No valid data found in CSV.")
             except Exception as e:
                 st.error(f"Error processing file: {e}")
+
+    # --- TAB 9: CHATBOT SUPPORT ---
+    with tabs[9]:
+        st.subheader("💬 MED-4 Software Assistant")
+        st.markdown("Ask me anything about how the software works, how formulas are calculated, or how to use the specific features.")
+        
+        # Display chat messages
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        # Chatbot logic
+        if prompt := st.chat_input("Ask a question (e.g. 'What is OLS?' or 'What is the password?'):"):
+            # Append user message
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Generate response based on simple rules
+            p_lower = prompt.lower()
+            if "password" in p_lower:
+                response = "The default Master Password hardcoded into the system for appending data, synchronizing edits, and bulk uploads is **12345678**."
+            elif re.search(r'\bols\b', p_lower):
+                response = "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It is the exact same engine that Microsoft Excel uses for its `LINEST` function. We use it to create a 'Digital Twin' of the plant's clean physics."
+            elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
+                response = "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior and usually offer a higher $R^2$ score than OLS, but they don't give you simple linear 'coefficients' like OLS does."
+            elif "fouling" in p_lower or "5%" in p_lower or "clean" in p_lower:
+                response = "The software monitors the **Residual Gap** (the difference between Actual production and Predicted production). \n\n* If the gap is less than **4%**, the plant is considered CLEAN.\n* If the gap is between **4% and 5%**, it triggers a WARNING to increase antiscalant.\n* If the gap drops below **5%**, it triggers a FOULING alert to clean the machine."
+            elif "residual" in p_lower:
+                response = "The **Residual** is simply `Actual Gross Production - Predicted MRA Production`. A negative residual means the plant is underperforming compared to its clean digital twin, indicating that scale (fouling) is blocking heat transfer in the tubes."
+            elif "bulk" in p_lower or "upload" in p_lower:
+                response = "In the **Bulk Uploads** tab (Tab 8), you can download a CSV template, paste an entire month of logs, and upload it. The software will automatically calculate the GOR, Overall HTC, and MRA Residual for every single day and safely sync it to the Master Database."
+            elif "htc" in p_lower:
+                response = "The **Overall Heat Transfer Coefficient (HTC)** measures how easily heat passes through the tube bundles. It is calculated using the total plant heat load (Q) divided by the Surface Area multiplied by the Log Mean Temperature Difference (LMTD)."
+            elif "export" in p_lower or "report" in p_lower:
+                response = "In the Reporting Tab (Tab 6), you can export the daily log to a fully formatted Word Document (.docx) or raw Excel data (.csv). You can also generate a summarized Monthly Report."
+            else:
+                response = "I am a simple support bot. Try asking me about **OLS**, **XGBoost**, **Fouling Logic**, **Residuals**, **Bulk Uploads**, **Reports**, or the **Password**."
+
+            # Append assistant message
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            with st.chat_message("assistant"):
+                st.markdown(response)
 
 if __name__ == "__main__":
     main()
