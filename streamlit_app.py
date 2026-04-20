@@ -456,19 +456,20 @@ def main():
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
 
-    # Variance Table generator
+    # THE FIX: Safely handling Variance Table for AI Models using pure NaNs to prevent formatting crashes
     var_data = []
     param_keys = ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
     param_names = ["1st Effect Press", "1st Effect Temp", "Sea Water Upper", "1st Brine Temp", "Brine Flow", "LP Steam", "Steam Temp", "Antiscalant PPM"]
     
     for i in range(8):
         dev = live_input_arr[i] - MRA_BASELINE[param_keys[i]]
+        weight = coefs.get(param_keys[i], 0.0) # Always fetch as a float (Importance or Coef)
         if model_type == "OLS":
-            weight = coefs.get(param_keys[i], MRA_COEF_2014[param_keys[i]])
-            var_data.append([param_names[i], MRA_BASELINE[param_keys[i]], live_input_arr[i], dev, weight, dev * weight])
+            impact = dev * weight
         else:
-            weight = coefs.get(param_keys[i], "N/A (AI Model)")
-            var_data.append([param_names[i], MRA_BASELINE[param_keys[i]], live_input_arr[i], dev, weight, "N/A (AI Model)"])
+            impact = np.nan # AI models do not have linear dev impact
+            
+        var_data.append([param_names[i], MRA_BASELINE[param_keys[i]], live_input_arr[i], dev, weight, impact])
             
     mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
@@ -661,7 +662,6 @@ def main():
             k1.metric("Actual Gross SCADA", f"{mra_data['Actual']:.1f} m³/h")
             k2.metric(f"Predicted ({model_type})", f"{mra_data['Predicted']:.1f} m³/h")
             
-            # 5% Threshold Logic
             diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
             
             if diff_pct <= -5.0:
@@ -673,6 +673,8 @@ def main():
                 
             if model_type != "OLS":
                 st.info("ℹ️ **AI Model Active:** Variance Impact breakdown is only available for purely linear OLS models.")
+                
+            # THE FIX: na_rep="-" perfectly handles the NaNs from the AI model so the app never crashes!
             st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
     with tabs[6]:
