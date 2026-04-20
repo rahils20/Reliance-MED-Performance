@@ -349,9 +349,8 @@ if 'shared_effect_df' not in st.session_state or 'Vapor Temp (°C)' in st.sessio
 if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
 if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
 
-# Initialize Chatbot state
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! I am the MED-4 Support Assistant. Ask me anything about MRA, HTC, OLS, Bulk Uploads, or software functionality."}]
+    st.session_state.messages = [{"role": "assistant", "content": "Hello! I am the MED-4 Support Assistant. Ask me anything about how the calculations work."}]
 
 def sync_var(var_name, source_key):
     new_val = st.session_state[source_key]
@@ -360,6 +359,37 @@ def sync_var(var_name, source_key):
         if target_key != source_key: st.session_state[target_key] = new_val
 
 def get_v(var_name): return st.session_state.vars[var_name]
+
+def get_bot_response(query):
+    q = query.lower()
+    if "password" in q:
+        return "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
+    elif re.search(r'\bgor\b', q) or "gain output ratio" in q:
+        return "**GOR (Gain Output Ratio)** is calculated as:\n`Gross Production (m³/h) / LP Steam (TPH)`\n\nIt represents the 'fuel economy' of the plant—how many tons of water are produced per ton of steam."
+    elif re.search(r'\bstec\b', q) or "specific thermal" in q:
+        return "**STEC (Specific Thermal Energy Consumption)** is calculated as:\n`((Steam * 1000) / 3600) * 2260 / Desal Production`\n\nThis calculates the thermal energy (kWh) used per ton of pure desalinated water produced, using 2260 kJ/kg as the latent heat of steam."
+    elif "recovery" in q:
+        return "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100`\n\nThis shows the percentage of incoming seawater that is successfully converted into distillate."
+    elif "economy" in q:
+        return "**Steam Economy** is calculated as:\n`LP Steam / Desal Production`\n\nIt shows how much steam is consumed per unit of final desal product."
+    elif re.search(r'\blmtd\b', q) or "log mean" in q:
+        return "**LMTD (Log Mean Temperature Difference)** is calculated as:\n`(ΔT1 - ΔT2) / ln(ΔT1 / ΔT2)`\n\nWhere:\n* `ΔT1 = Steam Inlet Temp - Brine Outlet Temp`\n* `ΔT2 = Vapour Outlet Temp - SW Inlet Temp`\n\nIt determines the effective temperature driving force across the plant."
+    elif "htc" in q or "heat transfer" in q:
+        return "**Overall HTC (U)** is calculated as:\n`(Q_act / (Surface Area * LMTD)) * 1000`\n\nWhere `Q_act` (Heat Load) = `SW Feed * (Brine Out Temp - SW In Temp) * 0.930`.\n\nHTC measures how efficiently heat passes through the tube bundles. A dropping HTC indicates scaling."
+    elif "fouling factor" in q:
+        return "**Fouling Factor** is calculated simply as:\n`1 / Overall HTC`\n\nIt represents the thermal resistance added by scale buildup on the tubes."
+    elif re.search(r'\bols\b', q) or "linear regression" in q:
+        return "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It creates the 'Digital Twin' of the plant's clean physics."
+    elif "xgboost" in q or "random forest" in q or "ai" in q:
+        return "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior, but they don't give you simple linear 'coefficients' like OLS does."
+    elif "residual" in q:
+        return "**Residual** is calculated as:\n`Actual Gross Production - MRA Predicted Production`\n\nA negative residual means the plant is underperforming compared to its clean digital twin, indicating scale is blocking heat transfer."
+    elif "fouling" in q or "5%" in q or "alert" in q or "status" in q:
+        return "The software calculates a **% Difference**:\n`(Residual / Predicted) * 100`\n\n* **Better than -4%:** CLEAN\n* **-4% to -5%:** WARNING (Increase antiscalant dosing)\n* **Worse than -5%:** FOULING (Please clean the machine)"
+    elif "bulk" in q or "upload" in q:
+        return "In the **Bulk Uploads** tab, you can upload an entire month of logs. The software automatically calculates GOR, LMTD, HTC, Predicted Production, and Residuals for every row, safely handling missing sensor data by borrowing from the 2014 baseline."
+    else:
+        return "I am the MED-4 Assistant. I can explain the formulas for **GOR, STEC, LMTD, HTC, Recovery, Residuals, Fouling alerts, OLS**, and **AI Models**. What would you like to know?"
 
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 WATER_SPECS = {
@@ -416,7 +446,7 @@ def main():
     else: st.sidebar.warning("💾 Operating on Local Backup (CSV)")
     
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. AI Model Select", "📤 8. Bulk Uploads", "💬 9. Support"])
+    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. AI Model Select", "📤 8. Bulk Uploads"])
 
     ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW Upper': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'), 'SW In': get_v('sw_in_t'), 'Brine Out': get_v('brine_out_t'), 'Stm In': get_v('stm_in_t'), 'Vap Out': get_v('vap_out_t')}
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
@@ -435,7 +465,6 @@ def main():
         ops_data['HTC'] = (ops_data['Q_act'] / (area_m2 * ops_data['LMTD'])) * 1000 if ops_data['LMTD'] > 0 else 0
         ops_data['Fouling'] = 1 / ops_data['HTC'] if ops_data['HTC'] > 0 else 0
 
-    # MULTI-MODEL PREDICTION ENGINE
     mra_data = {}
     coefs = st.session_state.mra_coef 
     model_type = coefs.get("model_type", "OLS")
@@ -456,7 +485,7 @@ def main():
             live_df = pd.DataFrame([live_input_arr], columns=["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"])
             mra_data['Predicted'] = float(active_model.predict(live_df)[0])
         except Exception:
-            mra_data['Predicted'] = 0.0 # Fallback
+            mra_data['Predicted'] = 0.0
             
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
@@ -1062,48 +1091,53 @@ def main():
             except Exception as e:
                 st.error(f"Error processing file: {e}")
 
-    # --- TAB 9: CHATBOT SUPPORT ---
-    with tabs[9]:
-        st.subheader("💬 MED-4 Software Assistant")
-        st.markdown("Ask me anything about how the software works, how formulas are calculated, or how to use the specific features.")
-        
-        # Display chat messages
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+    # ==========================================
+    # PERSISTENT SIDEBAR CHATBOT
+    # ==========================================
+    st.sidebar.divider()
+    st.sidebar.markdown("### 💬 MED-4 Assistant")
+    
+    chat_container = st.sidebar.container(height=350)
+    for message in st.session_state.messages:
+        chat_container.chat_message(message["role"]).markdown(message["content"])
 
-        # Chatbot logic
-        if prompt := st.chat_input("Ask a question (e.g. 'What is OLS?' or 'What is the password?'):"):
-            # Append user message
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+    if prompt := st.sidebar.chat_input("Ask a question about formulas..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        chat_container.chat_message("user").markdown(prompt)
 
-            # Generate response based on simple rules
-            p_lower = prompt.lower()
-            if "password" in p_lower:
-                response = "The default Master Password hardcoded into the system for appending data, synchronizing edits, and bulk uploads is **12345678**."
-            elif re.search(r'\bols\b', p_lower):
-                response = "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It is the exact same engine that Microsoft Excel uses for its `LINEST` function. We use it to create a 'Digital Twin' of the plant's clean physics."
-            elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
-                response = "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior and usually offer a higher $R^2$ score than OLS, but they don't give you simple linear 'coefficients' like OLS does."
-            elif "fouling" in p_lower or "5%" in p_lower or "clean" in p_lower:
-                response = "The software monitors the **Residual Gap** (the difference between Actual production and Predicted production). \n\n* If the gap is less than **4%**, the plant is considered CLEAN.\n* If the gap is between **4% and 5%**, it triggers a WARNING to increase antiscalant.\n* If the gap drops below **5%**, it triggers a FOULING alert to clean the machine."
-            elif "residual" in p_lower:
-                response = "The **Residual** is simply `Actual Gross Production - Predicted MRA Production`. A negative residual means the plant is underperforming compared to its clean digital twin, indicating that scale (fouling) is blocking heat transfer in the tubes."
-            elif "bulk" in p_lower or "upload" in p_lower:
-                response = "In the **Bulk Uploads** tab (Tab 8), you can download a CSV template, paste an entire month of logs, and upload it. The software will automatically calculate the GOR, Overall HTC, and MRA Residual for every single day and safely sync it to the Master Database."
-            elif "htc" in p_lower:
-                response = "The **Overall Heat Transfer Coefficient (HTC)** measures how easily heat passes through the tube bundles. It is calculated using the total plant heat load (Q) divided by the Surface Area multiplied by the Log Mean Temperature Difference (LMTD)."
-            elif "export" in p_lower or "report" in p_lower:
-                response = "In the Reporting Tab (Tab 6), you can export the daily log to a fully formatted Word Document (.docx) or raw Excel data (.csv). You can also generate a summarized Monthly Report."
-            else:
-                response = "I am a simple support bot. Try asking me about **OLS**, **XGBoost**, **Fouling Logic**, **Residuals**, **Bulk Uploads**, **Reports**, or the **Password**."
+        # Logic Brain
+        p_lower = prompt.lower()
+        if "password" in p_lower:
+            response = "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
+        elif re.search(r'\bgor\b', p_lower) or "gain output ratio" in p_lower:
+            response = "**GOR (Gain Output Ratio)** is calculated as:\n`Gross Production (m³/h) / LP Steam (TPH)`\n\nIt represents the 'fuel economy' of the plant—how many tons of water are produced per ton of steam."
+        elif re.search(r'\bstec\b', p_lower) or "specific thermal" in p_lower:
+            response = "**STEC (Specific Thermal Energy Consumption)** is calculated as:\n`((Steam * 1000) / 3600) * 2260 / Desal Production`\n\nThis calculates the thermal energy (kWh) used per ton of pure desalinated water produced, using 2260 kJ/kg as the latent heat of steam."
+        elif "recovery" in p_lower:
+            response = "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100`\n\nThis shows the percentage of incoming seawater that is successfully converted into distillate."
+        elif "economy" in p_lower:
+            response = "**Steam Economy** is calculated as:\n`LP Steam / Desal Production`\n\nIt shows how much steam is consumed per unit of final desal product."
+        elif re.search(r'\blmtd\b', p_lower) or "log mean" in p_lower:
+            response = "**LMTD (Log Mean Temperature Difference)** is calculated as:\n`(ΔT1 - ΔT2) / ln(ΔT1 / ΔT2)`\n\nWhere:\n* `ΔT1 = Steam Inlet Temp - Brine Outlet Temp`\n* `ΔT2 = Vapour Outlet Temp - SW Inlet Temp`\n\nIt determines the effective temperature driving force across the plant."
+        elif "htc" in p_lower or "heat transfer" in p_lower:
+            response = "**Overall HTC (U)** is calculated as:\n`(Q_act / (Surface Area * LMTD)) * 1000`\n\nWhere `Q_act` (Heat Load) = `SW Feed * (Brine Out Temp - SW In Temp) * 0.930`.\n\nHTC measures how efficiently heat passes through the tube bundles. A dropping HTC indicates scaling."
+        elif "fouling factor" in p_lower:
+            response = "**Fouling Factor** is calculated simply as:\n`1 / Overall HTC`\n\nIt represents the thermal resistance added by scale buildup on the tubes."
+        elif re.search(r'\bols\b', p_lower) or "linear regression" in p_lower:
+            response = "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It creates the 'Digital Twin' of the plant's clean physics."
+        elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
+            response = "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior, but they don't give you simple linear 'coefficients' like OLS does."
+        elif "residual" in p_lower:
+            response = "**Residual** is calculated as:\n`Actual Gross Production - MRA Predicted Production`\n\nA negative residual means the plant is underperforming compared to its clean digital twin, indicating scale is blocking heat transfer."
+        elif "fouling" in p_lower or "alert" in p_lower or "status" in p_lower:
+            response = "The software calculates a **% Difference**:\n`(Residual / Predicted) * 100`\n\n* **Better than -4%:** CLEAN\n* **-4% to -5%:** WARNING (Increase antiscalant dosing)\n* **Worse than -5%:** FOULING (Please clean the machine)"
+        elif "bulk" in p_lower or "upload" in p_lower:
+            response = "In the **Bulk Uploads** tab, you can upload an entire month of logs. The software automatically calculates GOR, LMTD, HTC, Predicted Production, and Residuals for every row, safely handling missing sensor data by borrowing from the 2014 baseline."
+        else:
+            response = "I am the MED-4 Assistant. I can explain the formulas for **GOR, STEC, LMTD, HTC, Recovery, Residuals, Fouling alerts, OLS**, and **AI Models**. What would you like to know?"
 
-            # Append assistant message
-            st.session_state.messages.append({"role": "assistant", "content": response})
-            with st.chat_message("assistant"):
-                st.markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        chat_container.chat_message("assistant").markdown(response)
 
 if __name__ == "__main__":
     main()
