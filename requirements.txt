@@ -5,3 +5,5 @@ altair
 gspread
 oauth2client
 scikit-learn
+xgboost
+joblib
