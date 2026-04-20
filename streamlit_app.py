@@ -360,37 +360,6 @@ def sync_var(var_name, source_key):
 
 def get_v(var_name): return st.session_state.vars[var_name]
 
-def get_bot_response(query):
-    q = query.lower()
-    if "password" in q:
-        return "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
-    elif re.search(r'\bgor\b', q) or "gain output ratio" in q:
-        return "**GOR (Gain Output Ratio)** is calculated as:\n`Gross Production (m³/h) / LP Steam (TPH)`\n\nIt represents the 'fuel economy' of the plant—how many tons of water are produced per ton of steam."
-    elif re.search(r'\bstec\b', q) or "specific thermal" in q:
-        return "**STEC (Specific Thermal Energy Consumption)** is calculated as:\n`((Steam * 1000) / 3600) * 2260 / Desal Production`\n\nThis calculates the thermal energy (kWh) used per ton of pure desalinated water produced, using 2260 kJ/kg as the latent heat of steam."
-    elif "recovery" in q:
-        return "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100`\n\nThis shows the percentage of incoming seawater that is successfully converted into distillate."
-    elif "economy" in q:
-        return "**Steam Economy** is calculated as:\n`LP Steam / Desal Production`\n\nIt shows how much steam is consumed per unit of final desal product."
-    elif re.search(r'\blmtd\b', q) or "log mean" in q:
-        return "**LMTD (Log Mean Temperature Difference)** is calculated as:\n`(ΔT1 - ΔT2) / ln(ΔT1 / ΔT2)`\n\nWhere:\n* `ΔT1 = Steam Inlet Temp - Brine Outlet Temp`\n* `ΔT2 = Vapour Outlet Temp - SW Inlet Temp`\n\nIt determines the effective temperature driving force across the plant."
-    elif "htc" in q or "heat transfer" in q:
-        return "**Overall HTC (U)** is calculated as:\n`(Q_act / (Surface Area * LMTD)) * 1000`\n\nWhere `Q_act` (Heat Load) = `SW Feed * (Brine Out Temp - SW In Temp) * 0.930`.\n\nHTC measures how efficiently heat passes through the tube bundles. A dropping HTC indicates scaling."
-    elif "fouling factor" in q:
-        return "**Fouling Factor** is calculated simply as:\n`1 / Overall HTC`\n\nIt represents the thermal resistance added by scale buildup on the tubes."
-    elif re.search(r'\bols\b', q) or "linear regression" in q:
-        return "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It creates the 'Digital Twin' of the plant's clean physics."
-    elif "xgboost" in q or "random forest" in q or "ai" in q:
-        return "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior, but they don't give you simple linear 'coefficients' like OLS does."
-    elif "residual" in q:
-        return "**Residual** is calculated as:\n`Actual Gross Production - MRA Predicted Production`\n\nA negative residual means the plant is underperforming compared to its clean digital twin, indicating scale is blocking heat transfer."
-    elif "fouling" in q or "5%" in q or "alert" in q or "status" in q:
-        return "The software calculates a **% Difference**:\n`(Residual / Predicted) * 100`\n\n* **Better than -4%:** CLEAN\n* **-4% to -5%:** WARNING (Increase antiscalant dosing)\n* **Worse than -5%:** FOULING (Please clean the machine)"
-    elif "bulk" in q or "upload" in q:
-        return "In the **Bulk Uploads** tab, you can upload an entire month of logs. The software automatically calculates GOR, LMTD, HTC, Predicted Production, and Residuals for every row, safely handling missing sensor data by borrowing from the 2014 baseline."
-    else:
-        return "I am the MED-4 Assistant. I can explain the formulas for **GOR, STEC, LMTD, HTC, Recovery, Residuals, Fouling alerts, OLS**, and **AI Models**. What would you like to know?"
-
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 WATER_SPECS = {
     "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
@@ -465,6 +434,7 @@ def main():
         ops_data['HTC'] = (ops_data['Q_act'] / (area_m2 * ops_data['LMTD'])) * 1000 if ops_data['LMTD'] > 0 else 0
         ops_data['Fouling'] = 1 / ops_data['HTC'] if ops_data['HTC'] > 0 else 0
 
+    # MULTI-MODEL PREDICTION ENGINE
     mra_data = {}
     coefs = st.session_state.mra_coef 
     model_type = coefs.get("model_type", "OLS")
@@ -485,7 +455,7 @@ def main():
             live_df = pd.DataFrame([live_input_arr], columns=["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"])
             mra_data['Predicted'] = float(active_model.predict(live_df)[0])
         except Exception:
-            mra_data['Predicted'] = 0.0
+            mra_data['Predicted'] = 0.0 # Fallback
             
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
@@ -561,11 +531,17 @@ def main():
         with st.expander("5. Chemical Dosing", expanded=False):
             st.markdown("**Kem Watreat r 3687 (Antiscalant)**")
             ch1, ch2 = st.columns(2)
-            with ch1: st.number_input("Dosing Level (PPM)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
+            with ch1: 
+                st.number_input("Dosing Level (PPM)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
+                if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_anti_0"):
+                    st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
             with ch2: st.number_input("Actual Consumption (kg/hr)", key="in_anti_cons", on_change=sync_var, args=('chem_anti_cons', 'in_anti_cons'))
             st.markdown("**Kem Antifoam 1795**")
             ch3, ch4 = st.columns(2)
-            with ch3: st.number_input("Dosing Level (PPM)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
+            with ch3: 
+                st.number_input("Dosing Level (PPM)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
+                if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_foam_0"):
+                    st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
             with ch4: st.number_input("Actual Consumption (kg/hr)", key="in_foam_cons", on_change=sync_var, args=('chem_foam_cons', 'in_foam_cons'))
 
     with tabs[1]:
@@ -664,12 +640,16 @@ def main():
         with cc1:
             st.markdown("### 🧪 Kem Watreat r 3687 (Antiscalant)")
             st.number_input("Target Dosing Level (PPM)", key="t4_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 't4_anti_ppm'))
+            if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_anti_4"):
+                st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
             theo_anti = (ops_data['SW Total'] * get_v('chem_anti_ppm')) / 1000
             st.info(f"**Theoretical Requirement:** {theo_anti:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_anti_cons", on_change=sync_var, args=('chem_anti_cons', 't4_anti_cons'))
         with cc2:
             st.markdown("### 🫧 Kem Antifoam 1795")
             st.number_input("Target Dosing Level (PPM)", key="t4_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 't4_foam_ppm'))
+            if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_foam_4"):
+                st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
             theo_foam = (ops_data['SW Total'] * get_v('chem_foam_ppm')) / 1000
             st.info(f"**Theoretical Requirement:** {theo_foam:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_foam_cons", on_change=sync_var, args=('chem_foam_cons', 't4_foam_cons'))
@@ -1105,10 +1085,11 @@ def main():
         st.session_state.messages.append({"role": "user", "content": prompt})
         chat_container.chat_message("user").markdown(prompt)
 
-        # Logic Brain
         p_lower = prompt.lower()
         if "password" in p_lower:
             response = "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
+        elif "auto" in p_lower or "dose" in p_lower or "optimal" in p_lower or "calculate" in p_lower and "auto" in p_lower:
+            response = "The **Auto-Calculate Optimal Dose** feature is currently in development! In a future update, it will use real-time feed water chemistry, Concentration Factors, and scaling indices to scientifically recommend the exact PPM needed."
         elif re.search(r'\bgor\b', p_lower) or "gain output ratio" in p_lower:
             response = "**GOR (Gain Output Ratio)** is calculated as:\n`Gross Production (m³/h) / LP Steam (TPH)`\n\nIt represents the 'fuel economy' of the plant—how many tons of water are produced per ton of steam."
         elif re.search(r'\bstec\b', p_lower) or "specific thermal" in p_lower:
@@ -1128,7 +1109,7 @@ def main():
         elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
             response = "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior, but they don't give you simple linear 'coefficients' like OLS does."
         elif "residual" in p_lower:
-            response = "**Residual** is calculated as:\n`Actual Gross Production - MRA Predicted Production`\n\nA negative residual means the plant is underperforming compared to its clean digital twin, indicating scale is blocking heat transfer."
+            response = "**Residual** is calculated as:\n`Actual Gross Production - Predicted Production`\n\nA negative residual means the plant is underperforming compared to its clean digital twin, indicating scale is blocking heat transfer."
         elif "fouling" in p_lower or "alert" in p_lower or "status" in p_lower:
             response = "The software calculates a **% Difference**:\n`(Residual / Predicted) * 100`\n\n* **Better than -4%:** CLEAN\n* **-4% to -5%:** WARNING (Increase antiscalant dosing)\n* **Worse than -5%:** FOULING (Please clean the machine)"
         elif "bulk" in p_lower or "upload" in p_lower:
