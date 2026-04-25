@@ -183,7 +183,7 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     t_ops = doc.add_table(rows=1, cols=4); t_ops.style = 'Table Grid'
     for i, h in enumerate(['Parameter', 'UOM', 'Design', 'Actual']): t_ops.rows[0].cells[i].text = h
     ops_rows = [
-        ['Total Sea Water Feed', 'm³/h', '2400', str(ops['SW Total'])], 
+        ['Sea Water Feed', 'm³/h', '2400', str(ops['SW Total'])], 
         ['Sea Water Upper', 'm³/h', '580', str(ops['SW_Feed_1st'])], 
         ['Brine Water Return', 'm³/h', '1400', str(ops['Brine Return'])], 
         ['Desal production', 'm³/h', '1000', str(ops['Desal'])], 
@@ -240,10 +240,7 @@ def generate_monthly_report(df_month, month_str, year_str):
     doc.add_heading('1. Monthly Aggregation', level=1)
     t_agg = doc.add_table(rows=1, cols=4); t_agg.style = 'Table Grid'
     for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
-    
-    # Safe retrieval of dynamic columns
-    gross_col = 'Gross Prod (m3/h)' if 'Gross Prod (m3/h)' in df_month.columns else 'Gross Prod'
-    metrics = [("Gross Production (m³/h)", df_month[gross_col]), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("1st Effect HTC", df_month['1st Effect HTC'])]
+    metrics = [("Gross Production (m³/h)", df_month['Gross production']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("1st Effect HTC", df_month['1st Effect HTC'])]
     for name, series in metrics:
         rc = t_agg.add_row().cells
         rc[0].text, rc[1].text, rc[2].text, rc[3].text = name, f"{pd.to_numeric(series, errors='coerce').min():.2f}", f"{pd.to_numeric(series, errors='coerce').max():.2f}", f"{pd.to_numeric(series, errors='coerce').mean():.2f}"
@@ -339,31 +336,28 @@ def main():
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
                 db_to_var_mapping = {
-                    'gross': ['Gross Prod (m3/h)', 'Gross Prod', 'Gross production'], 
-                    'desal': ['Desal (m3/h)', 'Desal production'], 
-                    'steam': ['Steam (TPH)', 'LP Steam consumption'],
-                    'sw_total': ['Total SW Feed (m3/h)', 'Total Sea Water Feed (FFC)', 'SW Feed (m3/h)', 'Sea Water Feed'], 
-                    'sw_upper': ['SW Feed to 1st Effect (m3/h)', '1st Effect SW Feed', 'SW_Upper', 'Sea Water Upper'],
-                    'sw_lower': ['SW_Lower', 'Sea Water Lower'],
-                    'cond_flow': ['Cond_Flow', 'condensate flow'], 
-                    'cond_temp': ['Cond_Temp', 'condensate temp'],
-                    'sw_out_t': ['SW_Out_Temp', 'Sea Water o/L temp'], 
-                    'cw_supply': ['CW_Supply', 'CW supply'], 
-                    'sw_return': ['SW_Return', 'SW return'],
-                    'chem_anti_cons': ['Antiscalant (kg)'], 
-                    'chem_foam_cons': ['Antifoam (kg)'], 
-                    'mra_press': ['Press_1st', '1st effect vapour pressure'], 
-                    'mra_t1': ['Temp_1st', '1st effect vapour temp'], 
-                    'mra_bt1': ['Brine_Temp_1st', '1st effect brine temp'], 
-                    'brine_ret': ['Brine_Flow', 'Brine Water Return'], 
-                    'stm_in_t': ['Steam_Temp', 'Steam inlet temp'], 
+                    'gross': ['Gross production', 'Gross Prod (m3/h)', 'Gross Prod'], 
+                    'desal': ['Desal production', 'Desal (m3/h)'], 
+                    'steam': ['LP Steam consumption', 'Steam (TPH)'],
+                    'sw_total': ['Sea Water Feed', 'Total Sea Water Feed (FFC)', 'Total SW Feed (m3/h)', 'SW Feed (m3/h)'], 
+                    'sw_upper': ['Sea Water Upper', '1st Effect SW Feed', 'SW Feed to 1st Effect (m3/h)', 'SW_Upper'],
+                    'sw_lower': ['Sea Water Lower'],
+                    'cond_flow': ['condensate flow', 'Cond_Flow'], 
+                    'cond_temp': ['condensate temp', 'Cond_Temp'],
+                    'sw_out_t': ['Sea Water o/L temp', 'SW_Out_Temp'], 
+                    'cw_supply': ['CW supply', 'CW_Supply'], 
+                    'sw_return': ['SW return', 'SW_Return'],
+                    'chem_anti_cons': ['Antiscalant (kg)'], 'chem_foam_cons': ['Antifoam (kg)'], 
+                    'mra_press': ['1st effect vapour pressure', 'Press_1st'], 
+                    'mra_t1': ['1st effect vapour temp', 'Temp_1st'], 
+                    'mra_bt1': ['1st effect brine temp', 'Brine_Temp_1st'], 
+                    'brine_ret': ['Brine Water Return', 'Brine_Flow'], 
+                    'stm_in_t': ['Steam inlet temp', 'Steam_Temp'], 
                     'chem_anti_ppm': ['Anti_PPM'], 
-                    'sw_in_t': ['SW_Cond_Inlet_Temp', 'SW Cond I/L Temp', 'SW_In_Temp'], 
-                    'brine_out_t': ['Final_Brine_Temp', 'Final Brine Temp', 'Brine_Out_Temp', 'Brine outlet temp'], 
-                    'vap_out_t': ['Vap_Out_Temp'], 
-                    'remarks': ['Remarks'],
-                    'area_1st': ['Area_1st'], 
-                    'area_overall': ['Area_Overall']
+                    'sw_in_t': ['Sea Water cond I/L temp', 'SW Cond I/L Temp', 'SW_Cond_Inlet_Temp', 'SW_In_Temp'], 
+                    'brine_out_t': ['Brine outlet temp', 'Final Brine Temp', 'Final_Brine_Temp', 'Brine_Out_Temp'], 
+                    'vap_out_t': ['Vap_Out_Temp'], 'remarks': ['Remarks'],
+                    'area_1st': ['Area_1st'], 'area_overall': ['Area_Overall']
                 }
                 
                 for cat in ['Feed', 'Product']:
@@ -397,19 +391,11 @@ def main():
     ])
 
     ops_data = {
-        'Steam': get_v('steam'), 
-        'Desal': get_v('desal'), 
-        'Gross Prod': get_v('gross'), 
-        'SW_Feed_1st': get_v('sw_upper'), 
-        'SW Total': get_v('sw_total'), 
-        'Brine Return': get_v('brine_ret'),
-        'SW In_overall': get_v('sw_in_t'), 
-        'Brine Out_overall': get_v('brine_out_t'), 
-        'Stm In_overall': get_v('stm_in_t'), 
-        'Vap Out_overall': get_v('vap_out_t'),
-        'Stm In_1st': get_v('mra_t1'), 
-        'Brine_1st': get_v('mra_bt1'), 
-        'Press_1st': get_v('mra_press')
+        'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 
+        'SW_Feed_1st': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret'),
+        'SW In_overall': get_v('sw_in_t'), 'Brine Out_overall': get_v('brine_out_t'), 
+        'Stm In_overall': get_v('stm_in_t'), 'Vap Out_overall': get_v('vap_out_t'),
+        'Stm In_1st': get_v('mra_t1'), 'Brine_1st': get_v('mra_bt1'), 'Press_1st': get_v('mra_press')
     }
     
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
@@ -611,10 +597,10 @@ def main():
             st.number_input("LP Steam consumption (TPH)", key="t1_steam", on_change=sync_var, args=('steam', 't1_steam'))
             st.number_input("Sea Water Upper (m³/h)", key="t1_sw_up", on_change=sync_var, args=('sw_upper', 't1_sw_up'))
         with c2:
-            st.number_input("Desal Production (m³/h)", key="t1_desal", on_change=sync_var, args=('desal', 't1_desal'))
+            st.number_input("Desal production (m³/h)", key="t1_desal", on_change=sync_var, args=('desal', 't1_desal'))
             st.number_input("Sea Water Feed (m³/h)", key="t1_sw_tot", on_change=sync_var, args=('sw_total', 't1_sw_tot'))
         with c3:
-            st.number_input("Gross Production (m³/h)", key="t1_gross", on_change=sync_var, args=('gross', 't1_gross'))
+            st.number_input("Gross production (m³/h)", key="t1_gross", on_change=sync_var, args=('gross', 't1_gross'))
             st.number_input("Brine Water Return (m³/h)", key="t1_brine", on_change=sync_var, args=('brine_ret', 't1_brine'))
             
         st.divider()
@@ -723,16 +709,19 @@ def main():
     # --- TAB 5: MRA NORMALIZATION ---
     with tabs[5]:
         st.subheader("MRA Fouling Defense")
+        st.markdown("Use these inputs to perform 'What-If' scenarios. The inputs below will automatically safely stretch to fit your data.")
         controls_col, calc_col = st.columns([1, 2])
+        
+        # THE FIX: Replace sliders with bounded dynamic number inputs to eliminate StreamlitValueBelowMinError forever
         with controls_col:
-            st.slider("1st effect vapour pressure (mmHg)", key="t5_press", min_value=100.0, max_value=400.0, on_change=sync_var, args=('mra_press', 't5_press'))
-            st.slider("1st effect vapour temp (°C)", key="t5_t1", min_value=50.0, max_value=90.0, on_change=sync_var, args=('mra_t1', 't5_t1'))
-            st.slider("Sea Water Upper (m³/h)", key="t5_sw_up", min_value=300.0, max_value=1500.0, on_change=sync_var, args=('sw_upper', 't5_sw_up'))
-            st.slider("1st effect brine temp (°C)", key="t5_bt1", min_value=40.0, max_value=80.0, on_change=sync_var, args=('mra_bt1', 't5_bt1'))
-            st.slider("Brine Water Return (m³/h)", key="t5_bflow", min_value=800.0, max_value=2000.0, on_change=sync_var, args=('brine_ret', 't5_bflow'))
-            st.slider("LP Steam consumption (TPH)", key="t5_steam", min_value=40.0, max_value=150.0, on_change=sync_var, args=('steam', 't5_steam'))
-            st.slider("Steam inlet temp (°C)", key="t5_stm_t", min_value=140.0, max_value=220.0, on_change=sync_var, args=('stm_in_t', 't5_stm_t'))
-            st.slider("Antiscalant PPM", key="t5_anti", min_value=0.0, max_value=10.0, step=0.1, on_change=sync_var, args=('chem_anti_ppm', 't5_anti'))
+            st.number_input("1st effect vapour pressure (mmHg)", key="t5_press", on_change=sync_var, args=('mra_press', 't5_press'))
+            st.number_input("1st effect vapour temp (°C)", key="t5_t1", on_change=sync_var, args=('mra_t1', 't5_t1'))
+            st.number_input("Sea Water Upper (m³/h)", key="t5_sw_up", on_change=sync_var, args=('sw_upper', 't5_sw_up'))
+            st.number_input("1st effect brine temp (°C)", key="t5_bt1", on_change=sync_var, args=('mra_bt1', 't5_bt1'))
+            st.number_input("Brine Water Return (m³/h)", key="t5_bflow", on_change=sync_var, args=('brine_ret', 't5_bflow'))
+            st.number_input("LP Steam consumption (TPH)", key="t5_steam", on_change=sync_var, args=('steam', 't5_steam'))
+            st.number_input("Steam inlet temp (°C)", key="t5_stm_t", on_change=sync_var, args=('stm_in_t', 't5_stm_t'))
+            st.number_input("Antiscalant PPM", key="t5_anti", on_change=sync_var, args=('chem_anti_ppm', 't5_anti'))
 
         with calc_col:
             k1, k2, k3 = st.columns(3)
@@ -791,15 +780,16 @@ def main():
             with c_save:
                 if st.button("💾 Append Data", use_container_width=True):
                     if pwd_append == "12345678":
+                        
+                        # THE FIX: Storing exact mapped names for the DB so nothing goes missing
                         new_log = pd.DataFrame({
                             "Date": [log_date_str], 
-                            "Gross production": [ops_data['Gross Prod']], 
-                            "Desal production": [ops_data['Desal']], 
-                            "LP Steam consumption": [ops_data['Steam']], 
-                            "Sea Water Feed": [ops_data['SW Total']], 
                             "Sea Water Upper": [get_v('sw_upper')], 
                             "Sea Water Lower": [get_v('sw_lower')],
-                            "Brine Water Return": [ops_data['Brine Return']],
+                            "Sea Water Feed": [ops_data['SW Total']], 
+                            "Brine Water Return": [ops_data['Brine Return']], 
+                            "Desal production": [ops_data['Desal']], 
+                            "LP Steam consumption": [ops_data['Steam']],
                             "condensate flow": [get_v('cond_flow')],
                             "condensate temp": [get_v('cond_temp')],
                             "1st effect vapour temp": [get_v('mra_t1')],
@@ -812,6 +802,7 @@ def main():
                             "Sea Water o/L temp": [get_v('sw_out_t')],
                             "CW supply": [get_v('cw_supply')],
                             "SW return": [get_v('sw_return')],
+                            "Gross production": [ops_data['Gross Prod']],
                             "GOR": [round(ops_data['GOR'], 2)], 
                             "Overall HTC": [round(ops_data['htc_overall'], 2)], 
                             "1st Effect HTC": [round(ops_data['htc_1st'], 2)], 
@@ -869,10 +860,10 @@ def main():
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
                 
-                df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Sea Water Feed', df_logs.get('Total SW Feed (m3/h)', df_logs.get('Total Sea Water Feed (FFC)', 0))), errors='coerce')
-                df_logs['Recovery (%)'] = np.where(df_logs['Total SW Feed (m3/h)'] > 0, (pd.to_numeric(df_logs.get('Gross production', df_logs.get('Gross Prod (m3/h)')), errors='coerce') / df_logs['Total SW Feed (m3/h)']) * 100, 0)
+                df_logs['Sea Water Feed'] = pd.to_numeric(df_logs.get('Sea Water Feed', 0), errors='coerce')
+                df_logs['Recovery (%)'] = np.where(df_logs['Sea Water Feed'] > 0, (pd.to_numeric(df_logs['Gross production'], errors='coerce') / df_logs['Sea Water Feed']) * 100, 0)
                 
-                df_logs['Actual Production'] = pd.to_numeric(df_logs.get('Gross production', df_logs.get('Gross Prod (m3/h)')), errors='coerce')
+                df_logs['Actual Production'] = pd.to_numeric(df_logs['Gross production'], errors='coerce')
                 df_logs['Residual_Val'] = pd.to_numeric(df_logs['Residual'], errors='coerce')
                 df_logs['Predicted Production'] = df_logs['Actual Production'] - df_logs['Residual_Val']
                 df_logs['Overall_HTC_Val'] = pd.to_numeric(df_logs['Overall HTC'], errors='coerce')
@@ -1043,7 +1034,6 @@ def main():
         st.subheader("📤 Bulk Data Upload & Sync")
         st.markdown("Download the Bulk Upload Template, paste your exact daily Excel data, and upload it here.")
         
-        # EXACT EXCEL SEQUENCE
         bulk_cols = [
             "Date", "Sea Water Upper", "Sea Water Lower", "Sea Water Feed", "Brine Water Return", 
             "Desal production", "LP Steam consumption", "condensate flow", "condensate temp", 
@@ -1062,12 +1052,11 @@ def main():
             try:
                 df_bulk = pd.read_csv(bulk_file)
                 
-                # Create any missing columns with NaNs to prevent KeyErrors
+                # Create missing columns safely
                 for c in bulk_cols:
-                    if c not in df_bulk.columns: 
-                        df_bulk[c] = np.nan
+                    if c not in df_bulk.columns: df_bulk[c] = np.nan
                 
-                # THE FIX: Force ALL columns except Date and Remarks to numeric, coercing any broken text to NaN
+                # THE FIX: Safely convert everything to a number, forcing bad text to NaN so math works
                 for col in df_bulk.columns:
                     if col not in ["Date", "Remarks"]:
                         df_bulk[col] = pd.to_numeric(df_bulk[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
@@ -1075,17 +1064,14 @@ def main():
                 df_bulk = df_bulk.dropna(subset=["Date", "Gross production"])
                 
                 if len(df_bulk) > 0:
-                    # Fill missing critical MRA sensors with defaults
                     for col_name, baseline_val in zip(
                         ['1st effect vapour pressure', '1st effect vapour temp', 'Sea Water Upper', '1st effect brine temp', 'Brine Water Return', 'LP Steam consumption', 'Steam inlet temp'],
                         [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75, 165.54]
                     ):
                         df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
                     
-                    if 'Anti_PPM' not in df_bulk.columns: 
-                        df_bulk['Anti_PPM'] = 4.82
-                    else:
-                        df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
+                    if 'Anti_PPM' not in df_bulk.columns: df_bulk['Anti_PPM'] = 4.82
+                    else: df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
                         
                     df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
@@ -1106,8 +1092,7 @@ def main():
                             bulk_input_df = df_bulk[['1st effect vapour pressure', '1st effect vapour temp', 'Sea Water Upper', '1st effect brine temp', 'Brine Water Return', 'LP Steam consumption', 'Steam inlet temp', 'Anti_PPM']].copy()
                             bulk_input_df.columns = ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
                             df_bulk['Predicted'] = active_model.predict(bulk_input_df)
-                        except: 
-                            df_bulk['Predicted'] = 0.0
+                        except: df_bulk['Predicted'] = 0.0
                             
                     df_bulk['Residual'] = df_bulk['Gross production'] - df_bulk['Predicted']
                     
@@ -1129,37 +1114,24 @@ def main():
                     if 'Antifoam (kg)' not in df_bulk.columns: df_bulk['Antifoam (kg)'] = 0.0
                     if 'Remarks' not in df_bulk.columns: df_bulk['Remarks'] = ""
                     
+                    # Ensure exact mapping back to the DB columns
                     db_ready_df = pd.DataFrame({
                         "Date": df_bulk['Date_Clean'], 
-                        "Gross production": df_bulk['Gross production'], 
-                        "Desal production": df_bulk['Desal production'].fillna(0), 
-                        "LP Steam consumption": df_bulk['LP Steam consumption'], 
-                        "Sea Water Feed": df_bulk['Sea Water Feed'], 
-                        "Sea Water Upper": df_bulk['Sea Water Upper'], 
-                        "GOR": df_bulk['GOR'].round(2), 
-                        "Overall HTC": df_bulk['Overall HTC'].round(2), 
-                        "1st Effect HTC": df_bulk['1st Effect HTC'].round(2), 
-                        "Residual": df_bulk['Residual'].round(1), 
-                        "Antiscalant (kg)": df_bulk['Antiscalant (kg)'].fillna(0), 
-                        "Antifoam (kg)": df_bulk['Antifoam (kg)'].fillna(0), 
-                        "1st effect vapour pressure": df_bulk['1st effect vapour pressure'], 
-                        "1st effect vapour temp": df_bulk['1st effect vapour temp'], 
-                        "1st effect brine temp": df_bulk['1st effect brine temp'], 
-                        "Brine Water Return": df_bulk['Brine Water Return'], 
-                        "Steam inlet temp": df_bulk['Steam inlet temp'], 
-                        "Anti_PPM": df_bulk['Anti_PPM'], 
-                        "Sea Water cond I/L temp": df_bulk['Sea Water cond I/L temp'], 
-                        "Brine outlet temp": df_bulk['Brine outlet temp'], 
-                        "Vap_Out_Temp": np.nan, 
-                        "Remarks": df_bulk['Remarks'].fillna(""),
-                        "Area_1st": area_1st, 
-                        "Area_Overall": area_overall,
-                        "Sea Water Lower": df_bulk['Sea Water Lower'].fillna(0),
-                        "condensate flow": df_bulk['condensate flow'].fillna(0),
-                        "condensate temp": df_bulk['condensate temp'].fillna(0),
-                        "Sea Water o/L temp": df_bulk['Sea Water o/L temp'].fillna(0),
-                        "CW supply": df_bulk['CW supply'].fillna(0),
-                        "SW return": df_bulk['SW return'].fillna(0)
+                        "Sea Water Upper": df_bulk['Sea Water Upper'], "Sea Water Lower": df_bulk['Sea Water Lower'].fillna(0),
+                        "Sea Water Feed": df_bulk['Sea Water Feed'], "Brine Water Return": df_bulk['Brine Water Return'],
+                        "Desal production": df_bulk['Desal production'].fillna(0), "LP Steam consumption": df_bulk['LP Steam consumption'],
+                        "condensate flow": df_bulk['condensate flow'].fillna(0), "condensate temp": df_bulk['condensate temp'].fillna(0),
+                        "1st effect vapour temp": df_bulk['1st effect vapour temp'], "1st effect brine temp": df_bulk['1st effect brine temp'],
+                        "Delta T": df_bulk['Delta T'], "1st effect vapour pressure": df_bulk['1st effect vapour pressure'],
+                        "Steam inlet temp": df_bulk['Steam inlet temp'], "Brine outlet temp": df_bulk['Brine outlet temp'],
+                        "Sea Water cond I/L temp": df_bulk['Sea Water cond I/L temp'], "Sea Water o/L temp": df_bulk['Sea Water o/L temp'].fillna(0),
+                        "CW supply": df_bulk['CW supply'].fillna(0), "SW return": df_bulk['SW return'].fillna(0),
+                        "Gross production": df_bulk['Gross production'],
+                        "GOR": df_bulk['GOR'].round(2), "Overall HTC": df_bulk['Overall HTC'].round(2), "1st Effect HTC": df_bulk['1st Effect HTC'].round(2),
+                        "Residual": df_bulk['Residual'].round(1),
+                        "Antiscalant (kg)": df_bulk['Antiscalant (kg)'].fillna(0), "Antifoam (kg)": df_bulk['Antifoam (kg)'].fillna(0),
+                        "Anti_PPM": df_bulk['Anti_PPM'], "Remarks": df_bulk['Remarks'].fillna(""),
+                        "Area_1st": area_1st, "Area_Overall": area_overall
                     })
                     
                     st.success(f"✅ Automatically calculated KPIs, HTC, and Residuals for {len(db_ready_df)} valid rows.")
@@ -1167,8 +1139,7 @@ def main():
                     
                     st.markdown("### 💾 Commit Bulk Data")
                     c_pwd, c_save = st.columns([2, 2])
-                    with c_pwd: 
-                        pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+                    with c_pwd: pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
                     with c_save:
                         if st.button("🔄 Append all to Master Database", use_container_width=True):
                             if pwd_bulk == "12345678":
@@ -1178,12 +1149,9 @@ def main():
                                 st.success("✅ Bulk Data Successfully Synced to Database!")
                                 time.sleep(1.5)
                                 st.rerun()
-                            elif pwd_bulk != "": 
-                                st.error("❌ Incorrect Password.")
-                else: 
-                    st.error("🚨 No valid data found in CSV.")
-            except Exception as e: 
-                st.error(f"Error processing file: {e}")
+                            elif pwd_bulk != "": st.error("❌ Incorrect Password.")
+                else: st.error("🚨 No valid data found in CSV.")
+            except Exception as e: st.error(f"Error processing file: {e}")
 
     # ==========================================
     # PERSISTENT SIDEBAR CHATBOT
@@ -1200,22 +1168,19 @@ def main():
         chat_container.chat_message("user").markdown(prompt)
 
         p_lower = prompt.lower()
-        if "password" in p_lower: 
-            response = "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
+        if "password" in p_lower: response = "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
         elif "auto" in p_lower or "dose" in p_lower or "optimal" in p_lower or "calculate" in p_lower and "auto" in p_lower:
             response = "The **Auto-Calculate Optimal Dose** feature is currently in development! In a future update, it will use real-time feed water chemistry, Concentration Factors, and scaling indices to scientifically recommend the exact PPM needed."
         elif re.search(r'\bgor\b', p_lower) or "gain output ratio" in p_lower:
             response = "**GOR (Gain Output Ratio)** is calculated as:\n`Gross Production (m³/h) / LP Steam (TPH)`\n\nIt represents the 'fuel economy' of the plant—how many tons of water are produced per ton of steam."
-        elif "recovery" in p_lower: 
-            response = "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100`"
+        elif "recovery" in p_lower: response = "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100`"
         elif re.search(r'\blmtd\b', p_lower) or "log mean" in p_lower:
             response = "**LMTD (Log Mean Temperature Difference)** is currently calculated using a **Simple Delta T** because the Vapor Outlet sensor is unavailable.\n\n* Overall ΔT = `1st Effect Vapor - Final Brine Temp`."
         elif "1st effect htc" in p_lower:
             response = "**1st Effect HTC (U)** is calculated as:\n`(Q_1st / (Area_1st * ΔT_1st)) * 1000`\n\nWhere:\n* `Q_1st` = `1st Effect SW Feed * (1st Brine - Avg Brine 4 to 7) * 0.930`\n* `ΔT_1st` = `1st Vapor - 1st Brine`."
         elif "overall htc" in p_lower or "htc" in p_lower:
             response = "**Overall HTC (U)** is calculated as:\n`(Q_overall / (Area_overall * ΔT_overall)) * 1000`\n\nWhere:\n* `Q_overall` = `Total SW Feed * (Final Brine - SW Cond I/L Temp) * 0.930`\n* `ΔT_overall` = `1st Vapor - Final Brine`."
-        elif "fouling factor" in p_lower: 
-            response = "**Fouling Factor** is calculated simply as:\n`1 / HTC`"
+        elif "fouling factor" in p_lower: response = "**Fouling Factor** is calculated simply as:\n`1 / HTC`"
         elif re.search(r'\bols\b', p_lower) or "linear regression" in p_lower:
             response = "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It creates the 'Digital Twin' of the plant's clean physics."
         elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
