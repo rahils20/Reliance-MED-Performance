@@ -388,7 +388,6 @@ def main():
     if 'last_selected_date' not in st.session_state: 
         st.session_state.last_selected_date = None
 
-    # THE FIX: Extremely robust, exact data mapping to prevent historical data wiping
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
@@ -453,13 +452,12 @@ def main():
         "🤖 7. AI Model Select", "📤 8. Bulk Uploads"
     ])
 
-    # THE FIX: Restored full dictionary with all 10 core variables to prevent KeyError
     ops_data = {
         'Steam': get_v('steam'), 
         'Desal': get_v('desal'), 
         'Gross Prod': get_v('gross'), 
-        'SW Upper': get_v('sw_upper'), # Fallback mapping
-        'SW_Feed_1st': get_v('sw_upper'), # Modern mapping
+        'SW Upper': get_v('sw_upper'), 
+        'SW_Feed_1st': get_v('sw_upper'), 
         'SW Total': get_v('sw_total'), 
         'Brine Return': get_v('brine_ret'),
         'SW In': get_v('sw_in_t'), 
@@ -477,7 +475,6 @@ def main():
     display_effect_df = pd.merge(BASE_EFFECTS, st.session_state.shared_effect_df, on="Effect ID")
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]]
 
-    # 1st Effect HTC vs Overall HTC using exact physics described by Client
     try:
         brine_4_to_7_avg = st.session_state.shared_effect_df[st.session_state.shared_effect_df['Effect ID'].isin(['Effect 4', 'Effect 5', 'Effect 6', 'Effect 7'])]['Live Brine (°C)'].mean()
     except: 
@@ -488,7 +485,7 @@ def main():
     ops_data['htc_1st'] = (ops_data['q_1st'] / (get_v('area_1st') * ops_data['dt_1st'])) * 1000 if ops_data['dt_1st'] > 0 and get_v('area_1st') > 0 else 0
     ops_data['fouling_1st'] = 1 / ops_data['htc_1st'] if ops_data['htc_1st'] > 0 else 0
 
-    ops_data['dt_overall'] = get_v('mra_t1') - get_v('brine_out_t') # Simple Delta T due to broken Vapor Out sensor
+    ops_data['dt_overall'] = get_v('mra_t1') - get_v('brine_out_t')
     ops_data['q_overall'] = get_v('sw_total') * (get_v('brine_out_t') - get_v('sw_in_t')) * 0.930
     ops_data['htc_overall'] = (ops_data['q_overall'] / (get_v('area_overall') * ops_data['dt_overall'])) * 1000 if ops_data['dt_overall'] > 0 and get_v('area_overall') > 0 else 0
     ops_data['fouling_overall'] = 1 / ops_data['htc_overall'] if ops_data['htc_overall'] > 0 else 0
@@ -638,13 +635,18 @@ def main():
     with tabs[2]:
         st.subheader("Thermal Integrity & Fouling")
         c_area1, c_area2 = st.columns(2)
-        with c_area1: st.number_input("1st Effect Surface Area (m²)", key="t2_area_1st", on_change=sync_var, args=('area_1st', 't2_area_1st'))
-        with c_area2: st.number_input("Overall Surface Area (m²)", key="t2_area_overall", on_change=sync_var, args=('area_overall', 't2_area_overall'))
+        with c_area1: 
+            st.number_input("1st Effect Surface Area (m²)", key="t2_area_1st", on_change=sync_var, args=('area_1st', 't2_area_1st'))
+        with c_area2: 
+            st.number_input("Overall Surface Area (m²)", key="t2_area_overall", on_change=sync_var, args=('area_overall', 't2_area_overall'))
 
         h1, h2, h3 = st.columns(3)
-        with h1: st.number_input("SW Cond I/L Temp (°C) [FFC Inlet]", key="t2_sw_in", on_change=sync_var, args=('sw_in_t', 't2_sw_in'))
-        with h2: st.number_input("Final Brine Temp (°C)", key="t2_brine_out", on_change=sync_var, args=('brine_out_t', 't2_brine_out'))
-        with h3: st.number_input("Vapour Outlet Temp (°C)", key="t2_vap_out", on_change=sync_var, args=('vap_out_t', 't2_vap_out'))
+        with h1: 
+            st.number_input("SW Cond I/L Temp (°C) [FFC Inlet]", key="t2_sw_in", on_change=sync_var, args=('sw_in_t', 't2_sw_in'))
+        with h2: 
+            st.number_input("Final Brine Temp (°C)", key="t2_brine_out", on_change=sync_var, args=('brine_out_t', 't2_brine_out'))
+        with h3: 
+            st.number_input("Vapour Outlet Temp (°C)", key="t2_vap_out", on_change=sync_var, args=('vap_out_t', 't2_vap_out'))
         
         st.divider()
         st.markdown("### Overall Plant Performance")
@@ -667,15 +669,15 @@ def main():
             e_df2 = display_effect_df
             htc_data = []
             
-            # THE FIX: Cascade logic updated to start exactly at the 1st Effect Vapor Temperature 
+            # Start the virtual cascade directly at the 1st Effect Temp
             prev_vap = get_v('mra_t1') 
             
             for idx, row in e_df2.iterrows():
                 live_bri = row['Live Brine (°C)']
                 dt_eff = prev_vap - live_bri 
                 
-                # Assuming area_1st is an approximate average bundle area for missing effects
-                eff_htc = (ops_data['Q_act'] / (get_v('area_1st') * dt_eff)) * 1000 if dt_eff > 0 and ops_data['Q_act'] > 0 else 0
+                # THE FIX: Safely calculate individual effect HTC using the 1st effect Heat Load (q_1st)
+                eff_htc = (ops_data['q_1st'] / (get_v('area_1st') * dt_eff)) * 1000 if dt_eff > 0 and ops_data['q_1st'] > 0 else 0
                 
                 htc_data.append({
                     "Effect ID": row['Effect ID'], 
@@ -708,13 +710,15 @@ def main():
                 st.markdown("### 🌊 Feed Sea Water")
                 for param, d in WATER_SPECS["Feed"].items():
                     c_in, c_chk = st.columns([2, 2])
-                    with c_in: st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                    with c_in: 
+                        st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
                     c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Feed'][param]['status']}</div>", unsafe_allow_html=True)
             with w_col2:
                 st.markdown("### 🚰 Desal Product")
                 for param, d in WATER_SPECS["Product"].items():
                     c_in, c_chk = st.columns([2, 2])
-                    with c_in: st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                    with c_in: 
+                        st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
                     c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Product'][param]['status']}</div>", unsafe_allow_html=True)
 
     # --- TAB 4: CHEMICAL DOSING ---
@@ -797,18 +801,31 @@ def main():
             with graph_col1:
                 if model_type == "OLS":
                     st.markdown("#### ⚖️ Variance Impact (TPH)")
-                    impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar().encode(x=alt.X('Impact (TPH):Q'), y=alt.Y('Parameter:N', sort='-x', title=''), color=alt.condition(alt.datum['Impact (TPH)'] > 0, alt.value('#2ca02c'), alt.value('#d62728')), tooltip=['Parameter', 'Impact (TPH)']).properties(height=300)
+                    impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar().encode(
+                        x=alt.X('Impact (TPH):Q'), 
+                        y=alt.Y('Parameter:N', sort='-x', title=''), 
+                        color=alt.condition(alt.datum['Impact (TPH)'] > 0, alt.value('#2ca02c'), alt.value('#d62728')), 
+                        tooltip=['Parameter', 'Impact (TPH)']
+                    ).properties(height=300)
                     st.altair_chart(impact_chart, use_container_width=True)
                 else:
                     st.markdown("#### ⚖️ Feature Importances (AI Mode)")
-                    impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar(color='#1f77b4').encode(x=alt.X('Regression Weight:Q', title="Importance Weight"), y=alt.Y('Parameter:N', sort='-x', title=''), tooltip=['Parameter', 'Regression Weight']).properties(height=300)
+                    impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar(color='#1f77b4').encode(
+                        x=alt.X('Regression Weight:Q', title="Importance Weight"), 
+                        y=alt.Y('Parameter:N', sort='-x', title=''), 
+                        tooltip=['Parameter', 'Regression Weight']
+                    ).properties(height=300)
                     st.altair_chart(impact_chart, use_container_width=True)
 
             with graph_col2:
                 st.markdown("#### 🌊 Flow Distribution")
                 unaccounted = ops_data['SW Total'] - (ops_data['Desal'] + ops_data['Brine Return'])
                 mb_data = pd.DataFrame({'Stream': ['Desal (Net)', 'Brine', 'Losses'], 'Volume': [ops_data['Desal'], ops_data['Brine Return'], unaccounted if unaccounted > 0 else 0]})
-                donut = alt.Chart(mb_data).mark_arc(innerRadius=50).encode(theta=alt.Theta("Volume:Q"), color=alt.Color("Stream:N", scale=alt.Scale(scheme='set2')), tooltip=['Stream', 'Volume']).properties(height=300)
+                donut = alt.Chart(mb_data).mark_arc(innerRadius=50).encode(
+                    theta=alt.Theta("Volume:Q"), 
+                    color=alt.Color("Stream:N", scale=alt.Scale(scheme='set2')), 
+                    tooltip=['Stream', 'Volume']
+                ).properties(height=300)
                 st.altair_chart(donut, use_container_width=True)
 
             st.divider()
@@ -894,7 +911,6 @@ def main():
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
                 
-                # Dynamic mapping for SW Feed historical naming conventions
                 df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Total SW Feed (m3/h)', df_logs.get('SW Feed (m3/h)', df_logs.get('Total Sea Water Feed (FFC)', 0))), errors='coerce')
                 df_logs['Recovery (%)'] = np.where(df_logs['Total SW Feed (m3/h)'] > 0, (pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce') / df_logs['Total SW Feed (m3/h)']) * 100, 0)
                 
@@ -908,12 +924,18 @@ def main():
                 with q_col1:
                     st.markdown("#### 📉 Recovery Trend")
                     if len(df_logs) > 1:
-                        rec_chart = alt.Chart(df_logs).mark_circle().encode(x=alt.X('Date:T', title="Date"), y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
+                        rec_chart = alt.Chart(df_logs).mark_circle().encode(
+                            x=alt.X('Date:T', title="Date"), 
+                            y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False))
+                        )
                         st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red'), use_container_width=True)
                 with q_col2:
                     st.markdown("#### 🌡️ HTC Degradation")
                     if len(df_logs) > 1:
-                        htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Date"), y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)"))
+                        htc_chart = alt.Chart(df_logs).mark_line(point=True, color='orange').encode(
+                            x=alt.X('Date:T', title="Date"), 
+                            y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)")
+                        )
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall_HTC_Val').mark_line(color='black'), use_container_width=True)
 
                 st.divider()
@@ -959,11 +981,23 @@ def main():
                     exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
                 
                 if exp_type == "Line Chart":
-                    chart = alt.Chart(exp_df).mark_line(point=True).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
+                    chart = alt.Chart(exp_df).mark_line(point=True).encode(
+                        x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), 
+                        y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), 
+                        tooltip=[exp_x, exp_y]
+                    )
                 elif exp_type == "Scatter Plot":
-                    chart = alt.Chart(exp_df).mark_circle(size=80).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
+                    chart = alt.Chart(exp_df).mark_circle(size=80).encode(
+                        x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), 
+                        y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), 
+                        tooltip=[exp_x, exp_y]
+                    )
                 else:
-                    chart = alt.Chart(exp_df).mark_bar().encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':N'}"), y=alt.Y(f"{exp_y}:Q"), tooltip=[exp_x, exp_y])
+                    chart = alt.Chart(exp_df).mark_bar().encode(
+                        x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':N'}"), 
+                        y=alt.Y(f"{exp_y}:Q"), 
+                        tooltip=[exp_x, exp_y]
+                    )
                 
                 st.altair_chart(chart.interactive(), use_container_width=True)
             else:
