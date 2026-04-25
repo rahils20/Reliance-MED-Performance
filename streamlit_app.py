@@ -109,7 +109,8 @@ def load_database(db):
     return pd.DataFrame(columns=["Date", "Gross Prod (m3/h)", "Desal (m3/h)", "Steam (TPH)", "SW Feed (m3/h)", "GOR", "Overall HTC", "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "Steam_Temp", "Anti_PPM", "SW_In_Temp", "Brine_Out_Temp", "Vap_Out_Temp"])
 
 def save_database(db, df):
-    df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+    # THE FIX: Bulletproof date conversion for saving
+    df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
     if db["type"] == "cloud":
         try:
@@ -296,8 +297,13 @@ def generate_monthly_report(df_month, month_str, year_str):
     for i, h in enumerate(['Date', 'Gross Prod', 'GOR', 'HTC', 'Residual']): t_log.rows[0].cells[i].text = h
     for _, row in df_month.iterrows():
         rc = t_log.add_row().cells
-        try: date_str = pd.to_datetime(row['Date']).strftime('%d/%m/%Y')
-        except: date_str = str(row['Date'])
+        # THE FIX: Bulletproof date conversion for the Word Doc generator
+        try: 
+            date_val = pd.to_datetime(row['Date'], dayfirst=True, errors='coerce')
+            date_str = date_val.strftime('%d/%m/%Y') if pd.notnull(date_val) else str(row['Date'])
+        except: 
+            date_str = str(row['Date'])
+            
         rc[0].text, rc[1].text, rc[2].text, rc[3].text, rc[4].text = date_str, f"{row['Gross Prod (m3/h)']:.1f}", f"{row['GOR']:.2f}", f"{row['Overall HTC']:.1f}", f"{row['Residual']:.1f}"
 
     bio = io.BytesIO()
@@ -383,7 +389,7 @@ def main():
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
-            dates_in_db = pd.to_datetime(st.session_state.daily_logs['Date'], errors='coerce').dt.strftime('%Y-%m-%d').values
+            dates_in_db = pd.to_datetime(st.session_state.daily_logs['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d').values
             if log_date_str in dates_in_db:
                 row_idx = np.where(dates_in_db == log_date_str)[0][0]
                 row = st.session_state.daily_logs.iloc[row_idx]
@@ -768,7 +774,8 @@ def main():
             st.markdown("#### 📊 Monthly Report Generator")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'])
+                # THE FIX: Bulletproof the report generator date parser
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                 if not month_data.empty:
                     if st.button("📄 Generate Monthly Report (.docx)", use_container_width=True):
@@ -778,7 +785,8 @@ def main():
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'], errors='coerce')
+                # THE FIX: Bulletproof chart date parser
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
                 df_logs['Recovery (%)'] = np.where(pd.to_numeric(df_logs['SW Feed (m3/h)'], errors='coerce') > 0, (pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce') / pd.to_numeric(df_logs['SW Feed (m3/h)'], errors='coerce')) * 100, 0)
                 
                 df_logs['Actual Production'] = pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce')
@@ -835,7 +843,8 @@ def main():
                 with y_c: exp_y = st.selectbox("Select Y-Axis", num_cols, index=0)
                 with t_c: exp_type = st.selectbox("Select Chart Type", ["Line Chart", "Scatter Plot", "Bar Chart"])
                 
-                if exp_x == 'Date': exp_df['Date'] = pd.to_datetime(exp_df['Date'], errors='coerce')
+                # THE FIX: Bulletproof interactive explorer date parser
+                if exp_x == 'Date': exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
                 
                 if exp_type == "Line Chart":
                     chart = alt.Chart(exp_df).mark_line(point=True).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
@@ -1001,6 +1010,7 @@ def main():
                         ):
                             df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
                             
+                        # THE FIX: Bulletproof Bulk Uploader date parser
                         df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date (DD/MM/YYYY)'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
                         df_bulk['GOR'] = np.where(df_bulk['Steam (TPH)'] > 0, df_bulk['Gross Prod (m3/h)'] / df_bulk['Steam (TPH)'], 0)
                         
