@@ -47,15 +47,26 @@ AI_MODEL_FILE = "mra_ai_model.pkl"
 
 MRA_COEF_2014 = {
     "model_type": "OLS",
-    "Intercept": -161.5638, "Press_1st": 0.6136, "Temp_1st": 3.6392, 
-    "SW_Upper": 0.8111, "Brine_Temp_1st": -7.6638, "Brine_Flow": -0.2329, 
-    "LP_Steam": 8.2539, "Steam_Temp": 2.1924, "Anti_PPM": -7.0301
+    "Intercept": -161.5638, 
+    "Press_1st": 0.6136, 
+    "Temp_1st": 3.6392, 
+    "SW_Upper": 0.8111, 
+    "Brine_Temp_1st": -7.6638, 
+    "Brine_Flow": -0.2329, 
+    "LP_Steam": 8.2539, 
+    "Steam_Temp": 2.1924,
+    "Anti_PPM": -7.0301
 }
 
 MRA_BASELINE = {
-    "Press_1st": 231.76, "Temp_1st": 68.47, "SW_Upper": 553.63, 
-    "Brine_Temp_1st": 65.46, "Brine_Flow": 1275.50, "LP_Steam": 71.75, 
-    "Steam_Temp": 165.54, "Anti_PPM": 4.82
+    "Press_1st": 231.76, 
+    "Temp_1st": 68.47, 
+    "SW_Upper": 553.63, 
+    "Brine_Temp_1st": 65.46, 
+    "Brine_Flow": 1275.50, 
+    "LP_Steam": 71.75, 
+    "Steam_Temp": 165.54, 
+    "Anti_PPM": 4.82
 }
 
 BASE_EFFECTS = pd.DataFrame({
@@ -67,16 +78,19 @@ BASE_EFFECTS = pd.DataFrame({
 
 @st.cache_resource(ttl=600)
 def init_db_connection():
-    if not GSPREAD_INSTALLED: return {"type": "local", "client": None}
+    if not GSPREAD_INSTALLED: 
+        return {"type": "local", "client": None}
     if "gcp_service_account" in st.secrets:
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
             creds_dict = dict(st.secrets["gcp_service_account"])
-            if "\\n" in creds_dict["private_key"]: creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+            if "\\n" in creds_dict["private_key"]: 
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
             return {"type": "cloud", "client": client.open(GOOGLE_SHEET_NAME).sheet1}
-        except: pass
+        except: 
+            pass
     return {"type": "local", "client": None}
 
 def load_database(db):
@@ -84,8 +98,10 @@ def load_database(db):
         try:
             records = db["client"].get_all_records()
             if records: return pd.DataFrame(records)
-        except: pass
-    if os.path.exists(LOCAL_DB_FILE): return pd.read_csv(LOCAL_DB_FILE)
+        except: 
+            pass
+    if os.path.exists(LOCAL_DB_FILE): 
+        return pd.read_csv(LOCAL_DB_FILE)
     return pd.DataFrame()
 
 def save_database(db, df):
@@ -97,19 +113,23 @@ def save_database(db, df):
             db["client"].update([df.columns.values.tolist()] + df.values.tolist())
             df.to_csv(LOCAL_DB_FILE, index=False)
             return True
-        except: pass
+        except: 
+            pass
     df.to_csv(LOCAL_DB_FILE, index=False)
     return True
 
 def load_config(db):
     if os.path.exists(LOCAL_CONFIG_FILE):
         try:
-            with open(LOCAL_CONFIG_FILE, "r") as f: return json.load(f)
-        except: pass
+            with open(LOCAL_CONFIG_FILE, "r") as f: 
+                return json.load(f)
+        except: 
+            pass
     return MRA_COEF_2014.copy()
 
 def save_config(db, coef_dict):
-    with open(LOCAL_CONFIG_FILE, "w") as f: json.dump(coef_dict, f)
+    with open(LOCAL_CONFIG_FILE, "w") as f: 
+        json.dump(coef_dict, f)
 
 db_conn = init_db_connection()
 
@@ -135,8 +155,16 @@ def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra):
         "Antifoam Dosing (PPM)": chem_data['foam_ppm'],
         "Antifoam Consumption (kg/hr)": chem_data['foam_cons']
     }
-    for param, details in w_data['Feed'].items(): data_dict[f"Feed Water - {param}"] = details['val']
-    for param, details in w_data['Product'].items(): data_dict[f"Desal Product - {param}"] = details['val']
+    
+    for param, details in w_data['Feed'].items(): 
+        data_dict[f"Feed Water - {param}"] = details['val']
+    for param, details in w_data['Product'].items(): 
+        data_dict[f"Desal Product - {param}"] = details['val']
+        
+    for idx, row in display_effect_df.iterrows():
+        data_dict[f"{row['Effect ID']} Vapor Temp"] = row['Live Vapor (°C)']
+        data_dict[f"{row['Effect ID']} Brine Temp"] = row['Live Brine (°C)']
+        
     df = pd.DataFrame([data_dict])
     return df.to_csv(index=False).encode('utf-8')
 
@@ -154,8 +182,11 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     doc.add_paragraph(f"On {date.strftime('%d/%m/%Y')}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
 
     doc.add_heading('2. Operational Data Summary', level=1)
-    t_ops = doc.add_table(rows=1, cols=4); t_ops.style = 'Table Grid'
-    for i, h in enumerate(['Parameter', 'UOM', 'Design', 'Actual']): t_ops.rows[0].cells[i].text = h
+    t_ops = doc.add_table(rows=1, cols=4)
+    t_ops.style = 'Table Grid'
+    for i, h in enumerate(['Parameter', 'UOM', 'Design', 'Actual']): 
+        t_ops.rows[0].cells[i].text = h
+        
     ops_rows = [
         ['Total Sea Water Feed (FFC)', 'm³/h', '2400', str(ops['SW Total'])], 
         ['SW Feed to 1st Effect', 'm³/h', '580', str(ops['SW_Feed_1st'])], 
@@ -168,11 +199,15 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     ]
     for row in ops_rows:
         rc = t_ops.add_row().cells
-        for i, val in enumerate(row): rc[i].text = val
+        for i, val in enumerate(row): 
+            rc[i].text = val
 
     doc.add_heading('3. Chemical Dosing Status', level=1)
-    t_chem = doc.add_table(rows=1, cols=3); t_chem.style = 'Table Grid'
-    for i, h in enumerate(['Chemical', 'Target Dosing (PPM)', 'Actual Consumption (kg/hr)']): t_chem.rows[0].cells[i].text = h
+    t_chem = doc.add_table(rows=1, cols=3)
+    t_chem.style = 'Table Grid'
+    for i, h in enumerate(['Chemical', 'Target Dosing (PPM)', 'Actual Consumption (kg/hr)']): 
+        t_chem.rows[0].cells[i].text = h
+        
     rc1 = t_chem.add_row().cells
     rc1[0].text, rc1[1].text, rc1[2].text = "Kem Watreat r 3687 (Antiscalant)", f"{chem_data['anti_ppm']:.1f}", f"{chem_data['anti_cons']:.2f}"
     rc2 = t_chem.add_row().cells
@@ -182,10 +217,13 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     doc.add_paragraph(f"Overall Plant HTC: {ops['htc_overall']:.2f} W/m²K | 1st Effect HTC: {ops['htc_1st']:.2f} W/m²K")
     
     doc.add_heading('5. Water Quality', level=1)
-    if skip_wq: doc.add_paragraph("NOTE: Laboratory water quality parameters were not recorded for this operational day.", style='BodyText')
+    if skip_wq: 
+        doc.add_paragraph("NOTE: Laboratory water quality parameters were not recorded for this operational day.", style='BodyText')
     else:
-        t_wq = doc.add_table(rows=1, cols=4); t_wq.style = 'Table Grid'
-        for i, h in enumerate(['Parameter', 'Stream', 'Limit/Spec', 'Actual']): t_wq.rows[0].cells[i].text = h
+        t_wq = doc.add_table(rows=1, cols=4)
+        t_wq.style = 'Table Grid'
+        for i, h in enumerate(['Parameter', 'Stream', 'Limit/Spec', 'Actual']): 
+            t_wq.rows[0].cells[i].text = h
         for param, data in w_data['Feed'].items():
             rc = t_wq.add_row().cells
             rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Sea Water Feed', f"{data['min']}-{data['max']}", str(data['val'])
@@ -196,9 +234,13 @@ def generate_comprehensive_report(date, ops, display_effect_df, w_data, chem_dat
     doc.add_heading('6. MRA Fouling Indicator', level=1)
     diff_pct = (mra['Residual'] / mra['Predicted']) * 100 if mra['Predicted'] > 0 else 0
     doc.add_paragraph(f"Actual Gross: {mra['Actual']:.1f} m³/h | MRA Predicted: {mra['Predicted']:.1f} m³/h | Difference: {diff_pct:.1f}%")
-    if diff_pct <= -5.0: doc.add_paragraph(f"STATUS: FOULING DETECTED ({diff_pct:.1f}% loss). Please clean the machine.").runs[0].font.color.rgb = RGBColor(255, 0, 0)
-    elif diff_pct <= -4.0: doc.add_paragraph(f"STATUS: WARNING ({diff_pct:.1f}% loss). Increase antiscalant dosing.").runs[0].font.color.rgb = RGBColor(255, 140, 0)
-    else: doc.add_paragraph(f"STATUS: CLEAN ({diff_pct:.1f}% loss). System operating normally.").runs[0].font.color.rgb = RGBColor(0, 128, 0)
+    
+    if diff_pct <= -5.0: 
+        doc.add_paragraph(f"STATUS: FOULING DETECTED ({diff_pct:.1f}% loss). Please clean the machine.").runs[0].font.color.rgb = RGBColor(255, 0, 0)
+    elif diff_pct <= -4.0: 
+        doc.add_paragraph(f"STATUS: WARNING ({diff_pct:.1f}% loss). Increase antiscalant dosing.").runs[0].font.color.rgb = RGBColor(255, 140, 0)
+    else: 
+        doc.add_paragraph(f"STATUS: CLEAN ({diff_pct:.1f}% loss). System operating normally.").runs[0].font.color.rgb = RGBColor(0, 128, 0)
     
     if remarks and str(remarks).strip() != "":
         doc.add_heading('7. Remarks & Observations', level=1)
@@ -213,13 +255,24 @@ def generate_monthly_report(df_month, month_str, year_str):
     doc.add_heading(f'MED-4 Monthly Performance Summary: {month_str} {year_str}', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_heading('1. Monthly Aggregation', level=1)
     
-    t_agg = doc.add_table(rows=1, cols=4); t_agg.style = 'Table Grid'
-    for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
+    t_agg = doc.add_table(rows=1, cols=4)
+    t_agg.style = 'Table Grid'
+    for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): 
+        t_agg.rows[0].cells[i].text = h
     
-    metrics = [("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("1st Effect HTC", df_month['1st Effect HTC'])]
+    metrics = [
+        ("Gross Production (m³/h)", df_month['Gross Prod (m3/h)']), 
+        ("Gain Output Ratio (GOR)", df_month['GOR']), 
+        ("Overall HTC (W/m²K)", df_month['Overall HTC']), 
+        ("1st Effect HTC", df_month['1st Effect HTC'])
+    ]
+    
     for name, series in metrics:
         rc = t_agg.add_row().cells
-        rc[0].text, rc[1].text, rc[2].text, rc[3].text = name, f"{pd.to_numeric(series, errors='coerce').min():.2f}", f"{pd.to_numeric(series, errors='coerce').max():.2f}", f"{pd.to_numeric(series, errors='coerce').mean():.2f}"
+        rc[0].text = name
+        rc[1].text = f"{pd.to_numeric(series, errors='coerce').min():.2f}"
+        rc[2].text = f"{pd.to_numeric(series, errors='coerce').max():.2f}"
+        rc[3].text = f"{pd.to_numeric(series, errors='coerce').mean():.2f}"
         
     bio = io.BytesIO()
     doc.save(bio)
@@ -238,26 +291,54 @@ DEFAULTS = {
 }
 
 SYNC_MAP = {
-    'steam': ['in_steam', 't1_steam', 't5_steam'], 'desal': ['in_desal', 't1_desal'], 'gross': ['in_gross', 't1_gross'],
-    'sw_upper': ['in_sw_up', 't1_sw_up', 't5_sw_up'], 'sw_total': ['in_sw_tot', 't1_sw_tot', 't4_sw_tot'], 'brine_ret': ['in_brine', 't1_brine', 't5_bflow'],
-    'sw_in_t': ['in_sw_in', 't2_sw_in'], 'brine_out_t': ['in_brine_out', 't2_brine_out'], 'stm_in_t': ['in_stm_in', 't2_stm_in', 't5_stm_t'], 'vap_out_t': ['in_vap_out', 't2_vap_out'],
-    'mra_press': ['in_press', 't5_press'], 'mra_t1': ['in_t1', 't5_t1'], 'mra_bt1': ['in_bt1', 't5_bt1'],
-    'f_ph': ['in_f_ph', 't3_f_ph'], 'f_turb': ['in_f_turb', 't3_f_turb'], 'f_tss': ['in_f_tss', 't3_f_tss'], 'f_tds': ['in_f_tds', 't3_f_tds'],
-    'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
-    'p_ph': ['in_p_ph', 't3_p_ph'], 'p_cond': ['in_p_cond', 't3_p_cond'], 'p_tds': ['in_p_tds', 't3_p_tds'], 'p_iron': ['in_p_iron', 't3_p_iron'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
-    'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm', 't5_anti'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
-    'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
-    'remarks': ['in_remarks'], 'area_1st': ['t2_area_1st'], 'area_overall': ['t2_area_overall']
+    'steam': ['in_steam', 't1_steam', 't5_steam'], 
+    'desal': ['in_desal', 't1_desal'], 
+    'gross': ['in_gross', 't1_gross'],
+    'sw_upper': ['in_sw_up', 't1_sw_up', 't5_sw_up'], 
+    'sw_total': ['in_sw_tot', 't1_sw_tot', 't4_sw_tot'], 
+    'brine_ret': ['in_brine', 't1_brine', 't5_bflow'],
+    'sw_in_t': ['in_sw_in', 't2_sw_in'], 
+    'brine_out_t': ['in_brine_out', 't2_brine_out'], 
+    'stm_in_t': ['in_stm_in', 't2_stm_in', 't5_stm_t'], 
+    'vap_out_t': ['in_vap_out', 't2_vap_out'],
+    'mra_press': ['in_press', 't5_press'], 
+    'mra_t1': ['in_t1', 't5_t1'], 
+    'mra_bt1': ['in_bt1', 't5_bt1'],
+    'f_ph': ['in_f_ph', 't3_f_ph'], 
+    'f_turb': ['in_f_turb', 't3_f_turb'], 
+    'f_tss': ['in_f_tss', 't3_f_tss'], 
+    'f_tds': ['in_f_tds', 't3_f_tds'],
+    'f_alk': ['in_f_alk', 't3_f_alk'], 
+    'f_ca': ['in_f_ca', 't3_f_ca'], 
+    'f_cl': ['in_f_cl', 't3_f_cl'], 
+    'f_so4': ['in_f_so4', 't3_f_so4'],
+    'p_ph': ['in_p_ph', 't3_p_ph'], 
+    'p_cond': ['in_p_cond', 't3_p_cond'], 
+    'p_tds': ['in_p_tds', 't3_p_tds'], 
+    'p_iron': ['in_p_iron', 't3_p_iron'], 
+    'p_cl': ['in_p_cl', 't3_p_cl'], 
+    'p_so4': ['in_p_so4', 't3_p_so4'],
+    'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm', 't5_anti'], 
+    'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
+    'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 
+    'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
+    'remarks': ['in_remarks'], 
+    'area_1st': ['t2_area_1st'], 
+    'area_overall': ['t2_area_overall']
 }
 
-if 'vars' not in st.session_state: st.session_state.vars = DEFAULTS.copy()
+if 'vars' not in st.session_state: 
+    st.session_state.vars = DEFAULTS.copy()
+    
 for k, v in DEFAULTS.items():
-    if k not in st.session_state.vars: st.session_state.vars[k] = v
+    if k not in st.session_state.vars: 
+        st.session_state.vars[k] = v
 
 if 'sync_initialized' not in st.session_state:
     for var_name, keys in SYNC_MAP.items():
         for k in keys: 
-            if k not in st.session_state: st.session_state[k] = st.session_state.vars[var_name]
+            if k not in st.session_state: 
+                st.session_state[k] = st.session_state.vars[var_name]
     st.session_state.sync_initialized = True
 
 if 'shared_effect_df' not in st.session_state:
@@ -267,8 +348,10 @@ if 'shared_effect_df' not in st.session_state:
         "Live Brine (°C)": np.round(np.linspace(66.3, 40.0, 11), 1)
     })
 
-if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
-if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
+if 'daily_logs' not in st.session_state: 
+    st.session_state.daily_logs = load_database(db_conn)
+if 'mra_coef' not in st.session_state: 
+    st.session_state.mra_coef = load_config(db_conn)
 
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! I am the MED-4 Support Assistant. Ask me anything about how the calculations work."}]
@@ -276,9 +359,11 @@ if "messages" not in st.session_state:
 def sync_var(var_name, source_key):
     st.session_state.vars[var_name] = st.session_state[source_key]
     for target_key in SYNC_MAP[var_name]:
-        if target_key != source_key: st.session_state[target_key] = st.session_state[source_key]
+        if target_key != source_key: 
+            st.session_state[target_key] = st.session_state[source_key]
 
-def get_v(var_name): return st.session_state.vars[var_name]
+def get_v(var_name): 
+    return st.session_state.vars[var_name]
 
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
 WATER_SPECS = {
@@ -290,14 +375,18 @@ WATER_SPECS = {
 # MAIN APPLICATION
 # ==========================================
 def main():
-    try: st.sidebar.image("chembond_logo.png", use_container_width=True)
-    except: st.sidebar.markdown("### 🔹 CHEMBOND WATER") 
+    try: 
+        st.sidebar.image("chembond_logo.png", use_container_width=True)
+    except: 
+        st.sidebar.markdown("### 🔹 CHEMBOND WATER") 
+        
     st.sidebar.divider()
     
     log_date = st.sidebar.date_input("Date", datetime.date.today(), format="DD/MM/YYYY")
     log_date_str = log_date.strftime('%Y-%m-%d')
     
-    if 'last_selected_date' not in st.session_state: st.session_state.last_selected_date = None
+    if 'last_selected_date' not in st.session_state: 
+        st.session_state.last_selected_date = None
 
     # THE FIX: Extremely robust, exact data mapping to prevent historical data wiping
     if log_date_str != st.session_state.last_selected_date:
@@ -309,16 +398,30 @@ def main():
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
                 db_to_var_mapping = {
-                    'gross': ['Gross Prod (m3/h)', 'Gross Prod'], 'desal': ['Desal (m3/h)'], 'steam': ['Steam (TPH)'],
-                    'sw_total': ['Total SW Feed (m3/h)', 'SW Feed (m3/h)'], 'sw_upper': ['SW Feed to 1st Effect (m3/h)', 'SW_Upper'],
-                    'chem_anti_cons': ['Antiscalant (kg)'], 'chem_foam_cons': ['Antifoam (kg)'], 'mra_press': ['Press_1st'], 
-                    'mra_t1': ['Temp_1st'], 'mra_bt1': ['Brine_Temp_1st'], 'brine_ret': ['Brine_Flow'], 
-                    'stm_in_t': ['Steam_Temp'], 'chem_anti_ppm': ['Anti_PPM'], 'sw_in_t': ['SW_Cond_Inlet_Temp', 'SW_In_Temp'], 
-                    'brine_out_t': ['Final_Brine_Temp', 'Brine_Out_Temp'], 'vap_out_t': ['Vap_Out_Temp'], 'remarks': ['Remarks'],
-                    'area_1st': ['Area_1st'], 'area_overall': ['Area_Overall']
+                    'gross': ['Gross Prod (m3/h)', 'Gross Prod'], 
+                    'desal': ['Desal (m3/h)'], 
+                    'steam': ['Steam (TPH)'],
+                    'sw_total': ['Total SW Feed (m3/h)', 'SW Feed (m3/h)', 'Total Sea Water Feed (m3/h)', 'Total Sea Water Feed (FFC)'], 
+                    'sw_upper': ['SW Feed to 1st Effect (m3/h)', 'SW_Upper'],
+                    'chem_anti_cons': ['Antiscalant (kg)'], 
+                    'chem_foam_cons': ['Antifoam (kg)'], 
+                    'mra_press': ['Press_1st'], 
+                    'mra_t1': ['Temp_1st'], 
+                    'mra_bt1': ['Brine_Temp_1st'], 
+                    'brine_ret': ['Brine_Flow'], 
+                    'stm_in_t': ['Steam_Temp'], 
+                    'chem_anti_ppm': ['Anti_PPM'], 
+                    'sw_in_t': ['SW_Cond_Inlet_Temp', 'SW_In_Temp', 'SW Cond I/L Temp'], 
+                    'brine_out_t': ['Final_Brine_Temp', 'Brine_Out_Temp', 'Final Brine Temp'], 
+                    'vap_out_t': ['Vap_Out_Temp'], 
+                    'remarks': ['Remarks'],
+                    'area_1st': ['Area_1st'], 
+                    'area_overall': ['Area_Overall']
                 }
+                
                 for cat in ['Feed', 'Product']:
-                    for param, d in WATER_SPECS[cat].items(): db_to_var_mapping[d['var']] = [d['var']]
+                    for param, d in WATER_SPECS[cat].items(): 
+                        db_to_var_mapping[d['var']] = [d['var']]
 
                 loaded_vars = False
                 for var_key, col_names in db_to_var_mapping.items():
@@ -327,20 +430,44 @@ def main():
                             try:
                                 val_str = str(row[col_name]).strip()
                                 if val_str and val_str.lower() not in ['nan', 'none', 'null', 'na']:
-                                    if var_key == 'remarks': val = val_str
-                                    else: val = float(val_str.replace(',', ''))
+                                    if var_key == 'remarks': 
+                                        val = val_str
+                                    else: 
+                                        val = float(val_str.replace(',', ''))
                                     
                                     st.session_state.vars[var_key] = val
-                                    for tk in SYNC_MAP.get(var_key, []): st.session_state[tk] = val
+                                    for tk in SYNC_MAP.get(var_key, []): 
+                                        st.session_state[tk] = val
                                     loaded_vars = True
                                 break
-                            except: pass 
-                if loaded_vars: st.sidebar.success(f"📅 Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
+                            except: 
+                                pass 
+                if loaded_vars: 
+                    st.sidebar.success(f"📅 Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
 
     st.title("🏭 Reliance MED-4 Management Suite")
-    tabs = st.tabs(["📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", "🤖 7. AI Model Select", "📤 8. Bulk Uploads"])
+    
+    tabs = st.tabs([
+        "📥 0. Inputs", "🌊 1. KPIs", "🔥 2. HTC", "🧪 3. Quality", 
+        "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", 
+        "🤖 7. AI Model Select", "📤 8. Bulk Uploads"
+    ])
 
-    ops_data = {'Steam': get_v('steam'), 'Desal': get_v('desal'), 'Gross Prod': get_v('gross'), 'SW_Feed_1st': get_v('sw_upper'), 'SW Total': get_v('sw_total'), 'Brine Return': get_v('brine_ret')}
+    # THE FIX: Restored full dictionary with all 10 core variables to prevent KeyError
+    ops_data = {
+        'Steam': get_v('steam'), 
+        'Desal': get_v('desal'), 
+        'Gross Prod': get_v('gross'), 
+        'SW Upper': get_v('sw_upper'), # Fallback mapping
+        'SW_Feed_1st': get_v('sw_upper'), # Modern mapping
+        'SW Total': get_v('sw_total'), 
+        'Brine Return': get_v('brine_ret'),
+        'SW In': get_v('sw_in_t'), 
+        'Brine Out': get_v('brine_out_t'), 
+        'Stm In': get_v('stm_in_t'), 
+        'Vap Out': get_v('vap_out_t')
+    }
+    
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
     ops_data['STEC'] = (((ops_data['Steam'] * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG) / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
     ops_data['Recovery'] = (ops_data['Gross Prod'] / ops_data['SW Total']) * 100 if ops_data['SW Total'] > 0 else 0
@@ -350,10 +477,11 @@ def main():
     display_effect_df = pd.merge(BASE_EFFECTS, st.session_state.shared_effect_df, on="Effect ID")
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]]
 
-    # THE FIX: 1st Effect HTC vs Overall HTC using exact physics described by Client
+    # 1st Effect HTC vs Overall HTC using exact physics described by Client
     try:
         brine_4_to_7_avg = st.session_state.shared_effect_df[st.session_state.shared_effect_df['Effect ID'].isin(['Effect 4', 'Effect 5', 'Effect 6', 'Effect 7'])]['Live Brine (°C)'].mean()
-    except: brine_4_to_7_avg = 55.0
+    except: 
+        brine_4_to_7_avg = 55.0
 
     ops_data['dt_1st'] = get_v('mra_t1') - get_v('mra_bt1')
     ops_data['q_1st'] = get_v('sw_upper') * (get_v('mra_bt1') - brine_4_to_7_avg) * 0.930
@@ -377,7 +505,8 @@ def main():
             active_model = joblib.load(AI_MODEL_FILE)
             live_df = pd.DataFrame([live_input_arr], columns=["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"])
             mra_data['Predicted'] = float(active_model.predict(live_df)[0])
-        except: mra_data['Predicted'] = 0.0
+        except: 
+            mra_data['Predicted'] = 0.0
             
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
@@ -385,12 +514,16 @@ def main():
     var_data = []
     param_keys = ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
     param_names = ["1st Effect Press", "1st Effect Temp", "SW Feed to 1st Effect", "1st Brine Temp", "Brine Flow", "LP Steam", "Steam Temp", "Antiscalant PPM"]
+    
     for i in range(8):
         dev = live_input_arr[i] - MRA_BASELINE[param_keys[i]]
         weight = coefs.get(param_keys[i], 0.0) 
-        if model_type == "OLS": impact = dev * weight
-        else: impact = np.nan 
+        if model_type == "OLS": 
+            impact = dev * weight
+        else: 
+            impact = np.nan 
         var_data.append([param_names[i], MRA_BASELINE[param_keys[i]], live_input_arr[i], dev, weight, impact])
+        
     mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
     water_data = {'Feed': {}, 'Product': {}}
@@ -399,7 +532,13 @@ def main():
             val = get_v(details['var'])
             status = "✅ Pass" if details['lim'][0] <= val <= details['lim'][1] else "🚨 Fail"
             water_data[cat][param] = {'min': details['lim'][0], 'max': details['lim'][1], 'val': val, 'status': status}
-    chem_data = {'anti_ppm': get_v('chem_anti_ppm'), 'anti_cons': get_v('chem_anti_cons'), 'foam_ppm': get_v('chem_foam_ppm'), 'foam_cons': get_v('chem_foam_cons')}
+            
+    chem_data = {
+        'anti_ppm': get_v('chem_anti_ppm'), 
+        'anti_cons': get_v('chem_anti_cons'), 
+        'foam_ppm': get_v('chem_foam_ppm'), 
+        'foam_cons': get_v('chem_foam_cons')
+    }
 
     # --- TAB 0: INPUTS ---
     with tabs[0]:
@@ -415,6 +554,7 @@ def main():
             with c3:
                 st.number_input("Gross Production (m³/h)", key="in_gross", on_change=sync_var, args=('gross', 'in_gross'))
                 st.number_input("Brine Water Return (m³/h)", key="in_brine", on_change=sync_var, args=('brine_ret', 'in_brine'))
+                
         with st.expander("2. Plant Temperatures & MRA Variables", expanded=False):
             t1, t2, t3, t4 = st.columns(4)
             with t1: 
@@ -428,6 +568,7 @@ def main():
                 st.number_input("1st Brine Temp (°C)", key="in_bt1", on_change=sync_var, args=('mra_bt1', 'in_bt1'))
             with t4: 
                 st.number_input("Vapour Outlet Temp (°C)", key="in_vap_out", on_change=sync_var, args=('vap_out_t', 'in_vap_out'))
+                
         with st.expander("3. Effect-wise Cascade (Temperatures)", expanded=False):
             st.checkbox("Skip Effect-wise Temperatures for today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
             if not get_v('skip_eff'):
@@ -436,16 +577,20 @@ def main():
                     st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df["Live Vapor (°C)"]
                     st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
                     st.rerun()
+                    
         with st.expander("4. Laboratory Water Analysis", expanded=False):
             st.checkbox("Skip Water Analysis for today", key="in_skip_wq", on_change=sync_var, args=('skip_wq', 'in_skip_wq'))
             if not get_v('skip_wq'):
                 w_col1, w_col2 = st.columns(2)
                 with w_col1:
                     st.markdown("**Feed Water**")
-                    for p, d in WATER_SPECS["Feed"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+                    for p, d in WATER_SPECS["Feed"].items(): 
+                        st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
                 with w_col2:
                     st.markdown("**Desal Product**")
-                    for p, d in WATER_SPECS["Product"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+                    for p, d in WATER_SPECS["Product"].items(): 
+                        st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+                        
         with st.expander("5. Chemical Dosing", expanded=False):
             st.markdown("**Kem Watreat r 3687 (Antiscalant)**")
             ch1, ch2 = st.columns(2)
@@ -453,14 +598,17 @@ def main():
                 st.number_input("Dosing Level (PPM)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
                 if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_anti_0"):
                     st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
-            with ch2: st.number_input("Actual Consumption (kg/hr)", key="in_anti_cons", on_change=sync_var, args=('chem_anti_cons', 'in_anti_cons'))
+            with ch2: 
+                st.number_input("Actual Consumption (kg/hr)", key="in_anti_cons", on_change=sync_var, args=('chem_anti_cons', 'in_anti_cons'))
+                
             st.markdown("**Kem Antifoam 1795**")
             ch3, ch4 = st.columns(2)
             with ch3: 
                 st.number_input("Dosing Level (PPM)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
                 if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_foam_0"):
                     st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
-            with ch4: st.number_input("Actual Consumption (kg/hr)", key="in_foam_cons", on_change=sync_var, args=('chem_foam_cons', 'in_foam_cons'))
+            with ch4: 
+                st.number_input("Actual Consumption (kg/hr)", key="in_foam_cons", on_change=sync_var, args=('chem_foam_cons', 'in_foam_cons'))
         
         st.text_area("Remarks & Observations", key="in_remarks", on_change=sync_var, args=('remarks', 'in_remarks'), placeholder="Enter shift notes, TT errors, or daily observations here...")
 
@@ -477,6 +625,7 @@ def main():
         with c3:
             st.number_input("Gross Production (m³/h)", key="t1_gross", on_change=sync_var, args=('gross', 't1_gross'))
             st.number_input("Brine Water Return (m³/h)", key="t1_brine", on_change=sync_var, args=('brine_ret', 't1_brine'))
+            
         st.divider()
         kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
         kpi1.metric("GOR", f"{ops_data['GOR']:.2f}:1")
@@ -517,17 +666,28 @@ def main():
             st.markdown("#### Effect-wise Heat Transfer Coefficients (Base vs Actual)")
             e_df2 = display_effect_df
             htc_data = []
-            prev_vap = ops_data['Stm In']
+            
+            # THE FIX: Cascade logic updated to start exactly at the 1st Effect Vapor Temperature 
+            prev_vap = get_v('mra_t1') 
+            
             for idx, row in e_df2.iterrows():
                 live_bri = row['Live Brine (°C)']
                 dt_eff = prev_vap - live_bri 
+                
+                # Assuming area_1st is an approximate average bundle area for missing effects
                 eff_htc = (ops_data['Q_act'] / (get_v('area_1st') * dt_eff)) * 1000 if dt_eff > 0 and ops_data['Q_act'] > 0 else 0
-                htc_data.append({"Effect ID": row['Effect ID'], "Base HTC": row['Base HTC'], "Actual HTC": round(eff_htc, 1)})
+                
+                htc_data.append({
+                    "Effect ID": row['Effect ID'], 
+                    "Base HTC": row['Base HTC'], 
+                    "Actual HTC": round(eff_htc, 1)
+                })
                 prev_vap = row['Live Vapor (°C)'] 
                 
             htc_df = pd.DataFrame(htc_data)
             htc_col1, htc_col2 = st.columns([1, 1.5])
-            with htc_col1: st.dataframe(htc_df, use_container_width=True, hide_index=True)
+            with htc_col1: 
+                st.dataframe(htc_df, use_container_width=True, hide_index=True)
             with htc_col2:
                 chart_df = htc_df.melt(id_vars='Effect ID', value_vars=['Base HTC', 'Actual HTC'], var_name='Metric', value_name='HTC (W/m²K)')
                 chart_df['Effect ID'] = pd.Categorical(chart_df['Effect ID'], categories=[f"Effect {i}" for i in range(1, 12)], ordered=True)
@@ -566,14 +726,18 @@ def main():
         with cc1:
             st.markdown("### 🧪 Kem Watreat r 3687 (Antiscalant)")
             st.number_input("Target Dosing Level (PPM)", key="t4_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 't4_anti_ppm'))
-            if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_anti_4"): st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
-            st.info(f"**Theoretical Requirement:** {(ops_data['SW Total'] * get_v('chem_anti_ppm')) / 1000:.2f} kg/hr")
+            if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_anti_4"): 
+                st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
+            theo_anti = (ops_data['SW Total'] * get_v('chem_anti_ppm')) / 1000
+            st.info(f"**Theoretical Requirement:** {theo_anti:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_anti_cons", on_change=sync_var, args=('chem_anti_cons', 't4_anti_cons'))
         with cc2:
             st.markdown("### 🫧 Kem Antifoam 1795")
             st.number_input("Target Dosing Level (PPM)", key="t4_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 't4_foam_ppm'))
-            if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_foam_4"): st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
-            st.info(f"**Theoretical Requirement:** {(ops_data['SW Total'] * get_v('chem_foam_ppm')) / 1000:.2f} kg/hr")
+            if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_foam_4"): 
+                st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
+            theo_foam = (ops_data['SW Total'] * get_v('chem_foam_ppm')) / 1000
+            st.info(f"**Theoretical Requirement:** {theo_foam:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_foam_cons", on_change=sync_var, args=('chem_foam_cons', 't4_foam_cons'))
 
     # --- TAB 5: MRA NORMALIZATION ---
@@ -596,11 +760,15 @@ def main():
             k2.metric(f"Predicted ({model_type})", f"{mra_data['Predicted']:.1f} m³/h")
             
             diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
-            if diff_pct <= -5.0: k3.error(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Please clean the machine")
-            elif diff_pct <= -4.0: k3.warning(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Increase antiscalant dosing")
-            else: k3.success(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - CLEAN")
+            if diff_pct <= -5.0: 
+                k3.error(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Please clean the machine")
+            elif diff_pct <= -4.0: 
+                k3.warning(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Increase antiscalant dosing")
+            else: 
+                k3.success(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - CLEAN")
                 
-            if model_type != "OLS": st.info("ℹ️ **AI Model Active:** Variance Impact breakdown is only available for purely linear OLS models.")
+            if model_type != "OLS": 
+                st.info("ℹ️ **AI Model Active:** Variance Impact breakdown is only available for purely linear OLS models.")
             st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
     # --- TAB 6: ENTERPRISE REPORTING SUITE ---
@@ -615,9 +783,13 @@ def main():
             m_col3.metric("System GOR", f"{ops_data['GOR']:.2f}", delta=f"{ops_data['GOR'] - 10.5:.2f} from Target" if ops_data['GOR'] < 10.5 else None)
             
             diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
-            if diff_pct <= -5.0: delta_text, d_color = f"{diff_pct:.1f}% (Please clean machine)", "inverse"
-            elif diff_pct <= -4.0: delta_text, d_color = f"{diff_pct:.1f}% (Increase antiscalant)", "inverse"
-            else: delta_text, d_color = f"{diff_pct:.1f}% (Clean)", "normal"
+            if diff_pct <= -5.0: 
+                delta_text, d_color = f"{diff_pct:.1f}% (Please clean machine)", "inverse"
+            elif diff_pct <= -4.0: 
+                delta_text, d_color = f"{diff_pct:.1f}% (Increase antiscalant)", "inverse"
+            else: 
+                delta_text, d_color = f"{diff_pct:.1f}% (Clean)", "normal"
+                
             m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta=delta_text, delta_color=d_color)
             
             st.divider()
@@ -642,29 +814,46 @@ def main():
             st.divider()
             st.markdown("### 💾 Commit Today's Data")
             c_pwd, c_save, c_export, c_csv = st.columns([1.5, 1, 1, 1])
-            with c_pwd: pwd_append = st.text_input("Master Password", type="password", key="pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Commit")
+            with c_pwd: 
+                pwd_append = st.text_input("Master Password", type="password", key="pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Commit")
             with c_save:
                 if st.button("💾 Append Data", use_container_width=True):
                     if pwd_append == "12345678":
                         new_log = pd.DataFrame({
-                            "Date": [log_date_str], "Gross Prod (m3/h)": [ops_data['Gross Prod']], "Desal (m3/h)": [ops_data['Desal']], 
-                            "Steam (TPH)": [ops_data['Steam']], "Total SW Feed (m3/h)": [ops_data['SW Total']], 
-                            "SW Feed to 1st Effect (m3/h)": [get_v('sw_upper')], "GOR": [round(ops_data['GOR'], 2)], 
-                            "Overall HTC": [round(ops_data['htc_overall'], 2)], "1st Effect HTC": [round(ops_data['htc_1st'], 2)], 
-                            "Residual": [round(mra_data['Residual'], 1)], "Antiscalant (kg)": [chem_data['anti_cons']], 
-                            "Antifoam (kg)": [chem_data['foam_cons']], "Press_1st": [get_v('mra_press')], "Temp_1st": [get_v('mra_t1')], 
-                            "Brine_Temp_1st": [get_v('mra_bt1')], "Brine_Flow": [get_v('brine_ret')], "Steam_Temp": [get_v('stm_in_t')], 
-                            "Anti_PPM": [get_v('chem_anti_ppm')], "SW_Cond_Inlet_Temp": [get_v('sw_in_t')], 
-                            "Final_Brine_Temp": [get_v('brine_out_t')], "Vap_Out_Temp": [get_v('vap_out_t')], "Remarks": [get_v('remarks')],
-                            "Area_1st": [get_v('area_1st')], "Area_Overall": [get_v('area_overall')]
+                            "Date": [log_date_str], 
+                            "Gross Prod (m3/h)": [ops_data['Gross Prod']], 
+                            "Desal (m3/h)": [ops_data['Desal']], 
+                            "Steam (TPH)": [ops_data['Steam']], 
+                            "Total SW Feed (m3/h)": [ops_data['SW Total']], 
+                            "SW Feed to 1st Effect (m3/h)": [get_v('sw_upper')], 
+                            "GOR": [round(ops_data['GOR'], 2)], 
+                            "Overall HTC": [round(ops_data['htc_overall'], 2)], 
+                            "1st Effect HTC": [round(ops_data['htc_1st'], 2)], 
+                            "Residual": [round(mra_data['Residual'], 1)], 
+                            "Antiscalant (kg)": [chem_data['anti_cons']], 
+                            "Antifoam (kg)": [chem_data['foam_cons']], 
+                            "Press_1st": [get_v('mra_press')], 
+                            "Temp_1st": [get_v('mra_t1')], 
+                            "Brine_Temp_1st": [get_v('mra_bt1')], 
+                            "Brine_Flow": [get_v('brine_ret')], 
+                            "Steam_Temp": [get_v('stm_in_t')], 
+                            "Anti_PPM": [get_v('chem_anti_ppm')], 
+                            "SW_Cond_Inlet_Temp": [get_v('sw_in_t')], 
+                            "Final_Brine_Temp": [get_v('brine_out_t')], 
+                            "Vap_Out_Temp": [get_v('vap_out_t')], 
+                            "Remarks": [get_v('remarks')],
+                            "Area_1st": [get_v('area_1st')], 
+                            "Area_Overall": [get_v('area_overall')]
                         })
                         for cat in ['Feed', 'Product']:
-                            for param, details in WATER_SPECS[cat].items(): new_log[details['var']] = [get_v(details['var'])]
+                            for param, details in WATER_SPECS[cat].items(): 
+                                new_log[details['var']] = [get_v(details['var'])]
                             
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                         save_database(db_conn, st.session_state.daily_logs)
                         st.success("✅ Master Database Updated!")
-                    elif pwd_append != "": st.error("❌ Incorrect Password.")
+                    elif pwd_append != "": 
+                        st.error("❌ Incorrect Password.")
             with c_export:
                 word_file = generate_comprehensive_report(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'), get_v('remarks'))
                 st.download_button("📄 Export Report (.docx)", data=word_file, file_name=f"MED4_Daily_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
@@ -676,14 +865,16 @@ def main():
             st.markdown("#### 📆 Editable Master Log Database")
             edited_db = st.data_editor(st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
             c_sync_pwd, c_sync, c_dl = st.columns([2, 1, 1])
-            with c_sync_pwd: pwd_sync = st.text_input("Master Password", type="password", key="pwd_sync", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+            with c_sync_pwd: 
+                pwd_sync = st.text_input("Master Password", type="password", key="pwd_sync", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
             with c_sync:
                 if st.button("☁️ Sync Edits", use_container_width=True):
                     if pwd_sync == "12345678":
                         st.session_state.daily_logs = edited_db
                         save_database(db_conn, st.session_state.daily_logs)
                         st.success("✅ Database Overwritten!")
-                    else: st.error("❌ Incorrect Password.")
+                    else: 
+                        st.error("❌ Incorrect Password.")
             with c_dl:
                 st.download_button("📥 Download CSV Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_Master.csv", mime='text/csv', use_container_width=True)
 
@@ -702,7 +893,9 @@ def main():
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
-                df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Total SW Feed (m3/h)', df_logs.get('SW Feed (m3/h)')), errors='coerce')
+                
+                # Dynamic mapping for SW Feed historical naming conventions
+                df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Total SW Feed (m3/h)', df_logs.get('SW Feed (m3/h)', df_logs.get('Total Sea Water Feed (FFC)', 0))), errors='coerce')
                 df_logs['Recovery (%)'] = np.where(df_logs['Total SW Feed (m3/h)'] > 0, (pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce') / df_logs['Total SW Feed (m3/h)']) * 100, 0)
                 
                 df_logs['Actual Production'] = pd.to_numeric(df_logs['Gross Prod (m3/h)'], errors='coerce')
@@ -755,11 +948,15 @@ def main():
                 num_cols = [col for col in exp_df.columns if col not in ['Date']]
                 
                 x_c, y_c, t_c = st.columns(3)
-                with x_c: exp_x = st.selectbox("Select X-Axis", ['Date'] + num_cols, index=0)
-                with y_c: exp_y = st.selectbox("Select Y-Axis", num_cols, index=0)
-                with t_c: exp_type = st.selectbox("Select Chart Type", ["Line Chart", "Scatter Plot", "Bar Chart"])
+                with x_c: 
+                    exp_x = st.selectbox("Select X-Axis", ['Date'] + num_cols, index=0)
+                with y_c: 
+                    exp_y = st.selectbox("Select Y-Axis", num_cols, index=0)
+                with t_c: 
+                    exp_type = st.selectbox("Select Chart Type", ["Line Chart", "Scatter Plot", "Bar Chart"])
                 
-                if exp_x == 'Date': exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
+                if exp_x == 'Date': 
+                    exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
                 
                 if exp_type == "Line Chart":
                     chart = alt.Chart(exp_df).mark_line(point=True).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
@@ -834,8 +1031,10 @@ def main():
                             m1, m2, m3 = st.columns(3)
                             m1.metric("1. OLS (Linear)", f"{r2_ols * 100:.2f}%")
                             m2.metric("2. Random Forest", f"{r2_rf * 100:.2f}%")
-                            if XGB_INSTALLED: m3.metric("3. XGBoost", f"{r2_xgb * 100:.2f}%")
-                            else: m3.warning("XGBoost library not installed.")
+                            if XGB_INSTALLED: 
+                                m3.metric("3. XGBoost", f"{r2_xgb * 100:.2f}%")
+                            else: 
+                                m3.warning("XGBoost library not installed.")
                             
                             st.markdown("#### Feature Importances / Coefficients")
                             comp_dict = {
@@ -843,13 +1042,16 @@ def main():
                                 "OLS (Coefficients)": np.round(model_ols.coef_, 4),
                                 "Random Forest (Importance %)": np.round(model_rf.feature_importances_ * 100, 2)
                             }
-                            if XGB_INSTALLED: comp_dict["XGBoost (Importance %)"] = np.round(model_xgb.feature_importances_ * 100, 2)
+                            if XGB_INSTALLED: 
+                                comp_dict["XGBoost (Importance %)"] = np.round(model_xgb.feature_importances_ * 100, 2)
                             
                             st.dataframe(pd.DataFrame(comp_dict).style.format(precision=4), use_container_width=True, hide_index=True)
                             
                             st.markdown("### 💾 Deploy Selected Brain")
                             opts = ["OLS (Linear)", "Random Forest"]
-                            if XGB_INSTALLED: opts.append("XGBoost")
+                            if XGB_INSTALLED: 
+                                opts.append("XGBoost")
+                                
                             selected_model = st.radio("Select which model logic to run the dashboard predictions:", opts)
                             
                             if st.button("🔥 Deploy Model Permanently", type="primary", use_container_width=True):
@@ -905,7 +1107,6 @@ def main():
         if bulk_file is not None:
             try:
                 df_bulk = pd.read_csv(bulk_file)
-                # Flexible handling in case user uploaded CSV with just 'Date'
                 if 'Date' in df_bulk.columns and 'Date (DD/MM/YYYY)' not in df_bulk.columns:
                     df_bulk.rename(columns={'Date': 'Date (DD/MM/YYYY)'}, inplace=True)
 
@@ -945,7 +1146,8 @@ def main():
                                 bulk_input_df = df_bulk[["Press_1st", "Temp_1st", "SW Feed to 1st Effect (m3/h)", "Brine_Temp_1st", "Brine_Flow", "Steam (TPH)", "Steam_Temp", "Anti_PPM"]].copy()
                                 bulk_input_df.columns = ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
                                 df_bulk['Predicted'] = active_model.predict(bulk_input_df)
-                            except Exception: df_bulk['Predicted'] = 0.0
+                            except Exception: 
+                                df_bulk['Predicted'] = 0.0
                                 
                         df_bulk['Residual'] = df_bulk['Gross Prod (m3/h)'] - df_bulk['Predicted']
                         
@@ -953,42 +1155,53 @@ def main():
                         df_bulk['Final Brine Temp'] = df_bulk['Final Brine Temp'].fillna(41.0)
                         df_bulk['Total Sea Water Feed (m3/h)'] = df_bulk['Total Sea Water Feed (m3/h)'].fillna(2100.0)
                         
-                        # Calculate HTC Using Client's Exact Rules
                         area_overall = get_v('area_overall')
                         dt_overall = df_bulk['Temp_1st'] - df_bulk['Final Brine Temp']
                         q_overall = df_bulk['Total Sea Water Feed (m3/h)'] * (df_bulk['Final Brine Temp'] - df_bulk['SW Cond I/L Temp']) * 0.930
                         df_bulk['Overall HTC'] = np.where(dt_overall > 0, (q_overall / (area_overall * dt_overall)) * 1000, 0)
 
                         area_1st = get_v('area_1st')
-                        brine_avg = 55.0 # Default assumption for missing cascade data in bulk uploads
+                        brine_avg = 55.0 
                         dt_1st = df_bulk['Temp_1st'] - df_bulk['Brine_Temp_1st']
                         q_1st = df_bulk['SW Feed to 1st Effect (m3/h)'] * (df_bulk['Brine_Temp_1st'] - brine_avg) * 0.930
                         df_bulk['1st Effect HTC'] = np.where(dt_1st > 0, (q_1st / (area_1st * dt_1st)) * 1000, 0)
                         
                         db_ready_df = pd.DataFrame({
-                            "Date": df_bulk['Date_Clean'], "Gross Prod (m3/h)": df_bulk['Gross Prod (m3/h)'],
-                            "Desal (m3/h)": df_bulk['Desal (m3/h)'].fillna(0), "Steam (TPH)": df_bulk['Steam (TPH)'],
+                            "Date": df_bulk['Date_Clean'], 
+                            "Gross Prod (m3/h)": df_bulk['Gross Prod (m3/h)'],
+                            "Desal (m3/h)": df_bulk['Desal (m3/h)'].fillna(0), 
+                            "Steam (TPH)": df_bulk['Steam (TPH)'],
                             "Total SW Feed (m3/h)": df_bulk['Total Sea Water Feed (m3/h)'], 
                             "SW Feed to 1st Effect (m3/h)": df_bulk['SW Feed to 1st Effect (m3/h)'],
                             "GOR": df_bulk['GOR'].round(2),
-                            "Overall HTC": df_bulk['Overall HTC'].round(2), "1st Effect HTC": df_bulk['1st Effect HTC'].round(2),
+                            "Overall HTC": df_bulk['Overall HTC'].round(2), 
+                            "1st Effect HTC": df_bulk['1st Effect HTC'].round(2),
                             "Residual": df_bulk['Residual'].round(1),
-                            "Antiscalant (kg)": df_bulk['Antiscalant (kg)'].fillna(0), "Antifoam (kg)": df_bulk['Antifoam (kg)'].fillna(0),
-                            "Press_1st": df_bulk['Press_1st'], "Temp_1st": df_bulk['Temp_1st'],
-                            "Brine_Temp_1st": df_bulk['Brine_Temp_1st'], "Brine_Flow": df_bulk['Brine_Flow'], "Steam_Temp": df_bulk['Steam_Temp'],
-                            "Anti_PPM": df_bulk['Anti_PPM'], "SW_Cond_Inlet_Temp": df_bulk['SW Cond I/L Temp'],
-                            "Final_Brine_Temp": df_bulk['Final Brine Temp'], "Remarks": df_bulk['Remarks'].fillna(""),
-                            "Area_1st": area_1st, "Area_Overall": area_overall
+                            "Antiscalant (kg)": df_bulk['Antiscalant (kg)'].fillna(0), 
+                            "Antifoam (kg)": df_bulk['Antifoam (kg)'].fillna(0),
+                            "Press_1st": df_bulk['Press_1st'], 
+                            "Temp_1st": df_bulk['Temp_1st'],
+                            "Brine_Temp_1st": df_bulk['Brine_Temp_1st'], 
+                            "Brine_Flow": df_bulk['Brine_Flow'], 
+                            "Steam_Temp": df_bulk['Steam_Temp'],
+                            "Anti_PPM": df_bulk['Anti_PPM'], 
+                            "SW_Cond_Inlet_Temp": df_bulk['SW Cond I/L Temp'],
+                            "Final_Brine_Temp": df_bulk['Final Brine Temp'], 
+                            "Remarks": df_bulk['Remarks'].fillna(""),
+                            "Area_1st": area_1st, 
+                            "Area_Overall": area_overall
                         })
                         for cat in ['Feed', 'Product']:
-                            for param, details in WATER_SPECS[cat].items(): db_ready_df[details['var']] = get_v(details['var'])
+                            for param, details in WATER_SPECS[cat].items(): 
+                                db_ready_df[details['var']] = get_v(details['var'])
                         
                         st.success(f"✅ Automatically calculated KPIs, HTC, and Residuals for {len(db_ready_df)} valid rows.")
                         st.dataframe(db_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
                         
                         st.markdown("### 💾 Commit Bulk Data")
                         c_pwd, c_save = st.columns([2, 2])
-                        with c_pwd: pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+                        with c_pwd: 
+                            pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
                         with c_save:
                             if st.button("🔄 Append all to Master Database", use_container_width=True):
                                 if pwd_bulk == "12345678":
@@ -998,9 +1211,12 @@ def main():
                                     st.success("✅ Bulk Data Successfully Synced to Database!")
                                     time.sleep(1.5)
                                     st.rerun()
-                                elif pwd_bulk != "": st.error("❌ Incorrect Password.")
-                    else: st.error("🚨 No valid data found in CSV.")
-            except Exception as e: st.error(f"Error processing file: {e}")
+                                elif pwd_bulk != "": 
+                                    st.error("❌ Incorrect Password.")
+                    else:
+                        st.error("🚨 No valid data found in CSV.")
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
 
     # ==========================================
     # PERSISTENT SIDEBAR CHATBOT
@@ -1017,19 +1233,22 @@ def main():
         chat_container.chat_message("user").markdown(prompt)
 
         p_lower = prompt.lower()
-        if "password" in p_lower: response = "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
+        if "password" in p_lower:
+            response = "For security reasons, I cannot provide the Master Password. Please contact the plant administrator."
         elif "auto" in p_lower or "dose" in p_lower or "optimal" in p_lower or "calculate" in p_lower and "auto" in p_lower:
             response = "The **Auto-Calculate Optimal Dose** feature is currently in development! In a future update, it will use real-time feed water chemistry, Concentration Factors, and scaling indices to scientifically recommend the exact PPM needed."
         elif re.search(r'\bgor\b', p_lower) or "gain output ratio" in p_lower:
             response = "**GOR (Gain Output Ratio)** is calculated as:\n`Gross Production (m³/h) / LP Steam (TPH)`\n\nIt represents the 'fuel economy' of the plant—how many tons of water are produced per ton of steam."
-        elif "recovery" in p_lower: response = "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100`\n\nThis shows the percentage of incoming seawater that is successfully converted into distillate."
+        elif "recovery" in p_lower:
+            response = "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100`\n\nThis shows the percentage of incoming seawater that is successfully converted into distillate."
         elif re.search(r'\blmtd\b', p_lower) or "log mean" in p_lower:
             response = "**LMTD (Log Mean Temperature Difference)** is currently calculated using a **Simple Delta T** because the Vapor Outlet sensor is unavailable.\n\n* Overall ΔT = `1st Effect Vapor - Final Brine Temp`."
         elif "1st effect htc" in p_lower:
             response = "**1st Effect HTC (U)** is calculated as:\n`(Q_1st / (Area_1st * ΔT_1st)) * 1000`\n\nWhere:\n* `Q_1st` = `SW Feed to 1st Effect * (1st Brine - Avg Brine 4 to 7) * 0.930`\n* `ΔT_1st` = `1st Vapor - 1st Brine`."
         elif "overall htc" in p_lower or "htc" in p_lower:
             response = "**Overall HTC (U)** is calculated as:\n`(Q_overall / (Area_overall * ΔT_overall)) * 1000`\n\nWhere:\n* `Q_overall` = `Total SW Feed * (Final Brine - SW Cond I/L Temp) * 0.930`\n* `ΔT_overall` = `1st Vapor - Final Brine`."
-        elif "fouling factor" in p_lower: response = "**Fouling Factor** is calculated simply as:\n`1 / HTC`\n\nIt represents the thermal resistance added by scale buildup on the tubes."
+        elif "fouling factor" in p_lower:
+            response = "**Fouling Factor** is calculated simply as:\n`1 / HTC`\n\nIt represents the thermal resistance added by scale buildup on the tubes."
         elif re.search(r'\bols\b', p_lower) or "linear regression" in p_lower:
             response = "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It creates the 'Digital Twin' of the plant's clean physics."
         elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
