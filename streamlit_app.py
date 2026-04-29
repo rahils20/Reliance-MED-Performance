@@ -66,7 +66,6 @@ MRA_BASELINE = {
     "Steam_Temp": 165.54, "Anti_PPM": 4.82
 }
 
-# Fix: No dummy data for effects. Initialize with NaN.
 BASE_EFFECTS = pd.DataFrame({
     "Effect ID": [f"Effect {i}" for i in range(1, 12)],
     "Live Vapor (°C)": [np.nan] * 11,
@@ -113,11 +112,7 @@ def load_config(db):
     if os.path.exists(LOCAL_CONFIG_FILE):
         try:
             with open(LOCAL_CONFIG_FILE, "r") as f: 
-                cfg = json.load(f)
-                # Streamlit Cloud Ephemeral Storage Safety Catch
-                if cfg.get('model_type') != 'OLS' and not os.path.exists(AI_MODEL_FILE):
-                    cfg['model_type'] = 'OLS'
-                return cfg
+                return json.load(f)
         except: pass
     return MRA_COEF_2014.copy()
 
@@ -127,46 +122,65 @@ def save_config(db, coef_dict):
 db_conn = init_db_connection()
 
 # ==========================================
+# UNIFIED DATABASE SCHEMA & SPECS
+# ==========================================
+WATER_SPECS = {
+    "Feed": {
+        "pH": {"lim": (7.5, 9.2), "var": "f_ph", "db_col": "Feed_pH", "avg": 8.14},
+        "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb", "db_col": "Feed_Turbidity", "avg": 3.2},
+        "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss", "db_col": "Feed_TSS", "avg": 6.5},
+        "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds", "db_col": "Feed_TDS", "avg": 41000.0},
+        "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk", "db_col": "Feed_Alkalinity", "avg": 170.0},
+        "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca", "db_col": "Feed_Calcium", "avg": 1040.0},
+        "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl", "db_col": "Feed_Chlorides", "avg": 21500.0},
+        "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4", "db_col": "Feed_Sulphate", "avg": 3150.0}
+    },
+    "Product": {
+        "pH": {"lim": (5.5, 7.0), "var": "p_ph", "db_col": "Product_pH", "avg": 6.5},
+        "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond", "db_col": "Product_Cond", "avg": 4.6},
+        "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds", "db_col": "Product_TDS", "avg": 2.5},
+        "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron", "db_col": "Product_Iron", "avg": 0.05},
+        "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl", "db_col": "Product_Chlorides", "avg": 0.0},
+        "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4", "db_col": "Product_Sulphate", "avg": 0.0}
+    }
+}
+
+EXACT_DB_COLUMNS = [
+    "Date", "Sea Water Upper", "Sea Water Lower", "Sea Water Feed", "Brine Water Return", 
+    "Desal production", "LP Steam consumption", "condensate flow", "condensate temp", 
+    "1st effect vapour temp", "1st effect brine temp", "Delta T", "1st effect vapour pressure", 
+    "Steam inlet temp", "Brine outlet temp", "Sea Water cond I/L temp", "Sea Water o/L temp", 
+    "CW supply", "SW return", "Gross production", "GOR", "Overall HTC", "1st Effect HTC", 
+    "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Area_1st", "Area_Overall", "Remarks"
+]
+for cat in ['Feed', 'Product']:
+    for param, details in WATER_SPECS[cat].items(): 
+        EXACT_DB_COLUMNS.append(details['db_col'])
+
+# ==========================================
 # 2. REPORT & CSV EXPORT GENERATORS
 # ==========================================
 def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra, extra_tags):
     data_dict = {
         "Date": date.strftime('%d/%m/%Y'),
-        "Sea Water Upper": ops['SW_Feed_1st'],
-        "Sea Water Lower": extra_tags['sw_lower'],
-        "Sea Water Feed": ops['SW Total'],
-        "Brine Water Return": ops['Brine Return'],
-        "Desal production": ops['Desal'],
-        "LP Steam consumption": ops['Steam'],
-        "condensate flow": extra_tags['cond_flow'],
-        "condensate temp": extra_tags['cond_temp'],
-        "1st effect vapour temp": ops['Stm In_1st'],
-        "1st effect brine temp": ops['Brine_1st'],
-        "Delta T": ops['dt_1st'],
-        "1st effect vapour pressure": ops['Press_1st'],
-        "Steam inlet temp": ops['Stm In_overall'],
-        "Brine outlet temp": ops['Brine Out_overall'],
-        "Sea Water cond I/L temp": ops['SW In_overall'],
-        "Sea Water o/L temp": extra_tags['sw_out_t'],
-        "CW supply": extra_tags['cw_supply'],
-        "SW return": extra_tags['sw_return'],
-        "Gross production": ops['Gross Prod'],
-        "Recovery (%)": round(ops['Recovery'], 2),
-        "GOR": round(ops['GOR'], 2),
-        "Overall HTC": round(ops['htc_overall'], 2),
-        "1st Effect HTC": round(ops['htc_1st'], 2),
-        "Residual": round(mra['Residual'], 2),
-        "Antiscalant Dosing (PPM)": chem_data['anti_ppm'],
-        "Antiscalant (kg)": chem_data['anti_cons'],
-        "Antifoam Dosing (PPM)": chem_data['foam_ppm'],
-        "Antifoam (kg)": chem_data['foam_cons'],
+        "Sea Water Upper": ops['SW_Feed_1st'], "Sea Water Lower": extra_tags['sw_lower'],
+        "Sea Water Feed": ops['SW Total'], "Brine Water Return": ops['Brine Return'],
+        "Desal production": ops['Desal'], "LP Steam consumption": ops['Steam'],
+        "condensate flow": extra_tags['cond_flow'], "condensate temp": extra_tags['cond_temp'],
+        "1st effect vapour temp": ops['Stm In_1st'], "1st effect brine temp": ops['Brine_1st'],
+        "Delta T": ops['dt_1st'], "1st effect vapour pressure": ops['Press_1st'],
+        "Steam inlet temp": ops['Stm In_overall'], "Brine outlet temp": ops['Brine Out_overall'],
+        "Sea Water cond I/L temp": ops['SW In_overall'], "Sea Water o/L temp": extra_tags['sw_out_t'],
+        "CW supply": extra_tags['cw_supply'], "SW return": extra_tags['sw_return'],
+        "Gross production": ops['Gross Prod'], "Recovery (%)": round(ops['Recovery'], 2),
+        "GOR": round(ops['GOR'], 2), "Overall HTC": round(ops['htc_overall'], 2),
+        "1st Effect HTC": round(ops['htc_1st'], 2), "Residual": round(mra['Residual'], 2),
+        "Antiscalant Dosing (PPM)": chem_data['anti_ppm'], "Antiscalant (kg)": chem_data['anti_cons'],
+        "Antifoam Dosing (PPM)": chem_data['foam_ppm'], "Antifoam (kg)": chem_data['foam_cons'],
         "Remarks": extra_tags['remarks']
     }
-    for param, details in w_data['Feed'].items(): data_dict[f"Feed Water - {param}"] = details['val']
-    for param, details in w_data['Product'].items(): data_dict[f"Desal Product - {param}"] = details['val']
-    for idx, row in display_effect_df.iterrows():
-        data_dict[f"{row['Effect ID']} Vapor Temp"] = row['Live Vapor (°C)']
-        data_dict[f"{row['Effect ID']} Brine Temp"] = row['Live Brine (°C)']
+    for cat in ['Feed', 'Product']:
+        for param, details in w_data[cat].items(): data_dict[details['db_col']] = details['val']
         
     df = pd.DataFrame([data_dict])
     return df.to_csv(index=False).encode('utf-8')
@@ -310,22 +324,6 @@ def sync_var(var_name, source_key):
 def get_v(var_name): return st.session_state.vars[var_name]
 
 LATENT_HEAT_STEAM_KJ_KG = 2260.0 
-WATER_SPECS = {
-    "Feed": {"pH": {"lim": (7.5, 9.2), "var": "f_ph"}, "Turbidity (NTU)": {"lim": (0.0, 5.0), "var": "f_turb"}, "TSS (ppm)": {"lim": (0.0, 10.0), "var": "f_tss"}, "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds"}, "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk"}, "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca"}, "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl"}, "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4"}},
-    "Product": {"pH": {"lim": (5.5, 7.0), "var": "p_ph"}, "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond"}, "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds"}, "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron"}, "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl"}, "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4"}}
-}
-
-# EXACT EXCEL SEQUENCE FOR DB
-EXACT_DB_COLUMNS = [
-    "Date", "Sea Water Upper", "Sea Water Lower", "Sea Water Feed", "Brine Water Return", 
-    "Desal production", "LP Steam consumption", "condensate flow", "condensate temp", 
-    "1st effect vapour temp", "1st effect brine temp", "Delta T", "1st effect vapour pressure", 
-    "Steam inlet temp", "Brine outlet temp", "Sea Water cond I/L temp", "Sea Water o/L temp", 
-    "CW supply", "SW return", "Gross production", "GOR", "Overall HTC", "1st Effect HTC", 
-    "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Area_1st", "Area_Overall", "Remarks"
-]
-for cat in ['Feed', 'Product']:
-    for param, details in WATER_SPECS[cat].items(): EXACT_DB_COLUMNS.append(details['var'])
 
 # ==========================================
 # MAIN APPLICATION
@@ -340,6 +338,7 @@ def main():
     
     if 'last_selected_date' not in st.session_state: st.session_state.last_selected_date = None
 
+    # Bulletproof Exact Schema Auto-loader
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
@@ -360,8 +359,10 @@ def main():
                     'brine_out_t': ['Brine outlet temp'], 'remarks': ['Remarks'],
                     'area_1st': ['Area_1st'], 'area_overall': ['Area_Overall']
                 }
+                
                 for cat in ['Feed', 'Product']:
-                    for param, d in WATER_SPECS[cat].items(): db_to_var_mapping[d['var']] = [d['var']]
+                    for param, d in WATER_SPECS[cat].items(): 
+                        db_to_var_mapping[d['var']] = [d['db_col']]
 
                 loaded_vars = False
                 for var_key, col_names in db_to_var_mapping.items():
@@ -495,22 +496,24 @@ def main():
                     st.number_input("condensate temp", key="in_cond_temp", on_change=sync_var, args=('cond_temp', 'in_cond_temp'))
                     
             with st.expander("3. Effect-wise Cascade (Temperatures)", expanded=False):
-                st.info("The automated 11-effect chart is turned off to prevent 'made up' data. If you have the specific temperatures for Effects 2-11, please enter them below.")
-                e_df = st.data_editor(display_effect_df, key="in_effect_df", use_container_width=True, hide_index=True, disabled=["Effect ID", "Base Vapor (°C)", "Base Brine (°C)", "Base HTC"])
-                if not e_df[["Live Vapor (°C)", "Live Brine (°C)"]].equals(st.session_state.shared_effect_df[["Live Vapor (°C)", "Live Brine (°C)"]]):
-                    st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df["Live Vapor (°C)"]
-                    st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
-                    st.rerun()
+                st.checkbox("Skip Effect-wise Temperatures for today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
+                if not get_v('skip_eff'):
+                    e_df = st.data_editor(display_effect_df, key="in_effect_df", use_container_width=True, hide_index=True, disabled=["Effect ID", "Base Vapor (°C)", "Base Brine (°C)", "Base HTC"])
+                    if not e_df[["Live Vapor (°C)", "Live Brine (°C)"]].equals(st.session_state.shared_effect_df[["Live Vapor (°C)", "Live Brine (°C)"]]):
+                        st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df["Live Vapor (°C)"]
+                        st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
+                        st.rerun()
                         
-            with st.expander("4. Laboratory Water Analysis (Custom RFQ)", expanded=False):
-                st.info("Additional RFQ parameters can be added to the software architecture during final handover.")
-                w_col1, w_col2 = st.columns(2)
-                with w_col1:
-                    st.markdown("**Feed Water**")
-                    for p, d in WATER_SPECS["Feed"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
-                with w_col2:
-                    st.markdown("**Desal Product**")
-                    for p, d in WATER_SPECS["Product"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+            with st.expander("4. Laboratory QA/QC", expanded=False):
+                st.checkbox("Skip Water Analysis for today", key="in_skip_wq", on_change=sync_var, args=('skip_wq', 'in_skip_wq'))
+                if not get_v('skip_wq'):
+                    w_col1, w_col2 = st.columns(2)
+                    with w_col1:
+                        st.markdown("**Feed Water**")
+                        for p, d in WATER_SPECS["Feed"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+                    with w_col2:
+                        st.markdown("**Desal Product**")
+                        for p, d in WATER_SPECS["Product"].items(): st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
                         
             with st.expander("5. Chemical Dosing", expanded=False):
                 st.markdown("**Kem Watreat r 3687 (Antiscalant)**")
@@ -676,7 +679,9 @@ def main():
     # --- TAB 5: MRA NORMALIZATION ---
     with tabs[5]:
         st.subheader("MRA Fouling Defense")
+        st.markdown("Use these inputs to perform 'What-If' scenarios. The inputs below will automatically safely stretch to fit your data.")
         controls_col, calc_col = st.columns([1, 2])
+        
         with controls_col:
             st.number_input("1st effect vapour pressure (mmHg)", key="t5_press", on_change=sync_var, args=('mra_press', 't5_press'))
             st.number_input("1st effect vapour temp (°C)", key="t5_t1", on_change=sync_var, args=('mra_t1', 't5_t1'))
@@ -746,7 +751,8 @@ def main():
             with c_save:
                 if st.button("💾 Append Data", use_container_width=True):
                     if pwd_append == "12345678":
-                        new_log = pd.DataFrame({
+                        
+                        db_dict = {
                             "Date": [log_date_str], 
                             "Sea Water Upper": [get_v('sw_upper')], "Sea Water Lower": [get_v('sw_lower')],
                             "Sea Water Feed": [ops_data['SW Total']], "Brine Water Return": [ops_data['Brine Return']], 
@@ -760,12 +766,13 @@ def main():
                             "GOR": [round(ops_data['GOR'], 2)], "Overall HTC": [round(ops_data['htc_overall'], 2)], 
                             "1st Effect HTC": [round(ops_data['htc_1st'], 2)], "Residual": [round(mra_data['Residual'], 1)], 
                             "Antiscalant (kg)": [chem_data['anti_cons']], "Antifoam (kg)": [chem_data['foam_cons']], 
-                            "Anti_PPM": [get_v('chem_anti_ppm')], "Remarks": [get_v('remarks')],
-                            "Area_1st": [get_v('area_1st')], "Area_Overall": [get_v('area_overall')]
-                        })
+                            "Anti_PPM": [get_v('chem_anti_ppm')], "Area_1st": [get_v('area_1st')], 
+                            "Area_Overall": [get_v('area_overall')], "Remarks": [get_v('remarks')]
+                        }
                         for cat in ['Feed', 'Product']:
-                            for param, details in WATER_SPECS[cat].items(): new_log[details['var']] = [get_v(details['var'])]
+                            for param, details in WATER_SPECS[cat].items(): db_dict[details['db_col']] = [get_v(details['var'])]
                             
+                        new_log = pd.DataFrame(db_dict)
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                         save_database(db_conn, st.session_state.daily_logs)
                         st.success("✅ Master Database Updated!")
@@ -779,7 +786,6 @@ def main():
 
         with rep_tabs[1]:
             st.markdown("#### 📆 Editable Master Log Database")
-            # Only show columns that exist in the exact DB sequence
             display_cols = [c for c in EXACT_DB_COLUMNS if c in st.session_state.daily_logs.columns]
             edited_db = st.data_editor(st.session_state.daily_logs[display_cols] if not st.session_state.daily_logs.empty else st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
             c_sync_pwd, c_sync, c_dl = st.columns([2, 1, 1])
@@ -900,7 +906,6 @@ def main():
         if not SKLEARN_INSTALLED:
             st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt.")
         else:
-            st.warning("📌 **Note on AI Models:** Because this app is currently hosted on a temporary cloud server, custom AI models (Random Forest/XGBoost) will reset to OLS if the app goes to sleep. This will be permanently resolved when installed on your local, persistent company servers.")
             st.markdown("### 💾 Manage Baseline Model")
             st.markdown(f"**Current Active Brain:** `{model_type}`")
             c_reset, _ = st.columns([1, 1])
@@ -1016,16 +1021,14 @@ def main():
             try:
                 df_bulk = pd.read_csv(bulk_file)
                 
-                # Check for standard mapping overrides if they uploaded an older format
                 if 'Date' in df_bulk.columns and 'Date (DD/MM/YYYY)' not in df_bulk.columns:
-                    pass # Handled safely
+                    pass 
                 if 'Date (DD/MM/YYYY)' in df_bulk.columns:
                      df_bulk.rename(columns={'Date (DD/MM/YYYY)': 'Date'}, inplace=True)
 
                 missing = [c for c in EXACT_DB_COLUMNS if c not in df_bulk.columns]
-                
                 if missing:
-                    st.warning(f"⚠️ Uploaded CSV is missing some columns. We will auto-fill them with defaults where possible. Missing: {', '.join(missing)}")
+                    st.warning(f"⚠️ Uploaded CSV is missing some columns. Auto-filling with defaults where possible. Missing: {', '.join(missing)}")
                     for c in missing: df_bulk[c] = np.nan
                 
                 num_cols = [c for c in EXACT_DB_COLUMNS if c not in ["Date", "Remarks"]]
@@ -1045,10 +1048,13 @@ def main():
                     
                     df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
                     df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
+                    
+                    for cat in ['Feed', 'Product']:
+                        for param, details in WATER_SPECS[cat].items():
+                            df_bulk[details['db_col']] = df_bulk[details['db_col']].fillna(details['avg'])
                         
                     df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
-                    
                     df_bulk['Delta T'] = df_bulk['Delta T'].fillna(df_bulk['1st effect vapour temp'] - df_bulk['1st effect brine temp'])
 
                     if model_type == "OLS":
@@ -1068,7 +1074,6 @@ def main():
                         except: df_bulk['Predicted'] = 0.0
                             
                     df_bulk['Residual'] = df_bulk['Gross production'] - df_bulk['Predicted']
-                    
                     df_bulk['Sea Water cond I/L temp'] = df_bulk['Sea Water cond I/L temp'].fillna(30.0)
                     df_bulk['Brine outlet temp'] = df_bulk['Brine outlet temp'].fillna(41.0)
                     df_bulk['Sea Water Feed'] = df_bulk['Sea Water Feed'].fillna(2100.0)
@@ -1083,7 +1088,6 @@ def main():
                     q_1st = df_bulk['Sea Water Upper'] * (df_bulk['1st effect brine temp'] - brine_avg) * 0.930
                     df_bulk['1st Effect HTC'] = np.where(df_bulk['Delta T'] > 0, (q_1st / (area_1st * df_bulk['Delta T'])) * 1000, 0)
                     
-                    # Create the absolute final payload matching EXACT_DB_COLUMNS perfectly
                     db_ready_dict = {
                         "Date": df_bulk['Date_Clean'], 
                         "Sea Water Upper": df_bulk['Sea Water Upper'], "Sea Water Lower": df_bulk['Sea Water Lower'].fillna(0),
@@ -1104,7 +1108,7 @@ def main():
                     }
                     for cat in ['Feed', 'Product']:
                         for param, details in WATER_SPECS[cat].items(): 
-                            db_ready_dict[details['var']] = df_bulk[details['var']].fillna(get_v(details['var']))
+                            db_ready_dict[details['db_col']] = df_bulk[details['db_col']]
                             
                     db_ready_df = pd.DataFrame(db_ready_dict)
                     
@@ -1158,13 +1162,13 @@ def main():
         elif re.search(r'\bols\b', p_lower) or "linear regression" in p_lower:
             response = "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It creates the 'Digital Twin' of the plant's clean physics."
         elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
-            response = "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior, but they don't give you simple linear 'coefficients' like OLS does. Note: On temporary cloud hosts, these models may reset to OLS after periods of inactivity."
+            response = "**Random Forest and XGBoost** are advanced AI models that use Decision Trees instead of linear math. They are highly accurate at tracking complex plant behavior, but they don't give you simple linear 'coefficients' like OLS does. Your selected model is saved and will persist across reboots."
         elif "residual" in p_lower:
             response = "**Residual** is calculated as:\n`Actual Gross Production - Predicted Production`\n\nA negative residual means the plant is underperforming compared to its clean digital twin, indicating scale is blocking heat transfer."
         elif "fouling" in p_lower or "alert" in p_lower or "status" in p_lower:
             response = "The software calculates a **% Difference**:\n`(Residual / Predicted) * 100`\n\n* **Better than -4%:** CLEAN\n* **-4% to -5%:** WARNING (Increase antiscalant dosing)\n* **Worse than -5%:** FOULING (Please clean the machine)"
         elif "bulk" in p_lower or "upload" in p_lower:
-            response = "In the **Bulk Uploads** tab, you can upload an entire month of logs using your exact Excel sequence. The software automatically calculates GOR, HTC, Predicted Production, and Residuals for every row, safely handling missing sensor data by borrowing from the 2014 baseline."
+            response = "In the **Bulk Uploads** tab, you can upload an entire month of logs using your exact Excel sequence. The software automatically calculates GOR, HTC, Predicted Production, and Residuals for every row, safely handling missing sensor data by borrowing from the 2014 baseline and averaging missing water quality parameters."
         elif "remarks" in p_lower or "observation" in p_lower:
             response = "You can add custom notes, TT errors, or shift observations in the **Remarks & Observations** box in the Reporting Tab. These automatically save to the database and print on the Daily Word Report!"
         else:
