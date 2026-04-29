@@ -66,12 +66,10 @@ MRA_BASELINE = {
     "Steam_Temp": 165.54, "Anti_PPM": 4.82
 }
 
-# THE FIX: Restoring the Base Design physics table so the comparison merge works
 BASE_EFFECTS = pd.DataFrame({
     "Effect ID": [f"Effect {i}" for i in range(1, 12)],
-    "Base Vapor (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
-    "Base Brine (°C)": np.round(np.linspace(66.3, 40.0, 11), 1),
-    "Base HTC": np.round(np.linspace(2800.0, 1500.0, 11), 1) 
+    "Live Vapor (°C)": [np.nan] * 11,
+    "Live Brine (°C)": [np.nan] * 11
 })
 
 @st.cache_resource(ttl=600)
@@ -114,10 +112,7 @@ def load_config(db):
     if os.path.exists(LOCAL_CONFIG_FILE):
         try:
             with open(LOCAL_CONFIG_FILE, "r") as f: 
-                cfg = json.load(f)
-                if cfg.get('model_type') != 'OLS' and not os.path.exists(AI_MODEL_FILE):
-                    cfg['model_type'] = 'OLS'
-                return cfg
+                return json.load(f)
         except: pass
     return MRA_COEF_2014.copy()
 
@@ -313,12 +308,7 @@ if 'sync_initialized' not in st.session_state:
     st.session_state.sync_initialized = True
 
 if 'shared_effect_df' not in st.session_state:
-    # THE FIX: Safely initializing live tables with blanks to stop fake data
-    st.session_state.shared_effect_df = pd.DataFrame({
-        "Effect ID": [f"Effect {i}" for i in range(1, 12)], 
-        "Live Vapor (°C)": [np.nan] * 11, 
-        "Live Brine (°C)": [np.nan] * 11
-    })
+    st.session_state.shared_effect_df = BASE_EFFECTS.copy()
 
 if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
 if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
@@ -458,7 +448,8 @@ def main():
         for param, details in WATER_SPECS[cat].items():
             val = get_v(details['var'])
             status = "✅ Pass" if details['lim'][0] <= val <= details['lim'][1] else "🚨 Fail"
-            water_data[cat][param] = {'min': details['lim'][0], 'max': details['lim'][1], 'val': val, 'status': status}
+            # THE FIX FOR CSV EXPORT CRASH: Add db_col to the water_data package
+            water_data[cat][param] = {'min': details['lim'][0], 'max': details['lim'][1], 'val': val, 'status': status, 'db_col': details['db_col']}
             
     chem_data = {'anti_ppm': get_v('chem_anti_ppm'), 'anti_cons': get_v('chem_anti_cons'), 'foam_ppm': get_v('chem_foam_ppm'), 'foam_cons': get_v('chem_foam_cons')}
 
@@ -929,7 +920,7 @@ def main():
             st.markdown("### 📊 Train & Compare Multi-Models")
             st.markdown("Upload step-test data to simultaneously train pure OLS, Random Forest, and XGBoost models.")
             
-            req_cols = ["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
+            req_cols = ["Date", "Gross production", "1st effect vapour pressure", "1st effect vapour temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Steam inlet temp", "Anti_PPM"]
             template_df = pd.DataFrame(columns=req_cols)
             st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
             
@@ -949,8 +940,8 @@ def main():
                         st.success(f"✅ Training Initialized on {len(df_train)} operational records.")
                         
                         if len(df_train) > 0:
-                            X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]]
-                            Y = df_train["Gross Prod"]
+                            X = df_train[["1st effect vapour pressure", "1st effect vapour temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Steam inlet temp", "Anti_PPM"]]
+                            Y = df_train["Gross production"]
                             
                             model_ols = LinearRegression(fit_intercept=True).fit(X, Y)
                             r2_ols = r2_score(Y, model_ols.predict(X))
