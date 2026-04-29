@@ -66,10 +66,12 @@ MRA_BASELINE = {
     "Steam_Temp": 165.54, "Anti_PPM": 4.82
 }
 
+# THE FIX: Restoring the Base Design physics table so the comparison merge works
 BASE_EFFECTS = pd.DataFrame({
     "Effect ID": [f"Effect {i}" for i in range(1, 12)],
-    "Live Vapor (°C)": [np.nan] * 11,
-    "Live Brine (°C)": [np.nan] * 11
+    "Base Vapor (°C)": np.round(np.linspace(69.0, 42.0, 11), 1),
+    "Base Brine (°C)": np.round(np.linspace(66.3, 40.0, 11), 1),
+    "Base HTC": np.round(np.linspace(2800.0, 1500.0, 11), 1) 
 })
 
 @st.cache_resource(ttl=600)
@@ -112,7 +114,10 @@ def load_config(db):
     if os.path.exists(LOCAL_CONFIG_FILE):
         try:
             with open(LOCAL_CONFIG_FILE, "r") as f: 
-                return json.load(f)
+                cfg = json.load(f)
+                if cfg.get('model_type') != 'OLS' and not os.path.exists(AI_MODEL_FILE):
+                    cfg['model_type'] = 'OLS'
+                return cfg
         except: pass
     return MRA_COEF_2014.copy()
 
@@ -308,7 +313,12 @@ if 'sync_initialized' not in st.session_state:
     st.session_state.sync_initialized = True
 
 if 'shared_effect_df' not in st.session_state:
-    st.session_state.shared_effect_df = BASE_EFFECTS.copy()
+    # THE FIX: Safely initializing live tables with blanks to stop fake data
+    st.session_state.shared_effect_df = pd.DataFrame({
+        "Effect ID": [f"Effect {i}" for i in range(1, 12)], 
+        "Live Vapor (°C)": [np.nan] * 11, 
+        "Live Brine (°C)": [np.nan] * 11
+    })
 
 if 'daily_logs' not in st.session_state: st.session_state.daily_logs = load_database(db_conn)
 if 'mra_coef' not in st.session_state: st.session_state.mra_coef = load_config(db_conn)
@@ -338,7 +348,6 @@ def main():
     
     if 'last_selected_date' not in st.session_state: st.session_state.last_selected_date = None
 
-    # Bulletproof Exact Schema Auto-loader
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
@@ -359,10 +368,8 @@ def main():
                     'brine_out_t': ['Brine outlet temp'], 'remarks': ['Remarks'],
                     'area_1st': ['Area_1st'], 'area_overall': ['Area_Overall']
                 }
-                
                 for cat in ['Feed', 'Product']:
-                    for param, d in WATER_SPECS[cat].items(): 
-                        db_to_var_mapping[d['var']] = [d['db_col']]
+                    for param, d in WATER_SPECS[cat].items(): db_to_var_mapping[d['var']] = [d['db_col']]
 
                 loaded_vars = False
                 for var_key, col_names in db_to_var_mapping.items():
@@ -504,7 +511,7 @@ def main():
                         st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
                         st.rerun()
                         
-            with st.expander("4. Laboratory QA/QC", expanded=False):
+            with st.expander("4. Laboratory Water Analysis", expanded=False):
                 st.checkbox("Skip Water Analysis for today", key="in_skip_wq", on_change=sync_var, args=('skip_wq', 'in_skip_wq'))
                 if not get_v('skip_wq'):
                     w_col1, w_col2 = st.columns(2)
