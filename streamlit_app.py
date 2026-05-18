@@ -404,8 +404,8 @@ if 'sync_initialized' not in st.session_state:
                 st.session_state[k] = st.session_state.vars[var_name]
     st.session_state.sync_initialized = True
 
-if 'shared_effect_df' not in st.session_state:
-    # Safely initializing live tables with NaNs so the merge succeeds without dummy data
+# THE FIX: ADDED SAFETY to prevent KeyError if session state cache drops the columns
+if 'shared_effect_df' not in st.session_state or 'Live Vapor (°C)' not in st.session_state.shared_effect_df.columns:
     st.session_state.shared_effect_df = pd.DataFrame({
         "Effect ID": [f"Effect {i}" for i in range(1, 12)], 
         "Live Vapor (°C)": [np.nan] * 11, 
@@ -543,8 +543,13 @@ def main():
     ops_data['Conversion'] = ops_data['Desal'] / ops_data['SW Total'] if ops_data['SW Total'] > 0 else 0
     ops_data['Economy'] = ops_data['Steam'] / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
 
-    # THE FIX: Properly merging the static Design values with the Live Session values
     display_effect_df = pd.merge(BASE_EFFECTS, st.session_state.shared_effect_df, on="Effect ID")
+    
+    # THE FIX: Added safety net to ensure columns exist before filtering to prevent KeyError
+    for col in ["Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]:
+        if col not in display_effect_df.columns:
+            display_effect_df[col] = np.nan
+            
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]]
 
     try: 
@@ -952,35 +957,20 @@ def main():
                         
                         db_dict = {
                             "Date": [log_date_str], 
-                            "Sea Water Upper": [get_v('sw_upper')], 
-                            "Sea Water Lower": [get_v('sw_lower')],
-                            "Sea Water Feed": [ops_data['SW Total']], 
-                            "Brine Water Return": [ops_data['Brine Return']], 
-                            "Desal production": [ops_data['Desal']], 
-                            "LP Steam consumption": [ops_data['Steam']],
-                            "condensate flow": [get_v('cond_flow')],
-                            "condensate temp": [get_v('cond_temp')],
-                            "1st effect vapour temp": [get_v('mra_t1')],
-                            "1st effect brine temp": [get_v('mra_bt1')],
-                            "Delta T": [ops_data['dt_1st']],
-                            "1st effect vapour pressure": [get_v('mra_press')],
-                            "Steam inlet temp": [get_v('stm_in_t')],
-                            "Brine outlet temp": [get_v('brine_out_t')],
-                            "Sea Water cond I/L temp": [get_v('sw_in_t')],
-                            "Sea Water o/L temp": [get_v('sw_out_t')],
-                            "CW supply": [get_v('cw_supply')],
-                            "SW return": [get_v('sw_return')],
-                            "Gross production": [ops_data['Gross Prod']],
-                            "GOR": [round(ops_data['GOR'], 2)], 
-                            "Overall HTC": [round(ops_data['htc_overall'], 2)], 
-                            "1st Effect HTC": [round(ops_data['htc_1st'], 2)], 
-                            "Residual": [round(mra_data['Residual'], 1)], 
-                            "Antiscalant (kg)": [chem_data['anti_cons']], 
-                            "Antifoam (kg)": [chem_data['foam_cons']], 
-                            "Anti_PPM": [get_v('chem_anti_ppm')], 
-                            "Area_1st": [get_v('area_1st')], 
-                            "Area_Overall": [get_v('area_overall')], 
-                            "Remarks": [get_v('remarks')]
+                            "Sea Water Upper": [get_v('sw_upper')], "Sea Water Lower": [get_v('sw_lower')],
+                            "Sea Water Feed": [ops_data['SW Total']], "Brine Water Return": [ops_data['Brine Return']], 
+                            "Desal production": [ops_data['Desal']], "LP Steam consumption": [ops_data['Steam']],
+                            "condensate flow": [get_v('cond_flow')], "condensate temp": [get_v('cond_temp')],
+                            "1st effect vapour temp": [get_v('mra_t1')], "1st effect brine temp": [get_v('mra_bt1')], 
+                            "Delta T": [ops_data['dt_1st']], "1st effect vapour pressure": [get_v('mra_press')], 
+                            "Steam inlet temp": [get_v('stm_in_t')], "Brine outlet temp": [get_v('brine_out_t')], 
+                            "Sea Water cond I/L temp": [get_v('sw_in_t')], "Sea Water o/L temp": [get_v('sw_out_t')], 
+                            "CW supply": [get_v('cw_supply')], "SW return": [get_v('sw_return')], "Gross production": [ops_data['Gross Prod']],
+                            "GOR": [round(ops_data['GOR'], 2)], "Overall HTC": [round(ops_data['htc_overall'], 2)], 
+                            "1st Effect HTC": [round(ops_data['htc_1st'], 2)], "Residual": [round(mra_data['Residual'], 1)], 
+                            "Antiscalant (kg)": [chem_data['anti_cons']], "Antifoam (kg)": [chem_data['foam_cons']], 
+                            "Anti_PPM": [get_v('chem_anti_ppm')], "Area_1st": [get_v('area_1st')], 
+                            "Area_Overall": [get_v('area_overall')], "Remarks": [get_v('remarks')]
                         }
                         for cat in ['Feed', 'Product']:
                             for param, details in WATER_SPECS[cat].items(): 
@@ -1170,7 +1160,7 @@ def main():
             st.markdown("### 📊 Train & Compare Multi-Models")
             st.markdown("Upload step-test data to simultaneously train pure OLS, Random Forest, and XGBoost models.")
             
-            req_cols = ["Date", "Gross Prod", "Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]
+            req_cols = ["Date", "Gross production", "1st effect vapour pressure", "1st effect vapour temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Steam inlet temp", "Anti_PPM"]
             template_df = pd.DataFrame(columns=req_cols)
             st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
             
@@ -1192,8 +1182,8 @@ def main():
                         st.success(f"✅ Training Initialized on {len(df_train)} operational records.")
                         
                         if len(df_train) > 0:
-                            X = df_train[["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"]]
-                            Y = df_train["Gross Prod"]
+                            X = df_train[["1st effect vapour pressure", "1st effect vapour temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Steam inlet temp", "Anti_PPM"]]
+                            Y = df_train["Gross production"]
                             
                             model_ols = LinearRegression(fit_intercept=True).fit(X, Y)
                             r2_ols = r2_score(Y, model_ols.predict(X))
