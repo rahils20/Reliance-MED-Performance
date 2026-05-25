@@ -403,7 +403,6 @@ if 'sync_initialized' not in st.session_state:
                 st.session_state[k] = st.session_state.vars[var_name]
     st.session_state.sync_initialized = True
 
-# THE FIX: ADDED SAFETY to prevent KeyError if session state cache drops the columns
 if 'shared_effect_df' not in st.session_state or 'Live Vapor (°C)' not in st.session_state.shared_effect_df.columns:
     st.session_state.shared_effect_df = pd.DataFrame({
         "Effect ID": [f"Effect {i}" for i in range(1, 12)], 
@@ -447,7 +446,7 @@ def main():
     # ------------------------------------------
     utility_choice = st.sidebar.selectbox(
         "Select Utility System",
-        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)"]
+        ["-- Central Hub --", "RO Plant", "Multi-Effect Distillation (MED)"]
     )
 
     if utility_choice == "-- Central Hub --":
@@ -457,16 +456,121 @@ def main():
         
         c_layout1, c_layout2 = st.columns(2)
         with c_layout1:
-            st.info("### ❄️ Cooling Towers\nMonitor real-time system concentration cycles, calculated thermal approach limits, and active biocidal inventory parameters.\n\n*Status: Work in Progress - System Activation Pending*")
+            st.info("### ❄️ Cooling Towers\nMonitor real-time system concentration cycles, calculated thermal approach limits, and active biocidal inventory parameters.\n\n*Status: Hidden from menu during updates*")
         with c_layout2:
-            st.error("### 🔥 Industrial Boiler Infrastructure\nTrack steam header drum pressures, automated surface continuous blowdown rates, and reserve chemical levels.\n\n*Status: Work in Progress - System Activation Pending*")
+            st.error("### 🔥 Industrial Boiler Infrastructure\nTrack steam header drum pressures, automated surface continuous blowdown rates, and reserve chemical levels.\n\n*Status: Hidden from menu during updates*")
             
         c_layout3, c_layout4 = st.columns(2)
         with c_layout3:
-            st.success("### 💧 High Pressure RO Plants\nEvaluate membrane permeate flux decay rates, normalized cartridge delta pressures, and specific power consumption benchmarks.\n\n*Status: Work in Progress - System Activation Pending*")
+            st.success("### 💧 High Pressure RO Plants\nEvaluate membrane permeate flux decay rates, normalized cartridge delta pressures, and specific power consumption benchmarks.\n\n*Status: HERO Plant Configured*")
         with c_layout4:
             st.warning("### 🌊 Multi-Effect Distillation (MED)\nAccess advanced baseline multi-variable regression analysis, thermal heat transfer evaluation, and active antiscalant tracking.\n\n*Status: Unit MED-4 Online & Verified*")
         return
+
+    # ------------------------------------------
+    # RO PLANT ENGINE (HERO)
+    # ------------------------------------------
+    elif utility_choice == "RO Plant":
+        st.title("🏭 High Efficiency Reverse Osmosis (HERO) Suite")
+        st.markdown("Monitor high-recovery RO metrics, pretreatment guarantees, and antiscalant/coagulant dosing for the SEZ RO facility.")
+        
+        # Setup session states for RO parameters safely
+        ro_vars = {
+            'ro_feed_flow': 450.0, 'ro_perm_flow': 385.0, 'ro_feed_tds': 2000.0, 'ro_perm_tds': 90.0,
+            'ro_clarifier_tss': 8.0, 'ro_pdmf_tss': 2.0, 'ro_sdmf_tss': 0.5, 'ro_soft_hard': 4.0,
+            'ro_hru_hard': 0.5, 'ro_sdi': 2.5, 'ro_perm_ph': 7.2, 'ro_perm_cod': 8.0,
+            'ro_coag_ppm': 2.0, 'ro_floc_ppm': 1.0, 'ro_smbs_ppm': 3.0
+        }
+        for k, v in ro_vars.items():
+            if k not in st.session_state: 
+                st.session_state[k] = v
+                
+        ro_tabs = st.tabs(["📥 System Inputs", "🌊 Performance KPIs", "🧪 Quality Guarantees", "🛢️ Chemical Dosing"])
+        
+        with ro_tabs[0]:
+            st.subheader("HERO Plant Inputs")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.session_state.ro_feed_flow = st.number_input("Feed Flow (m³/hr)", value=st.session_state.ro_feed_flow)
+                st.session_state.ro_feed_tds = st.number_input("Feed TDS (ppm)", value=st.session_state.ro_feed_tds)
+            with col2:
+                st.session_state.ro_perm_flow = st.number_input("Permeate Flow (m³/hr)", value=st.session_state.ro_perm_flow)
+                st.session_state.ro_perm_tds = st.number_input("Permeate TDS (ppm)", value=st.session_state.ro_perm_tds)
+                
+            st.markdown("### Pre-treatment Parameters")
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                st.session_state.ro_clarifier_tss = st.number_input("Clarifier Outlet TSS (ppm)", value=st.session_state.ro_clarifier_tss)
+                st.session_state.ro_pdmf_tss = st.number_input("PDMF Outlet TSS (ppm)", value=st.session_state.ro_pdmf_tss)
+                st.session_state.ro_sdmf_tss = st.number_input("SDMF Outlet TSS (ppm)", value=st.session_state.ro_sdmf_tss)
+            with p2:
+                st.session_state.ro_soft_hard = st.number_input("Softener Outlet Hardness (ppm)", value=st.session_state.ro_soft_hard)
+                st.session_state.ro_hru_hard = st.number_input("HRU Outlet Hardness (ppm)", value=st.session_state.ro_hru_hard)
+                st.session_state.ro_sdi = st.number_input("Cartridge Filter SDI", value=st.session_state.ro_sdi)
+            with p3:
+                st.session_state.ro_perm_ph = st.number_input("Permeate pH", value=st.session_state.ro_perm_ph)
+                st.session_state.ro_perm_cod = st.number_input("Permeate COD (ppm)", value=st.session_state.ro_perm_cod)
+                
+        with ro_tabs[1]:
+            st.subheader("HERO Key Performance Indicators")
+            recovery = (st.session_state.ro_perm_flow / st.session_state.ro_feed_flow * 100) if st.session_state.ro_feed_flow > 0 else 0
+            rejection = ((st.session_state.ro_feed_tds - st.session_state.ro_perm_tds) / st.session_state.ro_feed_tds * 100) if st.session_state.ro_feed_tds > 0 else 0
+            
+            k1, k2, k3 = st.columns(3)
+            rec_delta = f"{recovery - 85.0:.1f}% from Target" if recovery < 85.0 else "Target Met"
+            k1.metric("Overall Plant Recovery", f"{recovery:.1f} %", delta=rec_delta, delta_color="normal" if recovery >= 85.0 else "inverse")
+            k2.metric("Salt Rejection", f"{rejection:.1f} %")
+            k3.metric("Permeate TDS", f"{st.session_state.ro_perm_tds:.1f} ppm", delta="Target: <150 ppm", delta_color="off")
+            
+        with ro_tabs[2]:
+            st.subheader("Guaranteed Treatment Parameters Check")
+            guarantees = [
+                ("Clarifier Outlet TSS", st.session_state.ro_clarifier_tss, "< 10 ppm", 10.0),
+                ("PDMF Outlet TSS", st.session_state.ro_pdmf_tss, "< 3 ppm", 3.0),
+                ("SDMF Outlet TSS", st.session_state.ro_sdmf_tss, "< 1 ppm", 1.0),
+                ("Softener O/L Hardness", st.session_state.ro_soft_hard, "< 5 ppm as CaCO3", 5.0),
+                ("HRU O/L Hardness", st.session_state.ro_hru_hard, "< 1 ppm as CaCO3", 1.0),
+                ("Cartridge Filter SDI", st.session_state.ro_sdi, "< 3", 3.0),
+                ("RO Permeate COD", st.session_state.ro_perm_cod, "< 10 ppm", 10.0)
+            ]
+            
+            for name, val, target_text, limit in guarantees:
+                col_name, col_val, col_target, col_status = st.columns([2, 1, 1, 1])
+                col_name.write(f"**{name}**")
+                col_val.write(f"{val}")
+                col_target.write(target_text)
+                if val < limit:
+                    col_status.success("✅ Pass")
+                else:
+                    col_status.error("🚨 Fail")
+                    
+            c_name, c_val, c_target, c_status = st.columns([2, 1, 1, 1])
+            c_name.write("**RO Permeate pH**")
+            c_val.write(f"{st.session_state.ro_perm_ph}")
+            c_target.write("7.0 - 7.5")
+            if 7.0 <= st.session_state.ro_perm_ph <= 7.5:
+                c_status.success("✅ Pass")
+            else:
+                c_status.error("🚨 Fail")
+                
+        with ro_tabs[3]:
+            st.subheader("Chemical Dosing Control")
+            st.info("AI-driven Optimal Dose Recommendations currently in development.")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("### Coagulant (Clarifier)")
+                st.session_state.ro_coag_ppm = st.number_input("Target Dosing (PPM)", value=st.session_state.ro_coag_ppm, key="coag_ppm")
+                st.info(f"**Requirement:** {(st.session_state.ro_feed_flow * st.session_state.ro_coag_ppm) / 1000:.2f} kg/hr")
+            with c2:
+                st.markdown("### Flocculant (Clarifier)")
+                st.session_state.ro_floc_ppm = st.number_input("Target Dosing (PPM)", value=st.session_state.ro_floc_ppm, key="floc_ppm")
+                st.info(f"**Requirement:** {(st.session_state.ro_feed_flow * st.session_state.ro_floc_ppm) / 1000:.2f} kg/hr")
+            with c3:
+                st.markdown("### SMBS (RO Feed)")
+                st.session_state.ro_smbs_ppm = st.number_input("Target Dosing (PPM)", value=st.session_state.ro_smbs_ppm, key="smbs_ppm")
+                st.info(f"**Requirement:** {(st.session_state.ro_feed_flow * st.session_state.ro_smbs_ppm) / 1000:.2f} kg/hr")
+                
+        return # Prevents rendering of MED logic when RO is selected
 
     elif utility_choice == "Multi-Effect Distillation (MED)":
         med_unit_choice = st.sidebar.selectbox("Select Active Unit Train", [f"MED-{unit_idx}" for unit_idx in range(1, 12)], index=3)
@@ -474,11 +578,6 @@ def main():
             st.title(f"🏭 {med_unit_choice} Diagnostic Interface")
             st.info(f"🚧 **Work in Progress:** System data hooks for {med_unit_choice} are under configuration. Diagnostic dashboard metrics will become available upon plant startup.")
             return
-            
-    else:
-        st.title(f"🏭 {utility_choice} Diagnostic Interface")
-        st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
-        return
 
     # ==========================================
     # VERIFIED UNTOUCHED MED-4 APPLICATION CORE
@@ -714,19 +813,21 @@ def main():
                         st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
                         st.rerun()
                         
-            with st.expander("4. Laboratory QA/QC Monitoring", expanded=False):
-                w_col1, w_col2 = st.columns(2)
-                with w_col1:
-                    st.markdown("**Feed Water Stream Parameters**")
-                    for p, d in WATER_SPECS["Feed"].items(): 
-                        st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
-                with w_col2:
-                    st.markdown("**Desal Distillate Quality Parameters**")
-                    for p, d in WATER_SPECS["Product"].items(): 
-                        st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+            with st.expander("4. Laboratory Water Analysis", expanded=False):
+                st.checkbox("Skip Water Analysis for today", key="in_skip_wq", on_change=sync_var, args=('skip_wq', 'in_skip_wq'))
+                if not get_v('skip_wq'):
+                    w_col1, w_col2 = st.columns(2)
+                    with w_col1:
+                        st.markdown("**Feed Water**")
+                        for p, d in WATER_SPECS["Feed"].items(): 
+                            st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
+                    with w_col2:
+                        st.markdown("**Desal Product**")
+                        for p, d in WATER_SPECS["Product"].items(): 
+                            st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
                         
-            with st.expander("5. Chemical Treatment Control Dosing", expanded=False):
-                st.markdown("**Kem Watreat r 3687 (Scale Inhibitor)**")
+            with st.expander("5. Chemical Dosing", expanded=False):
+                st.markdown("**Kem Watreat r 3687 (Antiscalant)**")
                 ch1, ch2 = st.columns(2)
                 with ch1: 
                     st.number_input("Dosing Level (PPM)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
@@ -852,7 +953,7 @@ def main():
             st.metric("Overall HTC (U)", f"{ops_data['htc_overall']:.2f} W/m²K")
             st.metric("Overall Fouling Factor", f"{ops_data['fouling_overall']:.6f}")
 
-    # --- TAB 3: WATER ANALYSIS ---
+    # --- TAB 3: WATER ANALYSIS TAB ---
     with tabs[3]:
         st.subheader("Laboratory Analysis Evaluation")
         if not get_v('skip_wq'):
@@ -895,7 +996,7 @@ def main():
             st.info(f"**Theoretical Flow Target Requirements:** {theo_foam:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_foam_cons", on_change=sync_var, args=('chem_foam_cons', 't4_foam_cons'))
 
-    # --- TAB 5: MRA NORMALIZATION ---
+    # --- TAB 5: MRA EVALUATION ENGINE ---
     with tabs[5]:
         st.subheader("Multi-Variable Normalization Predictor")
         st.markdown("Modify process inputs to execute 'What-If' scenarios. Input limits dynamically unbind to prevent system crashes.")
@@ -928,7 +1029,7 @@ def main():
                 st.info("ℹ️ **Machine Learning Evaluation Mode Active:** Multi-variable parameter expansion is only available under pure linear OLS logic.")
             st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
-    # --- TAB 6: ENTERPRISE REPORTING SUITE ---
+    # --- TAB 6: REPORTING & ANALYTICS ---
     with tabs[6]:
         st.subheader("Central Data Logging & Historical Analytics")
         rep_tabs = st.tabs(["📅 Daily Execution Dashboard", "📆 Master Historical Database", "📊 Long-Term Performance Trends", "📈 Interactive Explorer"])
