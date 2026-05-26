@@ -43,7 +43,7 @@ try:
 except ImportError:
     PIL_INSTALLED = False
 
-st.set_page_config(page_title="Chembond Water Technologies | Enterprise Hub", layout="wide")
+st.set_page_config(page_title="Chembond Water Technologies Limited | Enterprise Hub", layout="wide")
 
 # ==========================================
 # 1. CLOUD "GHOST SHEET" & CONFIG ENGINE
@@ -112,7 +112,9 @@ def load_database(db, target_file=LOCAL_DB_FILE):
     return pd.DataFrame()
 
 def save_database(db, df, target_file=LOCAL_DB_FILE):
-    df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+    # THE FIX: Added safety check to prevent KeyError if the database is empty
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
     if db["type"] == "cloud" and target_file == LOCAL_DB_FILE:
         try:
@@ -203,9 +205,8 @@ def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra, ext
         "Remarks": extra_tags['remarks']
     }
     for cat in ['Feed', 'Product']:
-        for param, details in w_data[cat].items(): 
-            data_dict[details['db_col']] = details['val']
-            
+        for param, details in w_data[cat].items(): data_dict[details['db_col']] = details['val']
+        
     df = pd.DataFrame([data_dict])
     return df.to_csv(index=False).encode('utf-8')
 
@@ -634,8 +635,8 @@ def main():
             
         ro_mra_data['Variance_DF'] = pd.DataFrame(ro_var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (m³/h)"])
 
-        # --- RO TABS ---
-        ro_tabs = st.tabs(["📥 System Inputs", "🌊 Performance KPIs", "🧪 Quality Guarantees", "🛢️ Chemical Dosing", "🧠 Normalization MRA", "📂 Reporting & Logbook", "🤖 AI Model Select", "📤 Bulk Uploads"])
+        # --- THE FIX: MERGED RO TABS ---
+        ro_tabs = st.tabs(["📥 System Inputs", "🌊 KPIs & Quality Guarantees", "🛢️ Chemical Dosing", "🧠 Normalization MRA", "📂 Reporting & Logbook", "🤖 AI Model Select", "📤 Bulk Uploads"])
         
         with ro_tabs[0]:
             st.subheader("HERO Plant Inputs")
@@ -672,7 +673,7 @@ def main():
             k2.metric("Salt Rejection", f"{rejection:.1f} %")
             k3.metric("Permeate TDS", f"{st.session_state.ro_perm_tds:.1f} ppm", delta="Target: <150 ppm", delta_color="off")
             
-        with ro_tabs[2]:
+            st.divider()
             st.subheader("Guaranteed Treatment Parameters Check")
             guarantees = [
                 ("Clarifier Outlet TSS", st.session_state.ro_clarifier_tss, "< 10 ppm", 10.0),
@@ -698,7 +699,7 @@ def main():
             if 7.0 <= st.session_state.ro_perm_ph <= 7.5: c_status.success("✅ Pass")
             else: c_status.error("🚨 Fail")
                 
-        with ro_tabs[3]:
+        with ro_tabs[2]:
             st.subheader("Chemical Dosing Control")
             st.info("AI-driven Optimal Dose Recommendations currently in development.")
             c1, c2, c3 = st.columns(3)
@@ -715,7 +716,7 @@ def main():
                 st.session_state.ro_smbs_ppm = st.number_input("Target Dosing (PPM)", value=st.session_state.ro_smbs_ppm, key="in_ro_smbs_ppm")
                 st.info(f"**Requirement:** {(st.session_state.ro_feed_flow * st.session_state.ro_smbs_ppm) / 1000:.2f} kg/hr")
 
-        with ro_tabs[4]:
+        with ro_tabs[3]:
             st.subheader("Permeate Normalization Predictor (MRA)")
             st.markdown("Modify process inputs to execute 'What-If' scenarios and check for membrane fouling.")
             controls_col, calc_col = st.columns([1, 2])
@@ -739,7 +740,7 @@ def main():
                 if ro_model_type != "OLS": st.info("ℹ️ **AI Model Active:** Variance Impact breakdown is only available for purely linear OLS models.")
                 st.dataframe(ro_mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (m³/h)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
-        with ro_tabs[5]:
+        with ro_tabs[4]:
             st.subheader("Reporting & Data Logging")
             rep_tabs = st.tabs(["📅 Daily Execution Dashboard", "📆 Master Historical Database", "📊 Long-Term Performance Trends", "📈 Interactive Explorer"])
             
@@ -875,7 +876,7 @@ def main():
                 else:
                     st.info("No active historical registry values detected to perform correlation modeling.")
 
-        with ro_tabs[6]:
+        with ro_tabs[5]:
             st.subheader("🤖 Machine Learning & OLS Calibration Suite")
             if not SKLEARN_INSTALLED:
                 st.error("🚨 Mathematical package 'scikit-learn' is missing from file dependencies.")
@@ -974,7 +975,7 @@ def main():
                             else: st.error("🚨 Structural data parsing produced empty float ranges inside parameters.")
                     except Exception as e: st.error(f"Structural data matrix crash: {e}")
 
-        with ro_tabs[7]:
+        with ro_tabs[6]:
             st.subheader("📤 Batch Log Matrix Ingestion Subroutine")
             st.markdown("Download the target spreadsheet schema file. Copy/pasting raw values in the exact historical Excel configuration is fully supported.")
             
@@ -1425,8 +1426,8 @@ def main():
         st.subheader("Thermal Integrity & Fouling Analysis")
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("### ⚙️ 1st Effect HTC")
-            st.markdown("Calculates scaling specifically in the hottest bundle.")
+            st.markdown("### ⚙️ 1st Effect HTC Performance")
+            st.markdown("Calculates scaling specifically inside the hottest effect stage.")
             st.number_input("1st Effect Surface Area (m²)", key="t2_area_1st", on_change=sync_var, args=('area_1st', 't2_area_1st'))
             st.number_input("Sea Water Upper (m³/h)", key="t2_sw_up", on_change=sync_var, args=('sw_upper', 't2_sw_up'))
             st.number_input("1st effect vapour temp (°C)", key="t2_t1", on_change=sync_var, args=('mra_t1', 't2_t1'))
@@ -1438,8 +1439,8 @@ def main():
             st.metric("1st Effect Fouling Factor", f"{ops_data['fouling_1st']:.6f}")
 
         with col2:
-            st.markdown("### 🏭 Overall Plant HTC")
-            st.markdown("Calculates average scaling across the entire 11-effect unit.")
+            st.markdown("### 🏭 Overall Plant HTC Performance")
+            st.markdown("Calculates averaged baseline fouling rates across all tube banks.")
             st.number_input("Overall Surface Area (m²)", key="t2_area_overall", on_change=sync_var, args=('area_overall', 't2_area_overall'))
             st.number_input("Sea Water Feed (m³/h)", key="t2_sw_tot", on_change=sync_var, args=('sw_total', 't2_sw_tot'))
             st.number_input("Sea Water cond I/L temp (°C)", key="t2_sw_in", on_change=sync_var, args=('sw_in_t', 't2_sw_in'))
@@ -1450,20 +1451,20 @@ def main():
             st.metric("Overall HTC (U)", f"{ops_data['htc_overall']:.2f} W/m²K")
             st.metric("Overall Fouling Factor", f"{ops_data['fouling_overall']:.6f}")
 
-    # --- TAB 3: WATER ANALYSIS ---
+    # --- TAB 3: WATER ANALYSIS TAB ---
     with tabs[3]:
-        st.subheader("Laboratory QA/QC vs Limits")
+        st.subheader("Laboratory Analysis Evaluation")
         if not get_v('skip_wq'):
             w_col1, w_col2 = st.columns(2)
             with w_col1:
-                st.markdown("### 🌊 Feed Sea Water")
+                st.markdown("### 🌊 Intake Seawater Matrix")
                 for param, d in WATER_SPECS["Feed"].items():
                     c_in, c_chk = st.columns([2, 2])
                     with c_in: 
                         st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
                     c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Feed'][param]['status']}</div>", unsafe_allow_html=True)
             with w_col2:
-                st.markdown("### 🚰 Desal Product")
+                st.markdown("### 🚰 Product Distillate Matrix")
                 for param, d in WATER_SPECS["Product"].items():
                     c_in, c_chk = st.columns([2, 2])
                     with c_in: 
@@ -1472,31 +1473,31 @@ def main():
 
     # --- TAB 4: CHEMICAL DOSING ---
     with tabs[4]:
-        st.subheader("Chemical Dosing & Inventory Tracking")
+        st.subheader("Chemical Treatment Monitoring")
         st.number_input("Sea Water Feed (m³/h)", key="t4_sw_tot", on_change=sync_var, args=('sw_total', 't4_sw_tot'))
         st.divider()
         cc1, cc2 = st.columns(2)
         with cc1:
-            st.markdown("### 🧪 Kem Watreat r 3687 (Antiscalant)")
+            st.markdown("### 🧪 Kem Watreat r 3687 (Antiscalant Evaluation)")
             st.number_input("Target Dosing Level (PPM)", key="t4_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 't4_anti_ppm'))
             if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_anti_4"): 
                 st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
             theo_anti = (ops_data['SW Total'] * get_v('chem_anti_ppm')) / 1000
-            st.info(f"**Theoretical Requirement:** {theo_anti:.2f} kg/hr")
+            st.info(f"**Theoretical Flow Target Requirements:** {theo_anti:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_anti_cons", on_change=sync_var, args=('chem_anti_cons', 't4_anti_cons'))
         with cc2:
-            st.markdown("### 🫧 Kem Antifoam 1795")
+            st.markdown("### 🫧 Kem Antifoam 1795 Performance")
             st.number_input("Target Dosing Level (PPM)", key="t4_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 't4_foam_ppm'))
             if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_foam_4"): 
                 st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
             theo_foam = (ops_data['SW Total'] * get_v('chem_foam_ppm')) / 1000
-            st.info(f"**Theoretical Requirement:** {theo_foam:.2f} kg/hr")
+            st.info(f"**Theoretical Flow Target Requirements:** {theo_foam:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_foam_cons", on_change=sync_var, args=('chem_foam_cons', 't4_foam_cons'))
 
-    # --- TAB 5: MRA NORMALIZATION ---
+    # --- TAB 5: MRA EVALUATION ENGINE ---
     with tabs[5]:
-        st.subheader("MRA Fouling Defense")
-        st.markdown("Use these inputs to perform 'What-If' scenarios. The inputs below will automatically safely stretch to fit your data.")
+        st.subheader("Multi-Variable Normalization Predictor")
+        st.markdown("Modify process inputs to execute 'What-If' scenarios. Input limits dynamically unbind to prevent system crashes.")
         controls_col, calc_col = st.columns([1, 2])
         
         with controls_col:
@@ -1512,46 +1513,46 @@ def main():
         with calc_col:
             k1, k2, k3 = st.columns(3)
             k1.metric("Actual Gross SCADA", f"{mra_data['Actual']:.1f} m³/h")
-            k2.metric(f"Predicted ({model_type})", f"{mra_data['Predicted']:.1f} m³/h")
+            k2.metric(f"Predicted Twin Mode ({model_type})", f"{mra_data['Predicted']:.1f} m³/h")
             
             diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
             if diff_pct <= -5.0: 
-                k3.error(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Please clean the machine")
+                k3.error(f"Residual Gap: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Shutdown/Acid Clean Required")
             elif diff_pct <= -4.0: 
-                k3.warning(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Increase antiscalant dosing")
+                k3.warning(f"Residual Gap: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Optimize Scale Treatment Dosing")
             else: 
-                k3.success(f"Residual: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - CLEAN")
+                k3.success(f"Residual Gap: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Operational Thermal Base Clean")
                 
             if model_type != "OLS": 
-                st.info("ℹ️ **AI Model Active:** Variance Impact breakdown is only available for purely linear OLS models.")
+                st.info("ℹ️ **Machine Learning Evaluation Mode Active:** Multi-variable parameter expansion is only available under pure linear OLS logic.")
             st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
-    # --- TAB 6: ENTERPRISE REPORTING SUITE ---
+    # --- TAB 6: REPORTING & ANALYTICS ---
     with tabs[6]:
-        st.subheader("Intelligence & Reporting Center")
-        rep_tabs = st.tabs(["📅 Today's Dashboard", "📆 Master Database", "📊 Long-Term Health", "📈 Interactive Explorer"])
+        st.subheader("Central Data Logging & Historical Analytics")
+        rep_tabs = st.tabs(["📅 Daily Execution Dashboard", "📆 Master Historical Database", "📊 Long-Term Performance Trends", "📈 Interactive Explorer"])
         
         with rep_tabs[0]:
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("Date", log_date.strftime('%d/%m/%Y')) 
-            m_col2.metric("Gross Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
+            m_col1.metric("Target Record Date", log_date.strftime('%d/%m/%Y')) 
+            m_col2.metric("Gross Volumetric Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
             m_col3.metric("System GOR", f"{ops_data['GOR']:.2f}", delta=f"{ops_data['GOR'] - 10.5:.2f} from Target" if ops_data['GOR'] < 10.5 else None)
             
             diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
             if diff_pct <= -5.0: 
-                delta_text, d_color = f"{diff_pct:.1f}% (Please clean machine)", "inverse"
+                delta_text, d_color = f"{diff_pct:.1f}% (Scaling Critical)", "inverse"
             elif diff_pct <= -4.0: 
-                delta_text, d_color = f"{diff_pct:.1f}% (Increase antiscalant)", "inverse"
+                delta_text, d_color = f"{diff_pct:.1f}% (Deviation Warning)", "inverse"
             else: 
-                delta_text, d_color = f"{diff_pct:.1f}% (Clean)", "normal"
+                delta_text, d_color = f"{diff_pct:.1f}% (Clean Baseline)", "normal"
                 
-            m_col4.metric("Fouling Residual", f"{mra_data['Residual']:.1f} TPH", delta=delta_text, delta_color=d_color)
+            m_col4.metric("Twin MRA Performance Gap", f"{mra_data['Residual']:.1f} TPH", delta=delta_text, delta_color=d_color)
             
             st.divider()
             graph_col1, graph_col2 = st.columns(2)
             with graph_col1:
                 if model_type == "OLS":
-                    st.markdown("#### ⚖️ Variance Impact (TPH)")
+                    st.markdown("#### ⚖️ Parameter Deviation Impact (m³/h)")
                     impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar().encode(
                         x=alt.X('Impact (TPH):Q'), 
                         y=alt.Y('Parameter:N', sort='-x', title=''), 
@@ -1560,18 +1561,18 @@ def main():
                     ).properties(height=300)
                     st.altair_chart(impact_chart, use_container_width=True)
                 else:
-                    st.markdown("#### ⚖️ Feature Importances (AI Mode)")
+                    st.markdown("#### ⚖️ Component Weight Importance (ML Mode)")
                     impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar(color='#1f77b4').encode(
-                        x=alt.X('Regression Weight:Q', title="Importance Weight"), 
+                        x=alt.X('Regression Weight:Q', title="Importance Weight Matrix %"), 
                         y=alt.Y('Parameter:N', sort='-x', title=''), 
                         tooltip=['Parameter', 'Regression Weight']
                     ).properties(height=300)
                     st.altair_chart(impact_chart, use_container_width=True)
 
             with graph_col2:
-                st.markdown("#### 🌊 Flow Distribution")
+                st.markdown("#### 🌊 Mass Distribution Profile")
                 unaccounted = ops_data['SW Total'] - (ops_data['Desal'] + ops_data['Brine Return'])
-                mb_data = pd.DataFrame({'Stream': ['Desal (Net)', 'Brine', 'Losses'], 'Volume': [ops_data['Desal'], ops_data['Brine Return'], unaccounted if unaccounted > 0 else 0]})
+                mb_data = pd.DataFrame({'Stream': ['Product Net', 'Brine Blowdown', 'Loss Matrix'], 'Volume': [ops_data['Desal'], ops_data['Brine Return'], unaccounted if unaccounted > 0 else 0]})
                 donut = alt.Chart(mb_data).mark_arc(innerRadius=50).encode(
                     theta=alt.Theta("Volume:Q"), 
                     color=alt.Color("Stream:N", scale=alt.Scale(scheme='set2')), 
@@ -1580,16 +1581,15 @@ def main():
                 st.altair_chart(donut, use_container_width=True)
 
             st.divider()
-            st.text_area("Remarks & Observations (For Daily Report)", key="in_remarks", on_change=sync_var, args=('remarks', 'in_remarks'), placeholder="Enter shift notes, TT errors, or daily observations here...")
+            st.text_area("Remarks & Performance Observations", key="in_remarks", on_change=sync_var, args=('remarks', 'in_remarks'), placeholder="Record operational shift anomalies, sensor calibrations, or clean notes here...")
             
-            st.markdown("### 💾 Commit Today's Data")
+            st.markdown("### 💾 Record and Commit Log Payload")
             c_pwd, c_save, c_export, c_csv = st.columns([1.5, 1, 1, 1])
             with c_pwd: 
-                pwd_append = st.text_input("Master Password", type="password", key="pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Commit")
+                pwd_append = st.text_input("Security Key Access", type="password", key="pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Security Password to Commit")
             with c_save:
-                if st.button("💾 Append Data", use_container_width=True):
+                if st.button("💾 Save Operational Record", use_container_width=True):
                     if pwd_append == "12345678":
-                        
                         db_dict = {
                             "Date": [log_date_str], 
                             "Sea Water Upper": [get_v('sw_upper')], 
@@ -1598,18 +1598,18 @@ def main():
                             "Brine Water Return": [ops_data['Brine Return']], 
                             "Desal production": [ops_data['Desal']], 
                             "LP Steam consumption": [ops_data['Steam']],
-                            "condensate flow": [get_v('cond_flow')],
+                            "condensate flow": [get_v('cond_flow')], 
                             "condensate temp": [get_v('cond_temp')],
-                            "1st effect vapour temp": [get_v('mra_t1')],
-                            "1st effect brine temp": [get_v('mra_bt1')],
-                            "Delta T": [ops_data['dt_1st']],
-                            "1st effect vapour pressure": [get_v('mra_press')],
-                            "Steam inlet temp": [get_v('stm_in_t')],
-                            "Brine outlet temp": [get_v('brine_out_t')],
-                            "Sea Water cond I/L temp": [get_v('sw_in_t')],
-                            "Sea Water o/L temp": [get_v('sw_out_t')],
-                            "CW supply": [get_v('cw_supply')],
-                            "SW return": [get_v('sw_return')],
+                            "1st effect vapour temp": [get_v('mra_t1')], 
+                            "1st effect brine temp": [get_v('mra_bt1')], 
+                            "Delta T": [ops_data['dt_1st']], 
+                            "1st effect vapour pressure": [get_v('mra_press')], 
+                            "Steam inlet temp": [get_v('stm_in_t')], 
+                            "Brine outlet temp": [get_v('brine_out_t')], 
+                            "Sea Water cond I/L temp": [get_v('sw_in_t')], 
+                            "Sea Water o/L temp": [get_v('sw_out_t')], 
+                            "CW supply": [get_v('cw_supply')], 
+                            "SW return": [get_v('sw_return')], 
                             "Gross production": [ops_data['Gross Prod']],
                             "GOR": [round(ops_data['GOR'], 2)], 
                             "Overall HTC": [round(ops_data['htc_overall'], 2)], 
@@ -1629,44 +1629,44 @@ def main():
                         new_log = pd.DataFrame(db_dict)
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
                         save_database(db_conn, st.session_state.daily_logs)
-                        st.success("✅ Master Database Updated!")
+                        st.success("✅ Operational record successfully integrated into file engine!")
                     elif pwd_append != "": 
-                        st.error("❌ Incorrect Password.")
+                        st.error("❌ Master verification credential failed.")
             with c_export:
                 word_file = generate_comprehensive_report(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, get_v('skip_eff'), get_v('skip_wq'), get_v('remarks'))
-                st.download_button("📄 Export Report (.docx)", data=word_file, file_name=f"MED4_Daily_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                st.download_button("📄 Export Word Document (.docx)", data=word_file, file_name=f"MED4_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
             with c_csv:
                 csv_file = generate_daily_csv(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, st.session_state.vars)
-                st.download_button("📊 Export Report (.csv)", data=csv_file, file_name=f"MED4_Daily_{log_date_str}.csv", mime="text/csv", use_container_width=True)
+                st.download_button("📊 Export Tabular Values (.csv)", data=csv_file, file_name=f"MED4_DataRecord_{log_date_str}.csv", mime="text/csv", use_container_width=True)
 
         with rep_tabs[1]:
-            st.markdown("#### 📆 Editable Master Log Database")
+            st.markdown("#### 📆 Master System Registry Database")
             display_cols = [c for c in EXACT_DB_COLUMNS if c in st.session_state.daily_logs.columns]
             edited_db = st.data_editor(st.session_state.daily_logs[display_cols] if not st.session_state.daily_logs.empty else st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
             c_sync_pwd, c_sync, c_dl = st.columns([2, 1, 1])
             with c_sync_pwd: 
-                pwd_sync = st.text_input("Master Password", type="password", key="pwd_sync", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+                pwd_sync = st.text_input("Database Write-Access Password", type="password", key="pwd_sync", label_visibility="collapsed", placeholder="🔑 Enter Database Master Password to Save Modifications")
             with c_sync:
-                if st.button("☁️ Sync Edits", use_container_width=True):
+                if st.button("☁️ Synchronize Registry", use_container_width=True):
                     if pwd_sync == "12345678":
                         st.session_state.daily_logs = edited_db
                         save_database(db_conn, st.session_state.daily_logs)
-                        st.success("✅ Database Overwritten!")
+                        st.success("✅ Master registry records updated successfully!")
                     else: 
-                        st.error("❌ Incorrect Password.")
+                        st.error("❌ System modification credentials failed.")
             with c_dl:
-                st.download_button("📥 Download CSV Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_Master.csv", mime='text/csv', use_container_width=True)
+                st.download_button("📥 Download Database Offline Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_MasterRegistry_Backup.csv", mime='text/csv', use_container_width=True)
 
             st.divider()
-            st.markdown("#### 📊 Monthly Report Generator")
+            st.markdown("#### 📊 Aggregated Monthly Performance Generator")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                 if not month_data.empty:
-                    if st.button("📄 Generate Monthly Report (.docx)", use_container_width=True):
+                    if st.button("📄 Compile and Generate Monthly Summary (.docx)", use_container_width=True):
                         monthly_doc = generate_monthly_report(month_data, log_date.strftime('%B'), str(log_date.year))
-                        st.download_button("📥 Download Monthly Report", data=monthly_doc, file_name=f"MED4_Monthly_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                        st.download_button("📥 Download Monthly Briefing Document", data=monthly_doc, file_name=f"MED4_MonthlySummary_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
@@ -1685,61 +1685,53 @@ def main():
                 min_date = df_logs['Date'].min().date() if not df_logs['Date'].isnull().all() else datetime.date(2023, 1, 1)
                 max_date = df_logs['Date'].max().date() if not df_logs['Date'].isnull().all() else datetime.date.today()
                 
-                st.markdown("##### 📅 Date Range Filter")
+                st.markdown("##### 📅 Performance Evaluation Horizon Filter")
                 d_col1, d_col2 = st.columns(2)
                 with d_col1: 
-                    start_date = st.date_input("Start Date", min_date, key="start_d1")
+                    start_date = st.date_input("Start Threshold Date", min_date, key="start_d1")
                 with d_col2: 
-                    end_date = st.date_input("End Date", max_date, key="end_d1")
+                    end_date = st.date_input("End Threshold Date", max_date, key="end_d1")
                 
                 mask = (df_logs['Date'].dt.date >= start_date) & (df_logs['Date'].dt.date <= end_date)
                 df_filtered = df_logs.loc[mask]
                 
                 q_col1, q_col2 = st.columns(2)
                 with q_col1:
-                    st.markdown("#### 📉 Recovery Trend")
+                    st.markdown("#### 📉 Performance Recovery Rate Deviation Trend")
                     if len(df_filtered) > 1:
-                        rec_chart = alt.Chart(df_filtered).mark_circle().encode(
-                            x=alt.X('Date:T', title="Date"), 
-                            y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False))
-                        )
+                        rec_chart = alt.Chart(df_filtered).mark_circle().encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red'), use_container_width=True)
                 with q_col2:
-                    st.markdown("#### 🌡️ HTC Degradation")
+                    st.markdown("#### 🌡️ Seawater Coefficient Degradation Rate (HTC)")
                     if len(df_filtered) > 1:
-                        htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(
-                            x=alt.X('Date:T', title="Date"), 
-                            y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)")
-                        )
+                        htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)"))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall_HTC_Val').mark_line(color='black'), use_container_width=True)
 
                 st.divider()
                 
                 q_col3, q_col4 = st.columns(2)
                 with q_col3:
-                    st.markdown("#### ⚖️ Actual vs. Predicted Production")
+                    st.markdown("#### ⚖️ Actual Mass Output vs Normalized Twin Output")
                     if len(df_filtered) > 1:
-                        fold_df = df_filtered[['Date', 'Actual Production', 'Predicted Production']].melt('Date', var_name='Metric', value_name='Volume (m³/h)')
+                        fold_df = df_filtered[['Date', 'Actual Production', 'Predicted Production']].melt('Date', var_name='Metric', value_name='Mass Flow Volume (m³/h)')
                         prod_chart = alt.Chart(fold_df).mark_line(point=True).encode(
-                            x=alt.X('Date:T', title="Date"),
-                            y=alt.Y('Volume (m³/h):Q', scale=alt.Scale(zero=False)),
+                            x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Mass Flow Volume (m³/h):Q', scale=alt.Scale(zero=False)),
                             color=alt.Color('Metric:N', scale=alt.Scale(domain=['Actual Production', 'Predicted Production'], range=['#1f77b4', '#ff7f0e'])),
                             strokeDash=alt.condition(alt.datum.Metric == 'Predicted Production', alt.value([5, 5]), alt.value([0])),
-                            tooltip=['Date:T', 'Metric', 'Volume (m³/h)']
+                            tooltip=['Date:T', 'Metric', 'Mass Flow Volume (m³/h)']
                         )
                         st.altair_chart(prod_chart, use_container_width=True)
                 with q_col4:
-                    st.markdown("#### 💰 System GOR Trend")
+                    st.markdown("#### 💰 Specific Unit Thermal Efficiency GOR Performance")
                     if len(df_filtered) > 1:
                         gor_chart = alt.Chart(df_filtered).mark_line(point=True, color='green').encode(
-                            x=alt.X('Date:T', title="Date"),
-                            y=alt.Y('GOR_Val:Q', scale=alt.Scale(zero=False), title="Gain Output Ratio"),
+                            x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('GOR_Val:Q', scale=alt.Scale(zero=False), title="Gain Output Ratio"),
                             tooltip=['Date:T', 'GOR_Val']
                         )
                         st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR_Val').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
 
         with rep_tabs[3]:
-            st.markdown("#### 📈 Interactive Custom Chart Builder")
+            st.markdown("#### 📈 Multivariable Cross-Correlation Explorer")
             if not st.session_state.daily_logs.empty:
                 exp_df = st.session_state.daily_logs.copy()
                 exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
@@ -1749,9 +1741,9 @@ def main():
                 
                 d_col1, d_col2 = st.columns(2)
                 with d_col1: 
-                    start_date2 = st.date_input("Start Date", min_date2, key="start_d2")
+                    start_date2 = st.date_input("Start Horizon Date", min_date2, key="start_d2")
                 with d_col2: 
-                    end_date2 = st.date_input("End Date", max_date2, key="end_d2")
+                    end_date2 = st.date_input("End Horizon Date", max_date2, key="end_d2")
                 
                 mask2 = (exp_df['Date'].dt.date >= start_date2) & (exp_df['Date'].dt.date <= end_date2)
                 exp_df = exp_df.loc[mask2]
@@ -1759,69 +1751,56 @@ def main():
                 num_cols = [col for col in exp_df.columns if col not in ['Date']]
                 x_c, y_c, t_c = st.columns(3)
                 with x_c: 
-                    exp_x = st.selectbox("Select X-Axis", ['Date'] + num_cols, index=0)
+                    exp_x = st.selectbox("Select Independent Domain X-Axis", ['Date'] + num_cols, index=0)
                 with y_c: 
-                    exp_y = st.selectbox("Select Y-Axis", num_cols, index=0)
+                    exp_y = st.selectbox("Select Dependent Variable Y-Axis", num_cols, index=0)
                 with t_c: 
-                    exp_type = st.selectbox("Select Chart Type", ["Line Chart", "Scatter Plot", "Bar Chart"])
+                    exp_type = st.selectbox("Select Functional Chart Variant", ["Line Chart", "Scatter Plot", "Bar Chart"])
                 
-                if exp_type == "Line Chart":
-                    chart = alt.Chart(exp_df).mark_line(point=True).encode(
-                        x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), 
-                        y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), 
-                        tooltip=[exp_x, exp_y]
-                    )
-                elif exp_type == "Scatter Plot":
-                    chart = alt.Chart(exp_df).mark_circle(size=80).encode(
-                        x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), 
-                        y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), 
-                        tooltip=[exp_x, exp_y]
-                    )
-                else:
-                    chart = alt.Chart(exp_df).mark_bar().encode(
-                        x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':N'}"), 
-                        y=alt.Y(f"{exp_y}:Q"), 
-                        tooltip=[exp_x, exp_y]
-                    )
-                
+                if exp_type == "Line Chart": 
+                    chart = alt.Chart(exp_df).mark_line(point=True).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
+                elif exp_type == "Scatter Plot": 
+                    chart = alt.Chart(exp_df).mark_circle(size=80).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
+                else: 
+                    chart = alt.Chart(exp_df).mark_bar().encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':N'}"), y=alt.Y(f"{exp_y}:Q"), tooltip=[exp_x, exp_y])
                 st.altair_chart(chart.interactive(), use_container_width=True)
             else:
-                st.info("Upload data to the Master Database to build custom charts.")
+                st.info("No active historical registry values detected to perform correlation modeling.")
 
     # --- TAB 7: AI MODEL SELECTOR ---
     with tabs[7]:
-        st.subheader("🤖 AI & OLS Calibration Suite")
+        st.subheader("🤖 Machine Learning & OLS Calibration Suite")
         if not SKLEARN_INSTALLED:
-            st.error("🚨 'scikit-learn' is not installed. Please add it to your requirements.txt.")
+            st.error("🚨 Mathematical package 'scikit-learn' is missing from file dependencies.")
         else:
-            st.markdown("### 💾 Manage Baseline Model")
-            st.markdown(f"**Current Active Brain:** `{model_type}`")
+            st.warning("📌 **Ephemeral Server Parameter Caution:** Since this tracking node runs on temporary testing cloud containers, manual machine-learning logic selection targets revert back to historical OLS baseline models after inactive shutdown flags are generated. Selection options remain permanently hardlocked upon local internal node integration.")
+            st.markdown("### 💾 Manage Baseline Evaluation Multipliers")
+            st.markdown(f"**Current Evaluator Logic Subroutine:** `{model_type}`")
             c_reset, _ = st.columns([1, 1])
             with c_reset:
-                if st.button("🔄 Factory Reset to purely Linear 2014 Defaults", use_container_width=True):
+                if st.button("🔄 Execute Subroutine Calibration Factory Reset", use_container_width=True):
                     st.session_state.mra_coef = MRA_COEF_2014.copy()
                     save_config(db_conn, st.session_state.mra_coef)
-                    st.success("✅ Restored verified 2014 baseline model. Reloading...")
+                    st.success("✅ Baseline parameters successfully reverted back to original OLS multipliers!")
                     time.sleep(1.5)
                     st.rerun()
 
             st.divider()
-
-            st.markdown("### 📊 Train & Compare Multi-Models")
-            st.markdown("Upload step-test data to simultaneously train pure OLS, Random Forest, and XGBoost models.")
+            st.markdown("### 📊 Multi-Variable Predictive Optimization Logic Model Builder")
+            st.markdown("Upload plant calibration verification matrices to evaluate structural variations between standard linear regression loops and active tree configurations.")
             
             req_cols = ["Date", "Gross production", "1st effect vapour pressure", "1st effect vapour temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Steam inlet temp", "Anti_PPM"]
             template_df = pd.DataFrame(columns=req_cols)
-            st.download_button(label="1️⃣ Download Blank Training CSV Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_Template.csv', mime='text/csv')
+            st.download_button(label="1️⃣ Download Standard Structural Training Template File", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_CalibrationTemplate.csv', mime='text/csv')
             
             st.divider()
-            uploaded_file = st.file_uploader("2️⃣ Upload Populated Training Data", type=["csv"], key="mra_trainer")
+            uploaded_file = st.file_uploader("2️⃣ Inject Completed Optimization Dataset", type=["csv"], key="mra_trainer")
             
             if uploaded_file is not None:
                 try:
                     df_train = pd.read_csv(uploaded_file)
                     if not all(col in df_train.columns for col in req_cols): 
-                        st.error(f"❌ Uploaded CSV is missing required columns.")
+                        st.error(f"❌ Structural training template verification failed due to parameter column omissions.")
                     else:
                         for col in req_cols:
                             if col != "Date":
@@ -1829,7 +1808,7 @@ def main():
                                     df_train[col] = pd.to_numeric(df_train[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                         
                         df_train = df_train.dropna(subset=[c for c in req_cols if c != "Date"])
-                        st.success(f"✅ Training Initialized on {len(df_train)} operational records.")
+                        st.success(f"✅ Training Initialized successfully utilizing {len(df_train)} localized validation rows.")
                         
                         if len(df_train) > 0:
                             X = df_train[["1st effect vapour pressure", "1st effect vapour temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Steam inlet temp", "Anti_PPM"]]
@@ -1845,16 +1824,16 @@ def main():
                                 model_xgb = xgb.XGBRegressor(n_estimators=100, random_state=42).fit(X, Y)
                                 r2_xgb = r2_score(Y, model_xgb.predict(X))
                             
-                            st.markdown("### 🏆 Model Scoreboard")
+                            st.markdown("### 🏆 Algorithm Accuracy Evaluation Matrix")
                             m1, m2, m3 = st.columns(3)
-                            m1.metric("1. OLS (Linear)", f"{r2_ols * 100:.2f}%")
-                            m2.metric("2. Random Forest", f"{r2_rf * 100:.2f}%")
+                            m1.metric("1. Linear OLS Fit (R² Coefficient)", f"{r2_ols * 100:.2f}%")
+                            m2.metric("2. Random Forest Tree Logic (R²)", f"{r2_rf * 100:.2f}%")
                             if XGB_INSTALLED: 
-                                m3.metric("3. XGBoost", f"{r2_xgb * 100:.2f}%")
+                                m3.metric("3. Extreme Gradient Boost XGB (R²)", f"{r2_xgb * 100:.2f}%")
                             else: 
-                                m3.warning("XGBoost library not installed.")
+                                m3.warning("Advanced Gradient boosting library dependency not activated.")
                             
-                            st.markdown("#### Feature Importances / Coefficients")
+                            st.markdown("#### Dynamic Feature Sensitivity Weights / Scaling Coefficients")
                             comp_dict = {
                                 "Parameter": ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Steam_Temp", "Anti_PPM"],
                                 "OLS (Coefficients)": np.round(model_ols.coef_, 4),
@@ -1862,17 +1841,16 @@ def main():
                             }
                             if XGB_INSTALLED: 
                                 comp_dict["XGBoost (Importance %)"] = np.round(model_xgb.feature_importances_ * 100, 2)
-                            
                             st.dataframe(pd.DataFrame(comp_dict).style.format(precision=4), use_container_width=True, hide_index=True)
                             
-                            st.markdown("### 💾 Deploy Selected Brain")
+                            st.markdown("### 💾 Commit & Lock Mathematical Subroutine Target")
                             opts = ["OLS (Linear)", "Random Forest"]
                             if XGB_INSTALLED: 
                                 opts.append("XGBoost")
                                 
-                            selected_model = st.radio("Select which model logic to run the dashboard predictions:", opts)
+                            selected_model = st.radio("Configure Active Live Prediction Logic Block:", opts)
                             
-                            if st.button("🔥 Deploy Model Permanently", type="primary", use_container_width=True):
+                            if st.button("🔥 Confirm and Hardlock Active Operational Subroutine", type="primary", use_container_width=True):
                                 if selected_model == "OLS (Linear)":
                                     new_coefs = {
                                         "model_type": "OLS", "Intercept": float(model_ols.intercept_),
@@ -1896,29 +1874,28 @@ def main():
                                     st.session_state.mra_coef = ai_coefs
                                     save_config(db_conn, ai_coefs)
                                     
-                                st.success(f"✅ Successfully deployed {selected_model}! Reloading application...")
+                                st.success(f"✅ System evaluation subroutine locked into {selected_model} logic sequence.")
                                 time.sleep(1.5)
                                 st.rerun()
                         else: 
-                            st.error("🚨 No valid numeric data found.")
+                            st.error("🚨 Structural data parsing produced empty float ranges inside parameters.")
                 except Exception as e: 
-                    st.error(f"Error processing file: {e}")
+                    st.error(f"Structural data matrix crash: {e}")
 
-    # --- TAB 8: BULK UPLOAD ---
+    # --- TAB 8: BULK EXCEL UPLOADER PANEL ---
     with tabs[8]:
-        st.subheader("📤 Bulk Data Upload & Sync")
-        st.markdown("Download the Bulk Upload Template, paste your exact daily Excel data, and upload it here.")
+        st.subheader("📤 Batch Log Matrix Ingestion Subroutine")
+        st.markdown("Download the target spreadsheet schema file. Copy/pasting raw values in the exact historical Excel configuration is fully supported.")
         
         bulk_template = pd.DataFrame(columns=EXACT_DB_COLUMNS)
-        st.download_button(label="1️⃣ Download Bulk Upload Template (Exact Sequence)", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='MED4_Bulk_Template_Exact.csv', mime='text/csv')
+        st.download_button(label="1️⃣ Download Schema Verification Template File", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='MED4_BulkMatrixInletSchema.csv', mime='text/csv')
         
         st.divider()
-        bulk_file = st.file_uploader("2️⃣ Upload Populated Bulk Data", type=["csv"], key="bulk_uploader")
+        bulk_file = st.file_uploader("2️⃣ Ingest Completed System Batch File (.csv)", type=["csv"], key="bulk_uploader")
         
         if bulk_file is not None:
             try:
                 df_bulk = pd.read_csv(bulk_file)
-                
                 if 'Date' in df_bulk.columns and 'Date (DD/MM/YYYY)' not in df_bulk.columns:
                     pass 
                 if 'Date (DD/MM/YYYY)' in df_bulk.columns:
@@ -1926,7 +1903,7 @@ def main():
 
                 missing = [c for c in EXACT_DB_COLUMNS if c not in df_bulk.columns]
                 if missing:
-                    st.warning(f"⚠️ Uploaded CSV is missing some columns. Auto-filling with defaults where possible. Missing: {', '.join(missing)}")
+                    st.warning(f"⚠️ Omissions detected inside uploaded parameters. Empty slots will auto-fill utilizing historical parameter baseline means. Missing: {', '.join(missing)}")
                     for c in missing: 
                         df_bulk[c] = np.nan
                 
@@ -2031,28 +2008,28 @@ def main():
                             
                     db_ready_df = pd.DataFrame(db_ready_dict)
                     
-                    st.success(f"✅ Automatically calculated KPIs, HTC, and Residuals for {len(db_ready_df)} valid rows.")
+                    st.success(f"✅ Dynamic verification evaluation complete for {len(db_ready_df)} matrix rows.")
                     st.dataframe(db_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
                     
-                    st.markdown("### 💾 Commit Bulk Data")
+                    st.markdown("### 💾 Append Transferred Batch Elements")
                     c_pwd, c_save = st.columns([2, 2])
                     with c_pwd: 
-                        pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+                        pwd_bulk = st.text_input("Security Key Verification Entry", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Security Password to Commit Batch Ingestion")
                     with c_save:
-                        if st.button("🔄 Append all to Master Database", use_container_width=True):
+                        if st.button("🔄 Append Ingested Records into Registry", use_container_width=True):
                             if pwd_bulk == "12345678":
                                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
                                 st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                                 save_database(db_conn, st.session_state.daily_logs)
-                                st.success("✅ Bulk Data Successfully Synced to Database!")
+                                st.success("✅ Batch matrix rows integrated securely within master registry file!")
                                 time.sleep(1.5)
                                 st.rerun()
                             elif pwd_bulk != "": 
-                                st.error("❌ Incorrect Password.")
+                                st.error("❌ Identification credentials mismatched.")
                 else: 
-                    st.error("🚨 No valid data found in CSV.")
+                    st.error("🚨 Data matrix parse sequence returned zero active rows.")
             except Exception as e: 
-                st.error(f"Error processing file: {e}")
+                st.error(f"Structural verification crash during upload parsing: {e}")
 
     render_chatbot()
 
