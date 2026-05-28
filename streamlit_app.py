@@ -112,7 +112,6 @@ def load_database(db, target_file=LOCAL_DB_FILE):
     return pd.DataFrame()
 
 def save_database(db, df, target_file=LOCAL_DB_FILE):
-    # THE FIX: Added safety check to prevent KeyError if the database is empty
     if 'Date' in df.columns:
         df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
@@ -494,8 +493,7 @@ def main():
     # ------------------------------------------
     # LANDING PAGE ROUTER
     # ------------------------------------------
-
-utility_choice = st.sidebar.selectbox(
+    utility_choice = st.sidebar.selectbox(
         "Select Utility System",
         ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
     )
@@ -610,14 +608,14 @@ utility_choice = st.sidebar.selectbox(
 
                 except ImportError:
                     st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
-                    st.markdown("Please ensure you have saved the `projection_engine.py` file (which contains the thermodynamic math and your Word file matrix) in the exact same folder as this `streamlit_app.py` file.")
+                    st.markdown("Please ensure you have saved the `projection_engine.py` file in the exact same folder as this `streamlit_app.py` file.")
                     
         else:
             st.info(f"🚧 The thermodynamic interface for {target_utility} is currently being mapped.")
             
         render_chatbot()
         return
-        
+
     elif utility_choice == "Cooling Towers" or utility_choice == "Boilers":
         st.title(f"🏭 {utility_choice} Diagnostic Interface")
         st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
@@ -1922,6 +1920,7 @@ utility_choice = st.sidebar.selectbox(
                             }
                             if XGB_INSTALLED: 
                                 comp_dict["XGBoost (Importance %)"] = np.round(model_xgb.feature_importances_ * 100, 2)
+                            
                             st.dataframe(pd.DataFrame(comp_dict).style.format(precision=4), use_container_width=True, hide_index=True)
                             
                             st.markdown("### 💾 Commit & Lock Mathematical Subroutine Target")
@@ -2089,28 +2088,28 @@ utility_choice = st.sidebar.selectbox(
                             
                     db_ready_df = pd.DataFrame(db_ready_dict)
                     
-                    st.success(f"✅ Dynamic verification evaluation complete for {len(db_ready_df)} matrix rows.")
+                    st.success(f"✅ Automatically calculated KPIs, HTC, and Residuals for {len(db_ready_df)} valid rows.")
                     st.dataframe(db_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
                     
-                    st.markdown("### 💾 Append Transferred Batch Elements")
+                    st.markdown("### 💾 Commit Bulk Data")
                     c_pwd, c_save = st.columns([2, 2])
                     with c_pwd: 
-                        pwd_bulk = st.text_input("Security Key Verification Entry", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Security Password to Commit Batch Ingestion")
+                        pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
                     with c_save:
-                        if st.button("🔄 Append Ingested Records into Registry", use_container_width=True):
+                        if st.button("🔄 Append all to Master Database", use_container_width=True):
                             if pwd_bulk == "12345678":
                                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
                                 st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                                 save_database(db_conn, st.session_state.daily_logs)
-                                st.success("✅ Batch matrix rows integrated securely within master registry file!")
+                                st.success("✅ Bulk Data Successfully Synced to Database!")
                                 time.sleep(1.5)
                                 st.rerun()
                             elif pwd_bulk != "": 
-                                st.error("❌ Identification credentials mismatched.")
+                                st.error("❌ Incorrect Password.")
                 else: 
-                    st.error("🚨 Data matrix parse sequence returned zero active rows.")
+                    st.error("🚨 No valid data found in CSV.")
             except Exception as e: 
-                st.error(f"Structural verification crash during upload parsing: {e}")
+                st.error(f"Error processing file: {e}")
 
     render_chatbot()
 
