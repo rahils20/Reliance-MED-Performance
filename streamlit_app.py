@@ -536,55 +536,6 @@ def main():
         render_chatbot()
         return
 
-    utility_choice = st.sidebar.selectbox(
-        "Select Utility System",
-        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
-    )
-
-    if utility_choice == "-- Central Hub --":
-        st.title("🏭 Centralized Site Utility Management Suite")
-        st.markdown("---")
-        st.markdown("Welcome to the centralized plant health network configured for Reliance facilities. Use the left navigation panel to monitor plant efficiencies, evaluate heat exchanger health parameters, and access machine-learning normalization predictors.")
-        
-        # Calculate Live Status for Landing Page
-        med_status = "No Data"
-        ro_status = "No Data"
-        
-        if not st.session_state.daily_logs.empty:
-            last_med_row = st.session_state.daily_logs.iloc[-1]
-            med_diff = (pd.to_numeric(last_med_row.get('Residual', 0)) / pd.to_numeric(last_med_row.get('Gross production', 1))) * 100
-            if med_diff <= -5.0:
-                med_status = "🔴 Please Check Plant"
-            elif med_diff <= -4.0:
-                med_status = "🟡 Warning: Deviation Detected"
-            else:
-                med_status = "🟢 Good Working Condition"
-
-        if not st.session_state.ro_daily_logs.empty:
-            last_ro_row = st.session_state.ro_daily_logs.iloc[-1]
-            ro_diff = (pd.to_numeric(last_ro_row.get('Residual', 0)) / pd.to_numeric(last_ro_row.get('Permeate Flow', 1))) * 100
-            if ro_diff <= -5.0:
-                ro_status = "🔴 Please Check Plant"
-            elif ro_diff <= -4.0:
-                ro_status = "🟡 Warning: Deviation Detected"
-            else:
-                ro_status = "🟢 Good Working Condition"
-
-        c_layout1, c_layout2 = st.columns(2)
-        with c_layout1:
-            st.info("### ❄️ Cooling Towers\nMonitor real-time system concentration cycles, calculated thermal approach limits, and active biocidal inventory parameters.\n\n*Status: Hidden from menu during updates*")
-        with c_layout2:
-            st.error("### 🔥 Industrial Boiler Infrastructure\nTrack steam header drum pressures, automated surface continuous blowdown rates, and reserve chemical levels.\n\n*Status: Hidden from menu during updates*")
-            
-        c_layout3, c_layout4 = st.columns(2)
-        with c_layout3:
-            st.success(f"### 💧 High Pressure RO Plants\nEvaluate membrane permeate flux decay rates, normalized cartridge delta pressures, and specific power consumption benchmarks.\n\n*Status: HERO Plant Configured*\n\n**Latest Performance:** {ro_status}")
-        with c_layout4:
-            st.warning(f"### 🌊 Multi-Effect Distillation (MED)\nAccess advanced baseline multi-variable regression analysis, thermal heat transfer evaluation, and active antiscalant tracking.\n\n*Status: Unit MED-4 Online & Verified*\n\n**Latest Performance:** {med_status}")
-            
-        render_chatbot()
-        return
-
     elif utility_choice == "Projection Engine":
         st.title("🧮 Enterprise Chemical Projection Engine")
         st.markdown("Thermodynamic simulation and predictive dosing portal.")
