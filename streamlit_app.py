@@ -494,9 +494,10 @@ def main():
     # ------------------------------------------
     # LANDING PAGE ROUTER
     # ------------------------------------------
+
     utility_choice = st.sidebar.selectbox(
         "Select Utility System",
-        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)"]
+        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
     )
 
     if utility_choice == "-- Central Hub --":
@@ -534,6 +535,14 @@ def main():
         with c_layout4:
             st.warning(f"### 🌊 Multi-Effect Distillation (MED)\nAccess advanced baseline multi-variable regression analysis, thermal heat transfer evaluation, and active antiscalant tracking.\n\n*Status: Unit MED-4 Online & Verified*\n\n**Latest Performance:** {med_status}")
             
+        render_chatbot()
+        return
+
+    elif utility_choice == "Projection Engine":
+        st.title("🧮 Enterprise Projection Engine")
+        st.markdown("Select a utility below to run thermodynamic scaling simulations.")
+        target_utility = st.selectbox("Select Utility for Projection", ["RO", "MED", "CWT", "BWT"])
+        st.info(f"The thermodynamic calculation kernel for {target_utility} is ready for data input.")
         render_chatbot()
         return
         
