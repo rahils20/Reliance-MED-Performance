@@ -538,11 +538,83 @@ def main():
         render_chatbot()
         return
 
-    elif utility_choice == "Projection Engine":
-        st.title("🧮 Enterprise Projection Engine")
-        st.markdown("Select a utility below to run thermodynamic scaling simulations.")
-        target_utility = st.selectbox("Select Utility for Projection", ["RO", "MED", "CWT", "BWT"])
-        st.info(f"The thermodynamic calculation kernel for {target_utility} is ready for data input.")
+elif utility_choice == "Projection Engine":
+        st.title("🧮 Enterprise Chemical Projection Engine")
+        st.markdown("Thermodynamic simulation and predictive dosing portal.")
+
+        target_utility = st.radio("Active Simulation Module", ["RO Plant", "MED", "Cooling Tower", "Boiler"], horizontal=True)
+        st.divider()
+
+        if target_utility == "RO Plant":
+            st.subheader("RO Pre-Treatment & Membrane Scaling Simulator")
+            
+            col1, col2 = st.columns([1, 2.5])
+            
+            with col1:
+                st.markdown("### 💧 Feed Chemistry (mg/L)")
+                with st.container(border=True):
+                    feed_ca = st.number_input("Calcium (Ca²⁺)", value=150.0, step=10.0)
+                    feed_ba = st.number_input("Barium (Ba²⁺)", value=0.05, step=0.01, format="%.3f")
+                    feed_sr = st.number_input("Strontium (Sr²⁺)", value=1.2, step=0.1)
+                    feed_so4 = st.number_input("Sulfate (SO₄²⁻)", value=250.0, step=10.0)
+                    feed_sio2 = st.number_input("Silica (SiO₂)", value=15.0, step=1.0)
+                    feed_lsi = st.number_input("Feed LSI", value=0.2, step=0.1)
+                
+                st.markdown("### ⚙️ System Parameters")
+                with st.container(border=True):
+                    sys_recovery = st.slider("Target Recovery (%)", min_value=50.0, max_value=95.0, value=85.0, step=0.5)
+                    sys_flow = st.number_input("Feed Flow (m³/h)", value=450.0, step=10.0)
+
+            with col2:
+                try:
+                    # Hooking into the thermodynamic kernel we built previously
+                    from projection_engine import UtilityProjectionEngine
+                    engine = UtilityProjectionEngine()
+                    
+                    # 1. Run the Math
+                    feed_ions = {"Ca": feed_ca, "Ba": feed_ba, "Sr": feed_sr, "SO4": feed_so4, "SiO2": feed_sio2, "LSI": feed_lsi}
+                    si_results = engine.calculate_ro_saturation(feed_ions, sys_recovery)
+                    rec = engine.get_recommendation("RO", si_results)
+                    
+                    # 2. Display the Recommendation Box
+                    st.markdown("### 📋 Chembond Treatment Specification")
+                    if rec["Status"] == "Safe":
+                        st.success(f"**Recommended Product:** {rec['Product']}")
+                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM  |  **Required Consumption:** {(sys_flow * rec['Target_Dose'])/1000:.2f} kg/hr")
+                    else:
+                        st.error(f"**CRITICAL WARNING:** {rec['Message']}")
+
+                    # 3. Display Saturation Metrics
+                    st.markdown("### 🔬 Concentrate Saturation Indices (Trailing Element)")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Langelier (LSI)", f"{si_results['Concentrate_LSI']:.2f}")
+                    m2.metric("BaSO4 (x Sat)", f"{si_results['BaSO4_SI']:.1f}")
+                    m3.metric("CaSO4 (x Sat)", f"{si_results['CaSO4_SI']:.2f}")
+                    m4.metric("Silica (x Sat)", f"{si_results['Silica_SI']:.2f}")
+
+                    # 4. Draw the Professional Curve
+                    st.markdown("### 📈 Scaling Potential vs. System Recovery")
+                    st.markdown("Observe how ionic saturation exponentially increases as recovery pushes past 80%.")
+                    
+                    curve_df = engine.generate_projection_curve(feed_ions, min_rec=50, max_rec=95, steps=30)
+                    melted_df = curve_df.melt('Recovery (%)', var_name='Saturation Metric', value_name='Index Value')
+                    
+                    chart = alt.Chart(melted_df).mark_line(point=True).encode(
+                        x=alt.X('Recovery (%):Q', scale=alt.Scale(domain=[50, 95])),
+                        y=alt.Y('Index Value:Q', scale=alt.Scale(zero=False)),
+                        color='Saturation Metric:N',
+                        tooltip=['Recovery (%)', 'Saturation Metric', 'Index Value']
+                    ).properties(height=400)
+                    
+                    st.altair_chart(chart, use_container_width=True)
+
+                except ImportError:
+                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
+                    st.markdown("Please ensure you have saved the `projection_engine.py` file (which contains the thermodynamic math and your Word file matrix) in the exact same folder as this `streamlit_app.py` file.")
+                    
+        else:
+            st.info(f"🚧 The thermodynamic interface for {target_utility} is currently being mapped.")
+            
         render_chatbot()
         return
         
