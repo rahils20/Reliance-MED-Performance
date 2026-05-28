@@ -495,7 +495,7 @@ def main():
     # LANDING PAGE ROUTER
     # ------------------------------------------
 
-    utility_choice = st.sidebar.selectbox(
+utility_choice = st.sidebar.selectbox(
         "Select Utility System",
         ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
     )
@@ -538,7 +538,7 @@ def main():
         render_chatbot()
         return
 
-elif utility_choice == "Projection Engine":
+    elif utility_choice == "Projection Engine":
         st.title("🧮 Enterprise Chemical Projection Engine")
         st.markdown("Thermodynamic simulation and predictive dosing portal.")
 
