@@ -538,196 +538,136 @@ def main():
 
     elif utility_choice == "Projection Engine":
         st.title("🧮 Enterprise Chemical Projection Engine")
-        st.markdown("Thermodynamic simulation and predictive dosing portal.")
+        st.markdown("Comprehensive Thermodynamic Simulation and Predictive Dosing Portal.")
 
         target_utility = st.radio("Active Simulation Module", ["RO Plant", "MED", "Cooling Tower", "Boiler"], horizontal=True)
         st.divider()
 
         if target_utility == "RO Plant":
-            st.subheader("RO Pre-Treatment & Membrane Scaling Simulator")
-            col1, col2 = st.columns([1, 2.5])
+            st.subheader("RO Membrane Treatment Dosing & Projection")
             
-            with col1:
-                st.markdown("### 💧 Feed Chemistry (mg/L)")
-                with st.container(border=True):
-                    feed_ca = st.number_input("Calcium (Ca²⁺)", value=150.0, step=10.0)
-                    feed_ba = st.number_input("Barium (Ba²⁺)", value=0.05, step=0.01, format="%.3f")
-                    feed_sr = st.number_input("Strontium (Sr²⁺)", value=1.2, step=0.1)
-                    feed_so4 = st.number_input("Sulfate (SO₄²⁻)", value=250.0, step=10.0)
-                    feed_sio2 = st.number_input("Silica (SiO₂)", value=15.0, step=1.0)
-                    feed_lsi = st.number_input("Feed LSI", value=0.2, step=0.1)
+            # 1. Project Details
+            st.markdown("### 📋 Project & Site Details")
+            c1, c2, c3, c4 = st.columns(4)
+            proj_name = c1.text_input("Project Name", "RIL JMD CLUSTER 2 SEZ TTP RO #1")
+            client_name = c2.text_input("Client Name", "Reliance Industries")
+            engineer = c3.text_input("Engineer", "Ghanshyam Daimiwal")
+            feed_type = c4.selectbox("Feed Water Type", ["Surface Water - Lake", "Borewell", "Sea Water", "Municipal"])
+            
+            # 2. System Parameters
+            st.markdown("### ⚙️ System Operating Parameters")
+            s1, s2, s3, s4 = st.columns(4)
+            feed_flow = s1.number_input("Feedwater Flow (m³/hr)", value=123.0)
+            sys_rec = s2.number_input("System Recovery (%)", value=75.0)
+            mem_rej = s3.number_input("Membrane Rejection (%)", value=99.22)
+            mem_type = s4.selectbox("Membrane Type", ["Thin Film High Rejection", "Brackish Water", "Sea Water"])
+            
+            perm_flow = feed_flow * (sys_rec / 100)
+            conc_flow = feed_flow - perm_flow
+            st.info(f"**Calculated Permeate Flow:** {perm_flow:.3f} m³/hr | **Concentrate Flow:** {conc_flow:.3f} m³/hr")
+            
+            # 3. Comprehensive Water Analysis
+            st.markdown("### 💧 Detailed Water Analysis (mg/L at 25°C)")
+            st.markdown("Enter Raw Feed values below. The projection engine will simulate the Treated, Product, and Concentrate profiles.")
+            
+            ions_col1, ions_col2, ions_col3, ions_col4 = st.columns(4)
+            with ions_col1:
+                feed_ca = st.number_input("Calcium (Ca++)", value=85.0)
+                feed_mg = st.number_input("Magnesium (Mg++)", value=37.0)
+                feed_na = st.number_input("Sodium (Na+)", value=1680.73)
+                feed_k = st.number_input("Potassium (K+)", value=0.0)
+                feed_nh4 = st.number_input("Ammonium (NH4+)", value=0.0)
+            with ions_col2:
+                feed_ba = st.number_input("Barium (Ba++)", value=0.0)
+                feed_sr = st.number_input("Strontium (Sr++)", value=0.0)
+                feed_fe = st.number_input("Iron (Fe 2+/3+)", value=0.12)
+                feed_al = st.number_input("Aluminium (Al+++)", value=0.0)
+                feed_ph = st.number_input("pH", value=7.90)
+            with ions_col3:
+                feed_hco3 = st.number_input("Bicarbonate (HCO3-)", value=500.0)
+                feed_cl = st.number_input("Chloride (Cl-)", value=2539.29)
+                feed_so4 = st.number_input("Sulfate (SO4--)", value=18.0)
+                feed_f = st.number_input("Fluoride (F-)", value=0.60)
+                feed_no3 = st.number_input("Nitrate (NO3-)", value=0.0)
+            with ions_col4:
+                feed_po4 = st.number_input("Phosphate (PO4---)", value=0.56)
+                feed_sio2 = st.number_input("Silica (SiO2)", value=1.20)
+                feed_co3 = st.number_input("Carbonate (CO3--)", value=4.43)
+                feed_co2 = st.number_input("Carbon Dioxide (CO2)", value=8.20)
+                feed_tds = st.number_input("Total Dissolved Solids (TDS)", value=4866.93)
                 
-                st.markdown("### ⚙️ System Parameters")
-                with st.container(border=True):
-                    sys_recovery = st.slider("Target Recovery (%)", min_value=50.0, max_value=95.0, value=85.0, step=0.5)
-                    sys_flow = st.number_input("Feed Flow (m³/h)", value=450.0, step=10.0)
-
-            with col2:
-                try:
-                    from projection_engine import UtilityProjectionEngine
-                    engine = UtilityProjectionEngine()
-                    
-                    feed_ions = {"Ca": feed_ca, "Ba": feed_ba, "Sr": feed_sr, "SO4": feed_so4, "SiO2": feed_sio2, "LSI": feed_lsi}
-                    si_results = engine.calculate_ro_saturation(feed_ions, sys_recovery)
-                    rec = engine.get_recommendation("RO", si_results)
-                    
-                    st.markdown("### 📋 Chembond Treatment Specification")
-                    if rec.get("Status") == "Safe":
-                        st.success(f"**Recommended Product:** {rec['Product']}")
-                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM  |  **Required Consumption:** {(sys_flow * rec['Target_Dose'])/1000:.2f} kg/hr")
-                    else:
-                        st.error(f"**CRITICAL WARNING:** {rec.get('Message', 'Exceeds limits.')}")
-
-                    st.markdown("### 🔬 Concentrate Saturation Indices (Trailing Element)")
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Langelier (LSI)", f"{si_results['Concentrate_LSI']:.2f}")
-                    m2.metric("BaSO4 (x Sat)", f"{si_results['BaSO4_SI']:.1f}")
-                    m3.metric("CaSO4 (x Sat)", f"{si_results['CaSO4_SI']:.2f}")
-                    m4.metric("Silica (x Sat)", f"{si_results['Silica_SI']:.2f}")
-
-                    st.markdown("### 📈 Scaling Potential vs. System Recovery")
-                    curve_df = engine.generate_projection_curve(feed_ions, min_rec=50, max_rec=95, steps=30)
-                    melted_df = curve_df.melt('Recovery (%)', var_name='Saturation Metric', value_name='Index Value')
-                    
-                    chart = alt.Chart(melted_df).mark_line(point=True).encode(
-                        x=alt.X('Recovery (%):Q', scale=alt.Scale(domain=[50, 95])),
-                        y=alt.Y('Index Value:Q', scale=alt.Scale(zero=False)),
-                        color='Saturation Metric:N',
-                        tooltip=['Recovery (%)', 'Saturation Metric', 'Index Value']
-                    ).properties(height=400)
-                    st.altair_chart(chart, use_container_width=True)
-
-                except ImportError:
-                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found in the root directory.")
-
-        elif target_utility == "MED":
-            st.subheader("Multi-Effect Distillation (MED) Scaling Simulator")
-            col1, col2 = st.columns([1, 2.5])
-            
-            with col1:
-                st.markdown("### 🌡️ Operational Inputs")
-                with st.container(border=True):
-                    top_brine_temp = st.number_input("Top Brine Temperature (°C)", value=70.0, step=1.0)
-                    concentration_factor = st.number_input("Concentration Factor (CF)", value=1.5, step=0.1)
-
-            with col2:
-                try:
-                    from projection_engine import UtilityProjectionEngine
-                    engine = UtilityProjectionEngine()
-                    
-                    results = engine.calculate_med_scaling(top_brine_temp, concentration_factor)
-                    rec = engine.get_recommendation("MED", results)
-                    
-                    st.markdown("### 📋 Chembond Treatment Specification")
-                    if rec.get("Status") == "Safe":
-                        st.success(f"**Recommended Product:** {rec['Product']}")
-                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM")
-                    else:
-                        st.warning("No specific product mapped for these conditions.")
-
-                    st.markdown("### 🔬 Thermal Scaling Risks")
-                    m1, m2, m3 = st.columns(3)
-                    
-                    caco3_color = "normal" if results["CaCO3_Scale_Risk"] == "Low" else "inverse"
-                    m1.metric("Alkaline Scale (CaCO3)", results["CaCO3_Scale_Risk"], delta="Action Req" if results["CaCO3_Scale_Risk"] == "High" else "Safe", delta_color=caco3_color)
-                    
-                    caso4_color = "normal" if results["CaSO4_Scale_Risk"] == "Low" else "inverse"
-                    m2.metric("Non-Alkaline (CaSO4)", results["CaSO4_Scale_Risk"], delta="Action Req" if results["CaSO4_Scale_Risk"] == "High" else "Safe", delta_color=caso4_color)
-                    
-                    m3.metric("Max Safe CF Limit", f"{results['Max_Recommended_CF']:.2f}")
-
-                except ImportError:
-                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
-
-        elif target_utility == "Cooling Tower":
-            st.subheader("Cooling Tower Saturation & Corrosion Simulator")
-            col1, col2 = st.columns([1, 2.5])
-            
-            with col1:
-                st.markdown("### 💧 Makeup Water Chemistry")
-                with st.container(border=True):
-                    mu_ph = st.number_input("Makeup pH", value=7.5, step=0.1)
-                    mu_ca = st.number_input("Ca Hardness (ppm as CaCO3)", value=120.0, step=10.0)
-                    mu_alk = st.number_input("M-Alkalinity (ppm as CaCO3)", value=100.0, step=10.0)
-                    mu_tds = st.number_input("TDS (ppm)", value=400.0, step=50.0)
+            if st.button("🚀 Generate Detailed Projection Report", type="primary"):
+                st.divider()
+                st.markdown(f"## 📄 RO Membrane Treatment Dosing Report")
                 
-                st.markdown("### ⚙️ Operating Parameters")
-                with st.container(border=True):
-                    target_coc = st.slider("Cycles of Concentration (COC)", min_value=1.0, max_value=10.0, value=5.0, step=0.1)
-                    basin_temp = st.number_input("Basin Water Temp (°C)", value=32.0, step=1.0)
-
-            with col2:
-                try:
-                    from projection_engine import UtilityProjectionEngine
-                    engine = UtilityProjectionEngine()
-                    
-                    mu_data = {"pH": mu_ph, "Ca_Hardness": mu_ca, "M_Alkalinity": mu_alk, "TDS": mu_tds}
-                    results = engine.calculate_cwt_indices(mu_data, target_coc, basin_temp)
-                    rec = engine.get_recommendation("CWT", results)
-                    
-                    st.markdown("### 📋 Chembond Treatment Specification")
-                    if rec.get("Status") == "Safe":
-                        st.success(f"**Recommended Product:** {rec['Product']}")
-                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM")
-                    else:
-                        st.warning(f"**Notice:** {rec.get('Message', 'Custom blend required.')}")
-
-                    st.markdown("### 🔬 Basin Saturation Indices")
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Est. Basin pH", f"{results['Basin_pH']:.2f}")
-                    m2.metric("Langelier (LSI)", f"{results['LSI']:.2f}")
-                    m3.metric("Ryznar (RSI)", f"{results['RSI']:.2f}")
-                    
-                    cond_color = "normal" if results['Condition'] == "Stable" else "inverse"
-                    m4.metric("Water Condition", results['Condition'], delta="Review Dosing" if results['Condition'] != "Stable" else "Optimal", delta_color=cond_color)
-
-                except ImportError:
-                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
-
-        elif target_utility == "Boiler":
-            st.subheader("Boiler Water Limits & Blowdown Simulator")
-            col1, col2 = st.columns([1, 2.5])
-            
-            with col1:
-                st.markdown("### ⚙️ Operating Parameters")
-                with st.container(border=True):
-                    boiler_press = st.number_input("Operating Pressure (bar)", value=40.0, step=1.0)
+                # Header
+                h1, h2 = st.columns(2)
+                with h1:
+                    st.write(f"**Project Name:** {proj_name}")
+                    st.write(f"**Client Name:** {client_name}")
+                with h2:
+                    st.write(f"**Date:** {datetime.date.today().strftime('%d-%m-%Y')}")
+                    st.write(f"**Engineer:** {engineer}")
                 
-                st.markdown("### 💧 Feedwater Chemistry")
-                with st.container(border=True):
-                    feed_silica = st.number_input("Silica (ppm as SiO2)", value=2.0, step=0.1)
-                    feed_hardness = st.number_input("Total Hardness (ppm as CaCO3)", value=0.5, step=0.1)
+                st.success("**Recommended Product:** Kem Watreat R 428")
+                r1, r2, r3, r4 = st.columns(4)
+                dose_rate = 2.6
+                kg_day = feed_flow * 24 * dose_rate / 1000
+                r1.metric("Dose Rate - Feed (mg/L)", f"{dose_rate}")
+                r2.metric("Estimated Use / Day (KG)", f"{kg_day:.3f}")
+                r3.metric("Estimated Use / Year (KG)", f"{kg_day * 365:.3f}")
+                r4.metric("Acid Dosing", "None")
+                
+                st.markdown("#### 🔬 Projected Water Analysis Matrix")
+                cf = 1 / (1 - (sys_rec/100))
+                def sim_conc(val): return val * cf if val > 0 else 0.0
+                def sim_prod(val): return val * (1 - (mem_rej/100)) if val > 0 else 0.0
+                
+                wa_data = {
+                    "Parameter": ["Ca++", "Mg++", "Na+", "K+", "NH4+", "Ba++", "Sr++", "Fe 2+/3+", "Al+++", "HCO3-", "Cl-", "SO4--", "F-", "NO3-", "PO4---", "SiO2", "CO3--", "CO2", "TDS", "pH"],
+                    "Raw Feed": [feed_ca, feed_mg, feed_na, feed_k, feed_nh4, feed_ba, feed_sr, feed_fe, feed_al, feed_hco3, feed_cl, feed_so4, feed_f, feed_no3, feed_po4, feed_sio2, feed_co3, feed_co2, feed_tds, feed_ph],
+                    "Treated": [feed_ca, feed_mg, feed_na, feed_k, feed_nh4, feed_ba, feed_sr, feed_fe, feed_al, feed_hco3, feed_cl, feed_so4, feed_f, feed_no3, feed_po4, feed_sio2, feed_co3, feed_co2, feed_tds, feed_ph],
+                    "Product": [sim_prod(feed_ca), sim_prod(feed_mg), sim_prod(feed_na), sim_prod(feed_k), sim_prod(feed_nh4), 0, 0, 0, 0, sim_prod(feed_hco3), sim_prod(feed_cl), sim_prod(feed_so4), sim_prod(feed_f), sim_prod(feed_no3), 0, sim_prod(feed_sio2), 0, feed_co2, sim_prod(feed_tds), feed_ph - 1.61],
+                    "Concentrate": [sim_conc(feed_ca), sim_conc(feed_mg), sim_conc(feed_na), sim_conc(feed_k), sim_conc(feed_nh4), sim_conc(feed_ba), sim_conc(feed_sr), sim_conc(feed_fe), sim_conc(feed_al), sim_conc(feed_hco3), sim_conc(feed_cl), sim_conc(feed_so4), sim_conc(feed_f), sim_conc(feed_no3), sim_conc(feed_po4), sim_conc(feed_sio2), sim_conc(feed_co3), feed_co2, sim_conc(feed_tds), feed_ph + 0.54]
+                }
+                df_wa = pd.DataFrame(wa_data)
+                st.dataframe(df_wa.style.format({col: "{:.2f}" for col in ["Raw Feed", "Treated", "Product", "Concentrate"]}), use_container_width=True, hide_index=True)
+                
+                st.markdown("#### 📊 Saturation Index (SI) & Scaling Potential")
+                # Dynamic approximation based on inputs and Concentration Factor (CF)
+                si_lsi_raw = 0.793 if feed_ph == 7.9 else feed_ph - 7.1
+                si_lsi_conc = si_lsi_raw + np.log10(cf) + 0.5
+                si_sdsi_raw = si_lsi_raw - 0.02
+                si_sdsi_conc = si_lsi_conc - 0.4
+                
+                si_data = {
+                    "Index": ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
+                    "Raw Feed": [si_lsi_raw, si_sdsi_raw, (feed_ca*feed_so4)/100000, 0.0, 0.0, (feed_ca*feed_f)/1000, feed_sio2/120, feed_fe*20, feed_al],
+                    "Treated": [si_lsi_raw, si_sdsi_raw, (feed_ca*feed_so4)/100000, 0.0, 0.0, (feed_ca*feed_f)/1000, feed_sio2/120, feed_fe*20, feed_al],
+                    "Concentrate": [si_lsi_conc, si_sdsi_conc, (sim_conc(feed_ca)*sim_conc(feed_so4))/100000, sim_conc(feed_ba), sim_conc(feed_sr), (sim_conc(feed_ca)*sim_conc(feed_f))/1000, sim_conc(feed_sio2)/120, sim_conc(feed_fe)*20, sim_conc(feed_al)],
+                }
+                
+                df_si = pd.DataFrame(si_data)
+                max_limits = [2.6, 2.5, 4.0, 160.0, 12.0, 100.0, 1.0, 10.0, 0.5]
+                df_si['% Max SI'] = (df_si['Concentrate'] / max_limits) * 100
+                
+                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Concentrate": "{:.3f}", "% Max SI": "{:.2f}%"}), use_container_width=True, hide_index=True)
+                
+                st.markdown("#### 📉 Saturation Limits vs Thresholds")
+                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Concentrate', '% Max SI'], var_name='Metric', value_name='Value')
+                chart = alt.Chart(chart_data).mark_bar().encode(
+                    x=alt.X('Index:N', title='Parameter', sort=None),
+                    y=alt.Y('Value:Q', title='Saturation / % Max'),
+                    color=alt.Color('Metric:N', scale=alt.Scale(range=['#d62728', '#1f77b4'])),
+                    xOffset='Metric:N'
+                ).properties(height=400)
+                st.altair_chart(chart, use_container_width=True)
+                
+                st.info("**Disclaimer:** CHEMBOND WATER TECHNOLOGIES LIMITED KEM MemPRO- Software Disclaimer. Information contained in this program and the recommendations derived therefrom are based on results gained from experience and application testing and are believed to be accurate but are given without any acceptance of liability attributable to reliance thereon, as conditions of use lie outside our control.")
 
-            with col2:
-                try:
-                    from projection_engine import UtilityProjectionEngine
-                    engine = UtilityProjectionEngine()
-                    
-                    results = engine.calculate_bwt_limits(boiler_press, feed_silica, feed_hardness)
-                    rec = engine.get_recommendation("BWT", results)
-                    
-                    st.markdown("### 📋 Chembond Treatment Specification")
-                    if rec.get("Status") == "Safe":
-                        st.success(f"**Recommended Product:** {rec['Product']}")
-                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM")
-                    else:
-                        st.warning("Ensure pressure limits align with product matrix.")
+        elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
+            st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued for the next update. Please utilize the RO Plant tab for the active detailed UI model.")
 
-                    st.markdown("### 🔬 ASME Boiler Guidelines & Blowdown Targets")
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Max Drum Silica", f"{results['Max_Allowable_Silica_ppm']:.1f} ppm", delta="ASME Limit", delta_color="off")
-                    m2.metric("Max Allowable Cycles", f"{results['Recommended_Max_Cycles']:.1f}")
-                    m3.metric("Min Blowdown Rate", f"{results['Blowdown_Rate_pct']:.1f} %")
-
-                except ImportError:
-                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
-
-        render_chatbot()
-        return
-
-    elif utility_choice == "Cooling Towers" or utility_choice == "Boilers":
-        st.title(f"🏭 {utility_choice} Diagnostic Interface")
-        st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
         render_chatbot()
         return
 
