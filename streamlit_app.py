@@ -536,7 +536,7 @@ def main():
         render_chatbot()
         return
 
-    elif utility_choice == "Projection Engine":
+elif utility_choice == "Projection Engine":
         st.title("🧮 Enterprise Chemical Projection Engine")
         st.markdown("Thermodynamic simulation and predictive dosing portal.")
 
@@ -545,7 +545,6 @@ def main():
 
         if target_utility == "RO Plant":
             st.subheader("RO Pre-Treatment & Membrane Scaling Simulator")
-            
             col1, col2 = st.columns([1, 2.5])
             
             with col1:
@@ -565,24 +564,20 @@ def main():
 
             with col2:
                 try:
-                    # Hooking into the thermodynamic kernel we built previously
                     from projection_engine import UtilityProjectionEngine
                     engine = UtilityProjectionEngine()
                     
-                    # 1. Run the Math
                     feed_ions = {"Ca": feed_ca, "Ba": feed_ba, "Sr": feed_sr, "SO4": feed_so4, "SiO2": feed_sio2, "LSI": feed_lsi}
                     si_results = engine.calculate_ro_saturation(feed_ions, sys_recovery)
                     rec = engine.get_recommendation("RO", si_results)
                     
-                    # 2. Display the Recommendation Box
                     st.markdown("### 📋 Chembond Treatment Specification")
-                    if rec["Status"] == "Safe":
+                    if rec.get("Status") == "Safe":
                         st.success(f"**Recommended Product:** {rec['Product']}")
                         st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM  |  **Required Consumption:** {(sys_flow * rec['Target_Dose'])/1000:.2f} kg/hr")
                     else:
-                        st.error(f"**CRITICAL WARNING:** {rec['Message']}")
+                        st.error(f"**CRITICAL WARNING:** {rec.get('Message', 'Exceeds limits.')}")
 
-                    # 3. Display Saturation Metrics
                     st.markdown("### 🔬 Concentrate Saturation Indices (Trailing Element)")
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("Langelier (LSI)", f"{si_results['Concentrate_LSI']:.2f}")
@@ -590,10 +585,7 @@ def main():
                     m3.metric("CaSO4 (x Sat)", f"{si_results['CaSO4_SI']:.2f}")
                     m4.metric("Silica (x Sat)", f"{si_results['Silica_SI']:.2f}")
 
-                    # 4. Draw the Professional Curve
                     st.markdown("### 📈 Scaling Potential vs. System Recovery")
-                    st.markdown("Observe how ionic saturation exponentially increases as recovery pushes past 80%.")
-                    
                     curve_df = engine.generate_projection_curve(feed_ions, min_rec=50, max_rec=95, steps=30)
                     melted_df = curve_df.melt('Recovery (%)', var_name='Saturation Metric', value_name='Index Value')
                     
@@ -603,16 +595,133 @@ def main():
                         color='Saturation Metric:N',
                         tooltip=['Recovery (%)', 'Saturation Metric', 'Index Value']
                     ).properties(height=400)
-                    
                     st.altair_chart(chart, use_container_width=True)
 
                 except ImportError:
-                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
-                    st.markdown("Please ensure you have saved the `projection_engine.py` file in the exact same folder as this `streamlit_app.py` file.")
-                    
-        else:
-            st.info(f"🚧 The thermodynamic interface for {target_utility} is currently being mapped.")
+                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found in the root directory.")
+
+        elif target_utility == "MED":
+            st.subheader("Multi-Effect Distillation (MED) Scaling Simulator")
+            col1, col2 = st.columns([1, 2.5])
             
+            with col1:
+                st.markdown("### 🌡️ Operational Inputs")
+                with st.container(border=True):
+                    top_brine_temp = st.number_input("Top Brine Temperature (°C)", value=70.0, step=1.0)
+                    concentration_factor = st.number_input("Concentration Factor (CF)", value=1.5, step=0.1)
+
+            with col2:
+                try:
+                    from projection_engine import UtilityProjectionEngine
+                    engine = UtilityProjectionEngine()
+                    
+                    results = engine.calculate_med_scaling(top_brine_temp, concentration_factor)
+                    rec = engine.get_recommendation("MED", results)
+                    
+                    st.markdown("### 📋 Chembond Treatment Specification")
+                    if rec.get("Status") == "Safe":
+                        st.success(f"**Recommended Product:** {rec['Product']}")
+                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM")
+                    else:
+                        st.warning("No specific product mapped for these conditions.")
+
+                    st.markdown("### 🔬 Thermal Scaling Risks")
+                    m1, m2, m3 = st.columns(3)
+                    
+                    caco3_color = "normal" if results["CaCO3_Scale_Risk"] == "Low" else "inverse"
+                    m1.metric("Alkaline Scale (CaCO3)", results["CaCO3_Scale_Risk"], delta="Action Req" if results["CaCO3_Scale_Risk"] == "High" else "Safe", delta_color=caco3_color)
+                    
+                    caso4_color = "normal" if results["CaSO4_Scale_Risk"] == "Low" else "inverse"
+                    m2.metric("Non-Alkaline (CaSO4)", results["CaSO4_Scale_Risk"], delta="Action Req" if results["CaSO4_Scale_Risk"] == "High" else "Safe", delta_color=caso4_color)
+                    
+                    m3.metric("Max Safe CF Limit", f"{results['Max_Recommended_CF']:.2f}")
+
+                except ImportError:
+                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
+
+        elif target_utility == "Cooling Tower":
+            st.subheader("Cooling Tower Saturation & Corrosion Simulator")
+            col1, col2 = st.columns([1, 2.5])
+            
+            with col1:
+                st.markdown("### 💧 Makeup Water Chemistry")
+                with st.container(border=True):
+                    mu_ph = st.number_input("Makeup pH", value=7.5, step=0.1)
+                    mu_ca = st.number_input("Ca Hardness (ppm as CaCO3)", value=120.0, step=10.0)
+                    mu_alk = st.number_input("M-Alkalinity (ppm as CaCO3)", value=100.0, step=10.0)
+                    mu_tds = st.number_input("TDS (ppm)", value=400.0, step=50.0)
+                
+                st.markdown("### ⚙️ Operating Parameters")
+                with st.container(border=True):
+                    target_coc = st.slider("Cycles of Concentration (COC)", min_value=1.0, max_value=10.0, value=5.0, step=0.1)
+                    basin_temp = st.number_input("Basin Water Temp (°C)", value=32.0, step=1.0)
+
+            with col2:
+                try:
+                    from projection_engine import UtilityProjectionEngine
+                    engine = UtilityProjectionEngine()
+                    
+                    mu_data = {"pH": mu_ph, "Ca_Hardness": mu_ca, "M_Alkalinity": mu_alk, "TDS": mu_tds}
+                    results = engine.calculate_cwt_indices(mu_data, target_coc, basin_temp)
+                    rec = engine.get_recommendation("CWT", results)
+                    
+                    st.markdown("### 📋 Chembond Treatment Specification")
+                    if rec.get("Status") == "Safe":
+                        st.success(f"**Recommended Product:** {rec['Product']}")
+                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM")
+                    else:
+                        st.warning(f"**Notice:** {rec.get('Message', 'Custom blend required.')}")
+
+                    st.markdown("### 🔬 Basin Saturation Indices")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Est. Basin pH", f"{results['Basin_pH']:.2f}")
+                    m2.metric("Langelier (LSI)", f"{results['LSI']:.2f}")
+                    m3.metric("Ryznar (RSI)", f"{results['RSI']:.2f}")
+                    
+                    cond_color = "normal" if results['Condition'] == "Stable" else "inverse"
+                    m4.metric("Water Condition", results['Condition'], delta="Review Dosing" if results['Condition'] != "Stable" else "Optimal", delta_color=cond_color)
+
+                except ImportError:
+                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
+
+        elif target_utility == "Boiler":
+            st.subheader("Boiler Water Limits & Blowdown Simulator")
+            col1, col2 = st.columns([1, 2.5])
+            
+            with col1:
+                st.markdown("### ⚙️ Operating Parameters")
+                with st.container(border=True):
+                    boiler_press = st.number_input("Operating Pressure (bar)", value=40.0, step=1.0)
+                
+                st.markdown("### 💧 Feedwater Chemistry")
+                with st.container(border=True):
+                    feed_silica = st.number_input("Silica (ppm as SiO2)", value=2.0, step=0.1)
+                    feed_hardness = st.number_input("Total Hardness (ppm as CaCO3)", value=0.5, step=0.1)
+
+            with col2:
+                try:
+                    from projection_engine import UtilityProjectionEngine
+                    engine = UtilityProjectionEngine()
+                    
+                    results = engine.calculate_bwt_limits(boiler_press, feed_silica, feed_hardness)
+                    rec = engine.get_recommendation("BWT", results)
+                    
+                    st.markdown("### 📋 Chembond Treatment Specification")
+                    if rec.get("Status") == "Safe":
+                        st.success(f"**Recommended Product:** {rec['Product']}")
+                        st.info(f"**Target Dosing:** {rec['Target_Dose']} PPM")
+                    else:
+                        st.warning("Ensure pressure limits align with product matrix.")
+
+                    st.markdown("### 🔬 ASME Boiler Guidelines & Blowdown Targets")
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Max Drum Silica", f"{results['Max_Allowable_Silica_ppm']:.1f} ppm", delta="ASME Limit", delta_color="off")
+                    m2.metric("Max Allowable Cycles", f"{results['Recommended_Max_Cycles']:.1f}")
+                    m3.metric("Min Blowdown Rate", f"{results['Blowdown_Rate_pct']:.1f} %")
+
+                except ImportError:
+                    st.error("🚨 **System Architecture Error:** The `projection_engine.py` file was not found.")
+
         render_chatbot()
         return
 
