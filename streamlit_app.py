@@ -507,19 +507,33 @@ def main():
         med_status = "No Data"
         ro_status = "No Data"
         
-        if not st.session_state.daily_logs.empty:
-            last_med_row = st.session_state.daily_logs.iloc[-1]
-            med_diff = (pd.to_numeric(last_med_row.get('Residual', 0)) / pd.to_numeric(last_med_row.get('Gross production', 1))) * 100
-            if med_diff <= -5.0: med_status = "🔴 Please Check Plant"
-            elif med_diff <= -4.0: med_status = "🟡 Warning: Deviation Detected"
-            else: med_status = "🟢 Good Working Condition"
+        try:
+            if not st.session_state.daily_logs.empty:
+                last_med_row = st.session_state.daily_logs.iloc[-1]
+                res_val = float(str(last_med_row.get('Residual', 0)).replace(',', '').strip() or 0)
+                gross_val = float(str(last_med_row.get('Gross production', 1)).replace(',', '').strip() or 1)
+                if gross_val == 0: gross_val = 1.0
+                
+                med_diff = (res_val / gross_val) * 100
+                if med_diff <= -5.0: med_status = "🔴 Please Check Plant"
+                elif med_diff <= -4.0: med_status = "🟡 Warning: Deviation Detected"
+                else: med_status = "🟢 Good Working Condition"
+        except Exception:
+            med_status = "🟠 CSV Data Format Error"
 
-        if not st.session_state.ro_daily_logs.empty:
-            last_ro_row = st.session_state.ro_daily_logs.iloc[-1]
-            ro_diff = (pd.to_numeric(last_ro_row.get('Residual', 0)) / pd.to_numeric(last_ro_row.get('Permeate Flow', 1))) * 100
-            if ro_diff <= -5.0: ro_status = "🔴 Please Check Plant"
-            elif ro_diff <= -4.0: ro_status = "🟡 Warning: Deviation Detected"
-            else: ro_status = "🟢 Good Working Condition"
+        try:
+            if not st.session_state.ro_daily_logs.empty:
+                last_ro_row = st.session_state.ro_daily_logs.iloc[-1]
+                res_val = float(str(last_ro_row.get('Residual', 0)).replace(',', '').strip() or 0)
+                flow_val = float(str(last_ro_row.get('Permeate Flow', 1)).replace(',', '').strip() or 1)
+                if flow_val == 0: flow_val = 1.0
+                
+                ro_diff = (res_val / flow_val) * 100
+                if ro_diff <= -5.0: ro_status = "🔴 Please Check Plant"
+                elif ro_diff <= -4.0: ro_status = "🟡 Warning: Deviation Detected"
+                else: ro_status = "🟢 Good Working Condition"
+        except Exception:
+            ro_status = "🟠 CSV Data Format Error"
 
         c_layout1, c_layout2 = st.columns(2)
         with c_layout1:
