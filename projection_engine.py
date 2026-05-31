@@ -1,168 +1,89 @@
-# projection_engine.py
 import math
 import numpy as np
 import pandas as pd
 
 class UtilityProjectionEngine:
     def __init__(self):
-        # ---------------------------------------------------------
-        # MASTER PRODUCT MATRIX (Translation Layer)
-        # ---------------------------------------------------------
-        self.matrix = {
-            "RO": {
-                "Chembond Watreat 468": {"LSI_Max": 2.6, "CaSO4_Max_SI": 2.5, "BaSO4_Max_SI": 1.0, "Silica_Max_SI": 1.0, "Target_Dose_PPM": 2.5},
-                "Chembond Watreat 428": {"LSI_Max": 2.6, "CaSO4_Max_SI": 4.0, "BaSO4_Max_SI": 120.0, "Silica_Max_SI": 2.0, "Target_Dose_PPM": 3.5},
-                "Chembond Watreat 363": {"LSI_Max": 2.5, "CaSO4_Max_SI": 4.0, "BaSO4_Max_SI": 160.0, "Silica_Max_SI": 1.0, "Target_Dose_PPM": 4.0}
-            },
-            "CWT": {
-                "Chembond KemKool 2000 (Anti-Scale)": {"RSI_Min": 5.0, "RSI_Max": 6.5, "LSI_Min": 0.5, "LSI_Max": 2.5, "Target_Dose_PPM": 40},
-                "Chembond KemKool 4000 (Corrosion Inhibitor)": {"RSI_Min": 6.5, "RSI_Max": 8.0, "LSI_Min": -1.0, "LSI_Max": 0.5, "Target_Dose_PPM": 60}
-            },
-            "BWT": {
-                "Chembond KemBoil 100 (Oxygen Scavenger)": {"Max_Pressure_bar": 40, "Target_Dose_PPM": 15},
-                "Chembond KemBoil 300 (Phosphate Treatment)": {"Max_Pressure_bar": 60, "Target_Dose_PPM": 30}
-            },
-            "MED": {
-                "Chembond KemWatreat R3687 (High Temp Scale)": {"Max_Top_Brine_Temp": 75.0, "Max_CF": 2.5, "Target_Dose_PPM": 4.8}
-            }
+        pass
+
+    def run_ro_projection(self, feed_data, sys_rec, mem_rej):
+        """
+        Takes raw feed water dictionary, recovery, and rejection.
+        Returns calculated Product stream, Concentrate stream, SI Matrix, and Product Recommendation.
+        """
+        rec_frac = sys_rec / 100.0
+        rej_frac = mem_rej / 100.0
+        cf_flow = 1 / (1 - rec_frac) if rec_frac < 1.0 else 10.0
+
+        # Split rejection: Divalent ions (Charge 2) are rejected at a much higher rate than Monovalent (Charge 1)
+        def sim_prod(val, charge):
+            actual_rej = rej_frac if charge == 1 else 1 - ((1 - rej_frac) * 0.15)
+            return val * (1.0 - actual_rej) if val > 0 else 0.0
+
+        def sim_conc(feed_val, prod_val):
+            if rec_frac >= 1.0: return 0.0
+            return (feed_val - (rec_frac * prod_val)) / (1.0 - rec_frac)
+
+        # 1. Calculate Mass Balance for all Ions
+        ions = {
+            # Divalent (Charge 2)
+            "Ca": 2, "Mg": 2, "Ba": 2, "Sr": 2, "Fe": 2, "Al": 2, "SO4": 2, "CO3": 2,
+            # Monovalent / Other (Charge 1)
+            "Na": 1, "K": 1, "NH4": 1, "HCO3": 1, "Cl": 1, "F": 1, "NO3": 1, "PO4": 1, "SiO2": 1
         }
 
-        # Thermodynamic Constants
-        self.ksp = {"CaSO4": 2.4e-5, "BaSO4": 1.1e-10, "SrSO4": 3.2e-7}
-        self.mw = {"Ca": 40.078, "Ba": 137.327, "Sr": 87.62, "SO4": 96.06, "SiO2": 60.08}
-        self.silica_solubility_ppm = 120.0
+        prod_stream = {}
+        conc_stream = {}
 
-    # ==========================================
-    # 1. RO MEMBRANE ENGINE
-    # ==========================================
-    def calculate_ro_saturation(self, feed_ions, recovery_pct, temp_c=25.0):
-        cf = 1 / (1 - (recovery_pct / 100.0))
-        conc_ions = {ion: (ppm * cf) for ion, ppm in feed_ions.items()}
-
-        molarity = {
-            "Ca": conc_ions.get("Ca", 0) / (self.mw["Ca"] * 1000),
-            "Ba": conc_ions.get("Ba", 0) / (self.mw["Ba"] * 1000),
-            "SO4": conc_ions.get("SO4", 0) / (self.mw["SO4"] * 1000)
-        }
-
-        results = {
-            "CaSO4_SI": (molarity["Ca"] * molarity["SO4"]) / self.ksp["CaSO4"],
-            "BaSO4_SI": (molarity["Ba"] * molarity["SO4"]) / self.ksp["BaSO4"],
-            "Silica_SI": conc_ions.get("SiO2", 0) / self.silica_solubility_ppm,
-            "Concentrate_LSI": feed_ions.get("LSI", 0) + 0.5 + math.log10(cf)
-        }
-        return results
-
-    # ==========================================
-    # 2. COOLING TOWER ENGINE (CWT)
-    # ==========================================
-    def calculate_cwt_indices(self, makeup_water, target_coc, temp_c):
-        """
-        Calculates Ryznar and Langelier indices for open evaporative cooling.
-        makeup_water: dict containing pH, Calcium (ppm CaCO3), Alkalinity (ppm CaCO3), TDS
-        """
-        # Calculate basin concentrations
-        basin_ca = makeup_water.get("Ca_Hardness", 100) * target_coc
-        basin_alk = makeup_water.get("M_Alkalinity", 100) * target_coc
-        basin_tds = makeup_water.get("TDS", 500) * target_coc
-        basin_ph = makeup_water.get("pH", 7.5) + math.log10(target_coc) # Approximate pH drift
-
-        # Langelier Saturation pH (pHs) approximation
-        temp_k = temp_c + 273.15
-        a = (math.log10(basin_tds) - 1) / 10
-        b = -13.12 * math.log10(temp_k) + 34.55
-        c = math.log10(basin_ca) - 0.4
-        d = math.log10(basin_alk)
-        
-        phs = (9.3 + a + b) - (c + d)
-        
-        lsi = basin_ph - phs
-        rsi = 2 * phs - basin_ph
-
-        return {
-            "Basin_pH": round(basin_ph, 2),
-            "LSI": round(lsi, 2),
-            "RSI": round(rsi, 2),
-            "Condition": "Scaling" if rsi < 6.0 else ("Stable" if rsi < 7.0 else "Corrosive")
-        }
-
-    # ==========================================
-    # 3. BOILER WATER ENGINE (BWT)
-    # ==========================================
-    def calculate_bwt_limits(self, operating_pressure_bar, feed_silica, feed_hardness):
-        """
-        Applies ASME guidelines to determine maximum boiler cycles to prevent carryover.
-        """
-        # Simplified ASME Silica limit lookup based on pressure
-        if operating_pressure_bar <= 20: max_boiler_silica = 150.0
-        elif operating_pressure_bar <= 40: max_boiler_silica = 90.0
-        elif operating_pressure_bar <= 60: max_boiler_silica = 40.0
-        else: max_boiler_silica = 8.0
-
-        # Maximum Cycles based on Silica
-        max_coc_silica = max_boiler_silica / feed_silica if feed_silica > 0 else 50.0
-        
-        # Hardness penalty (should ideally be 0 from softener, but if leakage occurs)
-        max_coc_hardness = 50.0 if feed_hardness < 1.0 else 5.0
-
-        recommended_coc = min(max_coc_silica, max_coc_hardness, 50.0) # Cap at 50
-
-        return {
-            "Max_Allowable_Silica_ppm": max_boiler_silica,
-            "Recommended_Max_Cycles": round(recommended_coc, 1),
-            "Blowdown_Rate_pct": round((1 / recommended_coc) * 100, 1) if recommended_coc > 0 else 100
-        }
-
-    # ==========================================
-    # 4. MED ENGINE
-    # ==========================================
-    def calculate_med_scaling(self, top_brine_temp_c, concentration_factor):
-        """
-        Thermal desalination scaling potential.
-        """
-        # Calcium Carbonate scale risk highly depends on temp > 65C
-        caco3_risk = "High" if (top_brine_temp_c > 65.0 and concentration_factor > 1.5) else "Low"
-        
-        # Calcium Sulfate scale risk depends on CF > 2.5
-        caso4_risk = "High" if concentration_factor >= 2.5 else "Low"
-
-        return {
-            "CaCO3_Scale_Risk": caco3_risk,
-            "CaSO4_Scale_Risk": caso4_risk,
-            "Max_Recommended_CF": 2.2 if top_brine_temp_c > 70 else 2.5
-        }
-
-    # ==========================================
-    # ROUTER & RECOMMENDATION ENGINE
-    # ==========================================
-    def get_recommendation(self, utility, results):
-        """
-        Cross-references results against the Chembond matrix.
-        """
-        if utility not in self.matrix:
-            return {"Status": "Error", "Message": "Utility not mapped."}
-
-        available_products = self.matrix[utility]
-        
-        if utility == "RO":
-            # [Existing RO logic from previous code]
-            pass 
+        for ion, charge in ions.items():
+            feed_val = feed_data.get(ion, 0.0)
+            p_val = sim_prod(feed_val, charge)
+            c_val = sim_conc(feed_val, p_val)
             
-        elif utility == "CWT":
-            rsi = results.get("RSI", 7.0)
-            for prod, limits in available_products.items():
-                if limits["RSI_Min"] <= rsi <= limits["RSI_Max"]:
-                    return {"Status": "Safe", "Product": prod, "Target_Dose": limits["Target_Dose_PPM"]}
-            return {"Status": "Warning", "Product": "Custom Blend Required", "Message": f"RSI {rsi} is outside standard bounds."}
+            prod_stream[ion] = p_val
+            conc_stream[ion] = c_val
 
-        elif utility == "BWT":
-            # Simplified pressure-based selection
-            for prod, limits in available_products.items():
-                if limits["Max_Pressure_bar"] >= 40: # Example logic
-                    return {"Status": "Safe", "Product": prod, "Target_Dose": limits["Target_Dose_PPM"]}
+        # Aggregate TDS
+        p_tds = sum(prod_stream.values())
+        c_tds = sum(conc_stream.values())
 
-        elif utility == "MED":
-             for prod, limits in available_products.items():
-                  return {"Status": "Safe", "Product": prod, "Target_Dose": limits["Target_Dose_PPM"]}
+        # pH and LSI Math
+        feed_ph = feed_data.get("pH", 7.0)
+        feed_tds = feed_data.get("TDS", 1000.0)
+        
+        si_lsi_raw = feed_ph - (11.5 - np.log10(max(feed_data.get("Ca", 1.0), 1.0)) - np.log10(max(feed_data.get("HCO3", 1.0), 1.0)) + (np.sqrt(feed_tds) / 4000))
+        si_lsi_conc = si_lsi_raw + np.log10(cf_flow) + 1.2
+        si_sdsi_raw = si_lsi_raw + 0.05
+        si_sdsi_conc = si_lsi_conc - 0.3
 
-        return {"Status": "Error", "Message": "No suitable product found."}
+        # 2. Build Saturation Index Matrix
+        si_data = {
+            "Index": ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
+            "Raw Feed": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 750000, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 140, feed_data.get("Fe", 0) * 20, feed_data.get("Al", 0)],
+            "Treated": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 750000, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 140, feed_data.get("Fe", 0) * 20, feed_data.get("Al", 0)],
+            "Concentrate": [si_lsi_conc, si_sdsi_conc, (conc_stream["Ca"] * conc_stream["SO4"]) / 750000, 0.0, 0.0, 0.0, conc_stream["SiO2"] / 140, conc_stream["Fe"] * 20, conc_stream["Al"]],
+        }
+        
+        df_si = pd.DataFrame(si_data)
+        max_limits = np.array([2.6, 2.6, 4.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+        df_si['Max Saturation'] = df_si['Concentrate'] / max_limits
+
+        # 3. Dynamic Product Recommendation Logic (Based on your PDFs)
+        if feed_data.get("SO4", 0) > 150 or feed_data.get("Ca", 0) > 200:
+            product = "Kem Watreat R 4001"
+            dose = 3.6
+        elif feed_data.get("HCO3", 0) > 300 or feed_tds > 1000:
+            product = "Kem Watreat R 246"
+            dose = 2.4
+        else:
+            product = "Kem Watreat R 428"
+            dose = 2.6
+
+        return {
+            "Product_Stream": prod_stream,
+            "Concentrate_Stream": conc_stream,
+            "Product_TDS": p_tds,
+            "Concentrate_TDS": c_tds,
+            "SI_DataFrame": df_si,
+            "Recommendation": {"Product": product, "Target_Dose": dose}
+        }
