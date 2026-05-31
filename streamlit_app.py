@@ -553,175 +553,102 @@ def main():
     elif utility_choice == "Projection Engine":
         import datetime
         import pandas as pd
-        import numpy as np
         import altair as alt
 
         st.title("🧮 Enterprise Chemical Projection Engine")
-        st.markdown("Comprehensive Thermodynamic Simulation and Predictive Dosing Portal.")
-
         target_utility = st.radio("Active Simulation Module", ["RO Plant", "MED", "Cooling Tower", "Boiler"], horizontal=True)
         st.divider()
 
         if target_utility == "RO Plant":
             st.subheader("RO Membrane Treatment Dosing & Projection")
             
-            # 1. Project Details
-            st.markdown("### 📋 Project & Site Details")
+            # Form Inputs
             c1, c2, c3, c4 = st.columns(4)
-            proj_name = c1.text_input("Project Name", "RIL JMD CLUSTER 2 SEZ TTP RO #1")
-            client_name = c2.text_input("Client Name", "Reliance Industries")
-            engineer = c3.text_input("Engineer", "Ghanshyam Daimiwal")
-            feed_type = c4.selectbox("Feed Water Type", ["Surface Water - Lake", "Borewell", "Sea Water", "Municipal"])
+            proj_name = c1.text_input("Project Name", "CPCL Chennai - TTP Plant - RO Skid 1")
+            client_name = c2.text_input("Client Name", "CPCL")
+            engineer = c3.text_input("Engineer", "G. Daimiwal")
+            feed_type = c4.selectbox("Feed Water Type", ["Surface Water - Lake", "Well or Ground Water", "Industrial Waste Water", "Municipal"])
             
-            # 2. System Parameters
-            st.markdown("### ⚙️ System Operating Parameters")
             s1, s2, s3, s4 = st.columns(4)
-            feed_flow = s1.number_input("Feedwater Flow (m³/hr)", value=123.0)
-            sys_rec = s2.number_input("System Recovery (%)", value=75.0)
+            feed_flow = s1.number_input("Feedwater Flow (m³/hr)", value=110.0)
+            sys_rec = s2.number_input("System Recovery (%)", value=80.00)
             mem_rej = s3.number_input("Membrane Rejection (%)", value=99.22)
-            mem_type = s4.selectbox("Membrane Type", ["Thin Film High Rejection", "Brackish Water", "Sea Water"])
             
-            perm_flow = feed_flow * (sys_rec / 100)
-            conc_flow = feed_flow - perm_flow
-            st.info(f"**Calculated Permeate Flow:** {perm_flow:.3f} m³/hr | **Concentrate Flow:** {conc_flow:.3f} m³/hr")
-            
-            # 3. Comprehensive Water Analysis Inputs
             st.markdown("### 💧 Detailed Water Analysis (mg/L at 25°C)")
-            
             ions_col1, ions_col2, ions_col3, ions_col4 = st.columns(4)
+            
+            feed_data = {}
             with ions_col1:
-                feed_ca = st.number_input("Calcium (Ca++)", value=85.0)
-                feed_mg = st.number_input("Magnesium (Mg++)", value=37.0)
-                feed_na = st.number_input("Sodium (Na+)", value=1680.73)
-                feed_k = st.number_input("Potassium (K+)", value=0.0)
-                feed_nh4 = st.number_input("Ammonium (NH4+)", value=0.0)
-                feed_ba = st.number_input("Barium (Ba++)", value=0.0)
+                feed_data["Ca"] = st.number_input("Calcium (Ca++)", value=230.0)
+                feed_data["Mg"] = st.number_input("Magnesium (Mg++)", value=140.0)
+                feed_data["Na"] = st.number_input("Sodium (Na+)", value=400.84)
+                feed_data["K"] = st.number_input("Potassium (K+)", value=50.0)
+                feed_data["NH4"] = st.number_input("Ammonium (NH4+)", value=10.0)
+                feed_data["Ba"] = st.number_input("Barium (Ba++)", value=0.0)
             with ions_col2:
-                feed_sr = st.number_input("Strontium (Sr++)", value=0.0)
-                feed_fe = st.number_input("Iron (Fe 2+/3+)", value=0.12)
-                feed_al = st.number_input("Aluminium (Al+++)", value=0.0)
-                feed_hco3 = st.number_input("Bicarbonate (HCO3-)", value=500.0)
-                feed_cl = st.number_input("Chloride (Cl-)", value=2539.29)
-                feed_so4 = st.number_input("Sulfate (SO4--)", value=18.0)
+                feed_data["Sr"] = st.number_input("Strontium (Sr++)", value=0.0)
+                feed_data["Fe"] = st.number_input("Iron (Fe 2+/3+)", value=0.50)
+                feed_data["Al"] = st.number_input("Aluminium (Al+++)", value=0.0)
+                feed_data["HCO3"] = st.number_input("Bicarbonate (HCO3-)", value=230.0)
+                feed_data["Cl"] = st.number_input("Chloride (Cl-)", value=1221.61)
+                feed_data["SO4"] = st.number_input("Sulfate (SO4--)", value=190.0)
             with ions_col3:
-                feed_f = st.number_input("Fluoride (F-)", value=0.60)
-                feed_no3 = st.number_input("Nitrate (NO3-)", value=0.0)
-                feed_po4 = st.number_input("Phosphate (PO4---)", value=0.56)
-                feed_sio2 = st.number_input("Silica (SiO2)", value=1.20)
-                feed_co3 = st.number_input("Carbonate (CO3--)", value=4.43)
-                feed_co2 = st.number_input("Carbon Dioxide (CO2)", value=8.20)
+                feed_data["F"] = st.number_input("Fluoride (F-)", value=0.0)
+                feed_data["NO3"] = st.number_input("Nitrate (NO3-)", value=2.0)
+                feed_data["PO4"] = st.number_input("Phosphate (PO4---)", value=2.0)
+                feed_data["SiO2"] = st.number_input("Silica (SiO2)", value=20.0)
+                feed_data["CO3"] = st.number_input("Carbonate (CO3--)", value=0.08)
+                feed_co2 = st.number_input("Carbon Dioxide (CO2)", value=90.32)
             with ions_col4:
-                feed_tds = st.number_input("Total Dissolved Solids (TDS)", value=4866.93)
-                feed_is = st.number_input("Ionic Strength", value=0.08)
-                feed_ph = st.number_input("pH", value=7.90)
+                feed_data["TDS"] = st.number_input("Total Dissolved Solids (TDS)", value=2497.03)
+                feed_is = st.number_input("Ionic Strength", value=0.06)
+                feed_data["pH"] = st.number_input("pH", value=6.50)
                 
             if st.button("🚀 Generate Detailed Projection Report", type="primary"):
+                # ALL HEAVY LIFTING DONE BY THE ENGINE
+                from projection_engine import UtilityProjectionEngine
+                engine = UtilityProjectionEngine()
+                results = engine.run_ro_projection(feed_data, sys_rec, mem_rej)
+                
                 st.divider()
                 st.markdown(f"## 📄 RO Membrane Treatment Dosing Report")
                 
-                # Dynamic Water Analysis Scaling Calculations (Mass Balance Strict)
-                rec_frac = sys_rec / 100.0
-                
-                # Split rejection logic: Divalent ions (Charge 2) get 99.6% rejection, Monovalent get user input
-                def sim_prod(val, charge):
-                    rej = 0.996 if charge >= 2 else (mem_rej / 100.0)
-                    return val * (1.0 - rej) if val > 0 else 0.0
-
-                def sim_conc(feed_val, prod_val):
-                    if rec_frac >= 1.0: return feed_val * 10
-                    return (feed_val - (rec_frac * prod_val)) / (1.0 - rec_frac)
-                
-                # Calculate Products
-                p_ca, p_mg, p_ba, p_sr, p_fe, p_al, p_so4, p_co3 = [sim_prod(v, 2) for v in [feed_ca, feed_mg, feed_ba, feed_sr, feed_fe, feed_al, feed_so4, feed_co3]]
-                p_na, p_k, p_nh4, p_hco3, p_cl, p_f, p_no3, p_po4, p_sio2 = [sim_prod(v, 1) for v in [feed_na, feed_k, feed_nh4, feed_hco3, feed_cl, feed_f, feed_no3, feed_po4, feed_sio2]]
-                
-                # Calculate Concentrates using strict mass balance
-                c_ca, c_mg, c_ba, c_sr, c_fe, c_al, c_so4, c_co3 = [sim_conc(f, p) for f, p in zip([feed_ca, feed_mg, feed_ba, feed_sr, feed_fe, feed_al, feed_so4, feed_co3], [p_ca, p_mg, p_ba, p_sr, p_fe, p_al, p_so4, p_co3])]
-                c_na, c_k, c_nh4, c_hco3, c_cl, c_f, c_no3, c_po4, c_sio2 = [sim_conc(f, p) for f, p in zip([feed_na, feed_k, feed_nh4, feed_hco3, feed_cl, feed_f, feed_no3, feed_po4, feed_sio2], [p_na, p_k, p_nh4, p_hco3, p_cl, p_f, p_no3, p_po4, p_sio2])]
-                
-                p_tds = sum([p_ca, p_mg, p_na, p_k, p_nh4, p_ba, p_sr, p_fe, p_al, p_hco3, p_cl, p_so4, p_f, p_no3, p_po4, p_sio2, p_co3])
-                c_tds = sum([c_ca, c_mg, c_na, c_k, c_nh4, c_ba, c_sr, c_fe, c_al, c_hco3, c_cl, c_so4, c_f, c_no3, c_po4, c_sio2, c_co3])
-
-                # pH and SI logic
-                cf_flow = 1 / (1 - rec_frac)
-                si_lsi_raw = feed_ph - (11.0 - np.log10(max(feed_ca, 1.0)) - np.log10(max(feed_hco3, 1.0)) + (np.sqrt(feed_tds) / 4000))
-                si_lsi_conc = si_lsi_raw + np.log10(cf_flow) + 0.3
-                si_sdsi_raw = si_lsi_raw - 0.05
-                si_sdsi_conc = si_lsi_conc - 0.2
-                
-                si_data = {
-                    "Index": ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
-                    "Raw Feed": [si_lsi_raw, si_sdsi_raw, (feed_ca * feed_so4) / 500000, (feed_ba * feed_so4) / 10000, 0.0, (feed_ca * feed_f) / 2000, feed_sio2 / 120, feed_fe * 10, feed_al],
-                    "Treated": [si_lsi_raw, si_sdsi_raw, (feed_ca * feed_so4) / 500000, (feed_ba * feed_so4) / 10000, 0.0, (feed_ca * feed_f) / 2000, feed_sio2 / 120, feed_fe * 10, feed_al],
-                    "Concentrate": [si_lsi_conc, si_sdsi_conc, (c_ca * c_so4) / 500000, (c_ba * c_so4) / 10000, 0.0, (c_ca * c_f) / 2000, c_sio2 / 120, c_fe * 10, c_al],
-                }
-                
-                df_si = pd.DataFrame(si_data)
-                max_limits = np.array([2.5, 2.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
-                df_si['% Max SI'] = (df_si['Concentrate'] / max_limits) * 100
-                
-                max_si_pct = df_si['% Max SI'].max()
-                highest_scaling_ion = df_si.loc[df_si['% Max SI'].idxmax()]['Index']
-                
-                # Dynamic Logic Routing
-                if c_sio2 > 140 or highest_scaling_ion == "SiO2":
-                    recommended_product = "Kem Watreat R 420 (High Silica Inhibitor)"
-                    dose_rate = 4.5
-                elif c_so4 > 1000 or highest_scaling_ion in ["CaSO4", "BaSO4", "SrSO4"]:
-                    recommended_product = "Kem Watreat R 432 (Sulfate Scale Specialist)"
-                    dose_rate = 3.5
-                elif si_lsi_conc > 2.0:
-                    recommended_product = "Kem Watreat R 428 (High LSI/Carbonate Control)"
-                    dose_rate = 2.6
-                else:
-                    recommended_product = "Kem Watreat R 410 (Standard Broad-Spectrum)"
-                    dose_rate = 2.0
-
-                h1, h2 = st.columns(2)
-                with h1:
-                    st.write(f"**Project Name:** {proj_name}")
-                    st.write(f"**Client Name:** {client_name}")
-                with h2:
-                    st.write(f"**Date:** {datetime.date.today().strftime('%d-%m-%Y')}")
-                    st.write(f"**Engineer:** {engineer}")
-                
-                st.success(f"**Recommended Product:** {recommended_product}")
+                st.success(f"**Recommended Product:** {results['Recommendation']['Product']}")
                 
                 r1, r2, r3, r4 = st.columns(4)
+                dose_rate = results['Recommendation']['Target_Dose']
                 kg_day = feed_flow * 24 * dose_rate / 1000
                 r1.metric("Dose Rate - Feed (mg/L)", f"{dose_rate}")
-                r2.metric("Estimated Use / Day (KG)", f"{kg_day:.2f}")
+                r2.metric("Estimated Use / Day (KG)", f"{kg_day:.3f}")
                 r3.metric("Estimated Use / Year (KG)", f"{kg_day * 365:.2f}")
-                r4.metric("Dominant Scaling Risk", f"{highest_scaling_ion}")
+                r4.metric("Acid Dosing", "None")
                 
                 st.markdown("#### 🔬 Projected Water Analysis Matrix")
+                p = results["Product_Stream"]
+                c = results["Concentrate_Stream"]
+                
                 wa_data = {
-                    "Parameter": ["Ca++", "Mg++", "Na+", "K+", "NH4+", "Ba++", "Sr++", "Fe 2+/3+", "Al+++", "HCO3-", "Cl-", "SO4--", "F-", "NO3-", "PO4---", "SiO2", "CO3--", "CO2", "TDS", "Ionic Strength", "pH"],
-                    "Raw Feed": [feed_ca, feed_mg, feed_na, feed_k, feed_nh4, feed_ba, feed_sr, feed_fe, feed_al, feed_hco3, feed_cl, feed_so4, feed_f, feed_no3, feed_po4, feed_sio2, feed_co3, feed_co2, feed_tds, feed_is, feed_ph],
-                    "Treated": [feed_ca, feed_mg, feed_na, feed_k, feed_nh4, feed_ba, feed_sr, feed_fe, feed_al, feed_hco3, feed_cl, feed_so4, feed_f, feed_no3, feed_po4, feed_sio2, feed_co3, feed_co2, feed_tds, feed_is, feed_ph],
-                    "Product": [p_ca, p_mg, p_na, p_k, p_nh4, p_ba, p_sr, p_fe, p_al, p_hco3, p_cl, p_so4, p_f, p_no3, p_po4, p_sio2, p_co3, feed_co2, p_tds, 0.0, max(feed_ph - 1.5, 5.5)],
-                    "Concentrate": [c_ca, c_mg, c_na, c_k, c_nh4, c_ba, c_sr, c_fe, c_al, c_hco3, c_cl, c_so4, c_f, c_no3, c_po4, c_sio2, c_co3, feed_co2, c_tds, feed_is * cf_flow, min(feed_ph + 0.4, 9.5)]
+                    "Parameter": ["Ca++", "Mg++", "Na+", "K+", "NH4+", "Ba++", "Sr++", "Fe 2+/3+", "Al+++", "HCO3-", "Cl-", "SO4--", "F-", "NO3-", "PO4---", "SiO2", "CO3--", "CO2", "TDS", "pH"],
+                    "Raw Feed": [feed_data["Ca"], feed_data["Mg"], feed_data["Na"], feed_data["K"], feed_data["NH4"], feed_data["Ba"], feed_data["Sr"], feed_data["Fe"], feed_data["Al"], feed_data["HCO3"], feed_data["Cl"], feed_data["SO4"], feed_data["F"], feed_data["NO3"], feed_data["PO4"], feed_data["SiO2"], feed_data["CO3"], feed_co2, feed_data["TDS"], feed_data["pH"]],
+                    "Product": [p["Ca"], p["Mg"], p["Na"], p["K"], p["NH4"], p["Ba"], p["Sr"], p["Fe"], p["Al"], p["HCO3"], p["Cl"], p["SO4"], p["F"], p["NO3"], p["PO4"], p["SiO2"], p["CO3"], feed_co2, results["Product_TDS"], max(feed_data["pH"] - 1.5, 5.5)],
+                    "Concentrate": [c["Ca"], c["Mg"], c["Na"], c["K"], c["NH4"], c["Ba"], c["Sr"], c["Fe"], c["Al"], c["HCO3"], c["Cl"], c["SO4"], c["F"], c["NO3"], c["PO4"], c["SiO2"], c["CO3"], feed_co2, results["Concentrate_TDS"], min(feed_data["pH"] + 0.6, 9.5)]
                 }
-                df_wa = pd.DataFrame(wa_data)
-                st.dataframe(df_wa.style.format({col: "{:.2f}" for col in ["Raw Feed", "Treated", "Product", "Concentrate"]}), use_container_width=True, hide_index=True)
+                
+                st.dataframe(pd.DataFrame(wa_data).style.format({col: "{:.2f}" for col in ["Raw Feed", "Product", "Concentrate"]}), use_container_width=True, hide_index=True)
                 
                 st.markdown("#### 📊 Saturation Index (SI) & Scaling Potential")
-                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Concentrate": "{:.3f}", "% Max SI": "{:.2f}%"}), use_container_width=True, hide_index=True)
+                df_si = results["SI_DataFrame"]
+                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Concentrate": "{:.3f}", "Max Saturation": "{:.2f}"}), use_container_width=True, hide_index=True)
                 
                 st.markdown("#### 📉 Saturation Limits vs Thresholds")
-                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Concentrate', '% Max SI'], var_name='Metric', value_name='Value')
+                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Concentrate', 'Max Saturation'], var_name='Metric', value_name='Value')
                 chart = alt.Chart(chart_data).mark_bar().encode(
                     x=alt.X('Index:N', title='Parameter', sort=None),
-                    y=alt.Y('Value:Q', title='Value / Percentage'),
-                    color=alt.Color('Metric:N'),
+                    y=alt.Y('Value:Q', title='Saturation / Max Limit'),
+                    color=alt.Color('Metric:N', scale=alt.Scale(range=['#d62728', '#4c78a8'])),
                     xOffset='Metric:N'
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
-                
-                st.info("**Disclaimer:** Engineered by Chembond Water Technologies Limited. Information contained in this module and the recommendations derived therefrom are based on mass-balance equilibrium constraints. Always verify with specific membrane manufacturer guidelines.")
-
-        elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
-            st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
 
         render_chatbot()
         return
