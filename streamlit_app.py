@@ -553,7 +553,6 @@ def main():
     elif utility_choice == "Projection Engine":
         import datetime
         import pandas as pd
-        import altair as alt
 
         st.title("🧮 Enterprise Chemical Projection Engine")
         target_utility = st.radio("Active Simulation Module", ["RO Plant", "MED", "Cooling Tower", "Boiler"], horizontal=True)
@@ -562,11 +561,10 @@ def main():
         if target_utility == "RO Plant":
             st.subheader("RO Membrane Treatment Dosing & Projection")
             
-            # The Form Wrapper PREVENTS full-screen vanishing bugs
             with st.form("ro_projection_form"):
                 st.markdown("### 📋 Project & Site Details")
                 c1, c2, c3, c4 = st.columns(4)
-                proj_name = c1.text_input("Project Name", "CPCL Chennai - TTP Plant - RO Skid 1")
+                proj_name = c1.text_input("Project Name", "CPCL Chennai - TTP Plant")
                 client_name = c2.text_input("Client Name", "CPCL")
                 engineer = c3.text_input("Engineer", "G. Daimiwal")
                 feed_type = c4.selectbox("Feed Water Type", ["Surface Water - Lake", "Well or Ground Water", "Industrial Waste Water", "Municipal"])
@@ -608,27 +606,39 @@ def main():
                     feed_is = st.number_input("Ionic Strength", value=0.06)
                     feed_data["pH"] = st.number_input("pH", value=6.50)
                     
+                st.markdown("### 🧪 Chemical Dosing Control")
+                dosing_mode = st.radio("Dosing Mode", ["Auto (Software Optimized)", "Manual Override"], horizontal=True)
+                
+                manual_prod = None
+                manual_dose = None
+                if dosing_mode == "Manual Override":
+                    mc1, mc2 = st.columns(2)
+                    manual_prod = mc1.selectbox("Select Antiscalant", ["Kem Watreat R 426", "Kem Watreat R 246", "Kem Watreat R 346", "Kem Watreat R 428 I", "Kem Watreat R 4001"])
+                    manual_dose = mc2.number_input("Dose Rate (mg/L)", value=2.5, step=0.1)
+
                 submitted = st.form_submit_button("🚀 Generate Detailed Projection Report", type="primary")
 
             if submitted:
-                # Save into session state to ensure tables never vanish upon window resizing
                 from projection_engine import UtilityProjectionEngine
                 engine = UtilityProjectionEngine()
-                st.session_state.ro_report_data = engine.run_ro_projection(feed_data, sys_rec, mem_rej)
+                st.session_state.ro_report_data = engine.run_ro_projection(feed_data, sys_rec, mem_rej, manual_prod, manual_dose)
                 st.session_state.ro_report_inputs = {
                     "proj_name": proj_name, "client_name": client_name, "engineer": engineer, 
-                    "feed_flow": feed_flow, "feed_data": feed_data, "feed_co2": feed_co2, "feed_is": feed_is, "cf_flow": 1 / (1 - (sys_rec / 100.0))
+                    "feed_flow": feed_flow, "feed_data": feed_data, "feed_co2": feed_co2, "feed_is": feed_is, "cf_flow": 1 / (1 - (sys_rec / 100.0)),
+                    "dosing_mode": dosing_mode
                 }
 
             if "ro_report_data" in st.session_state:
                 results = st.session_state.ro_report_data
                 inputs = st.session_state.ro_report_inputs
                 best_prod = results['Recommendation']['Product']
+                acid_dose_rate = results['Recommendation']['Acid_Dose']
                 
                 st.divider()
                 st.markdown(f"## 📄 RO Membrane Treatment Dosing Report")
+                if inputs["dosing_mode"] == "Manual Override":
+                    st.warning("⚠️ **Manual Override Active:** Product limits and dose rate manually configured by engineer.")
                 
-                # Header Information
                 h1, h2 = st.columns(2)
                 with h1:
                     st.write(f"**Project Name:** {inputs['proj_name']}")
@@ -645,12 +655,20 @@ def main():
                 r1.metric("Dose Rate - Feed (mg/L)", f"{dose_rate}")
                 r2.metric("Estimated Use / Day (KG)", f"{kg_day:.3f}")
                 r3.metric("Estimated Use / Year (KG)", f"{kg_day * 365:.2f}")
-                r4.metric("Acid Dosing", "None")
+                
+                if acid_dose_rate > 0:
+                    acid_kg_day = inputs["feed_flow"] * 24 * acid_dose_rate / 1000
+                    r4.metric("Acid Dose (98% H2SO4)", f"{acid_dose_rate:.2f} mg/L", f"{acid_kg_day:.2f} kg/day", delta_color="off")
+                else:
+                    r4.metric("Acid Dosing", "None")
                 
                 st.markdown("#### 🔬 Projected Water Analysis Matrix")
                 p = results["Product_Stream"]
                 c = results["Concentrate_Stream"]
+                # Display the updated feed data which includes acid stoichiometry
                 f = inputs["feed_data"]
+                if acid_dose_rate > 0:
+                    st.caption("*(Note: Feed parameters reflect adjusted alkalinity/sulfate post acid-injection)*")
                 
                 wa_data = {
                     "Parameter": ["Ca++", "Mg++", "Na+", "K+", "NH4+", "Ba++", "Sr++", "Fe 2+/3+", "Al+++", "HCO3-", "Cl-", "SO4--", "F-", "NO3-", "PO4---", "SiO2", "CO3--", "CO2", "TDS", "Ionic Strength", "pH"],
@@ -660,21 +678,24 @@ def main():
                     "Concentrate": [c["Ca"], c["Mg"], c["Na"], c["K"], c["NH4"], c["Ba"], c["Sr"], c["Fe"], c["Al"], c["HCO3"], c["Cl"], c["SO4"], c["F"], c["NO3"], c["PO4"], c["SiO2"], c["CO3"], inputs["feed_co2"], results["Concentrate_TDS"], inputs["feed_is"] * inputs["cf_flow"], min(f["pH"] + 0.6, 9.5)]
                 }
                 
-                st.dataframe(pd.DataFrame(wa_data).style.format({col: "{:.2f}" for col in ["Raw Feed", "Treated", "Product", "Concentrate"]}), use_container_width=True, hide_index=True)
+                df_wa = pd.DataFrame(wa_data).round(2)
+                html_wa = df_wa.to_html(index=False, classes="table table-striped", justify="left")
+                st.markdown(html_wa, unsafe_allow_html=True)
                 
-                st.markdown("#### 📊 Saturation Index (SI) & Scaling Potential")
+                st.markdown("<br>#### 📊 Saturation Index (SI) & Scaling Potential", unsafe_allow_html=True)
                 df_si = results["SI_DataFrame"]
-                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Before Treatment": "{:.3f}", "Max Saturation": "{:.2f}"}), use_container_width=True, hide_index=True)
+                
+                df_si_display = df_si.copy()
+                for col in ["Raw Feed", "Treated", "Before Treatment"]:
+                    df_si_display[col] = df_si_display[col].apply(lambda x: f"{x:.3f}")
+                df_si_display["Max Saturation"] = df_si_display["Max Saturation"].apply(lambda x: f"{x:.2f}")
+                
+                html_si = df_si_display.to_html(index=False, classes="table table-striped", justify="left")
+                st.markdown(html_si, unsafe_allow_html=True)
                 
                 st.markdown("#### 📉 Saturation Limits vs Thresholds")
-                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Before Treatment', 'Max Saturation'], var_name='Metric', value_name='Value')
-                chart = alt.Chart(chart_data).mark_bar().encode(
-                    x=alt.X('Index:N', title='Parameter', sort=None),
-                    y=alt.Y('Value:Q', title='Saturation Multipliers'),
-                    color=alt.Color('Metric:N', scale=alt.Scale(domain=['Before Treatment', 'Max Saturation'], range=['#d62728', '#4c78a8'])),
-                    xOffset='Metric:N'
-                ).properties(height=350)
-                st.altair_chart(chart, use_container_width=True)
+                chart_df = df_si.set_index('Index')[['Before Treatment', 'Max Saturation']]
+                st.bar_chart(chart_df, color=["#d62728", "#4c78a8"])
 
         elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
             st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
