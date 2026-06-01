@@ -562,64 +562,86 @@ def main():
         if target_utility == "RO Plant":
             st.subheader("RO Membrane Treatment Dosing & Projection")
             
-            c1, c2, c3, c4 = st.columns(4)
-            proj_name = c1.text_input("Project Name", "CPCL Chennai - TTP Plant - RO Skid 1")
-            client_name = c2.text_input("Client Name", "CPCL")
-            engineer = c3.text_input("Engineer", "G. Daimiwal")
-            feed_type = c4.selectbox("Feed Water Type", ["Surface Water - Lake", "Well or Ground Water", "Industrial Waste Water", "Municipal"])
-            
-            s1, s2, s3, s4 = st.columns(4)
-            feed_flow = s1.number_input("Feedwater Flow (m³/hr)", value=110.0)
-            sys_rec = s2.number_input("System Recovery (%)", value=80.00)
-            mem_rej = s3.number_input("Membrane Rejection (%)", value=99.22)
-            
-            st.markdown("### 💧 Detailed Water Analysis (mg/L at 25°C)")
-            ions_col1, ions_col2, ions_col3, ions_col4 = st.columns(4)
-            
-            feed_data = {}
-            with ions_col1:
-                feed_data["Ca"] = st.number_input("Calcium (Ca++)", value=230.0)
-                feed_data["Mg"] = st.number_input("Magnesium (Mg++)", value=140.0)
-                feed_data["Na"] = st.number_input("Sodium (Na+)", value=400.84)
-                feed_data["K"] = st.number_input("Potassium (K+)", value=50.0)
-                feed_data["NH4"] = st.number_input("Ammonium (NH4+)", value=10.0)
-                feed_data["Ba"] = st.number_input("Barium (Ba++)", value=0.0)
-            with ions_col2:
-                feed_data["Sr"] = st.number_input("Strontium (Sr++)", value=0.0)
-                feed_data["Fe"] = st.number_input("Iron (Fe 2+/3+)", value=0.50)
-                feed_data["Al"] = st.number_input("Aluminium (Al+++)", value=0.0)
-                feed_data["HCO3"] = st.number_input("Bicarbonate (HCO3-)", value=230.0)
-                feed_data["Cl"] = st.number_input("Chloride (Cl-)", value=1221.61)
-                feed_data["SO4"] = st.number_input("Sulfate (SO4--)", value=190.0)
-            with ions_col3:
-                feed_data["F"] = st.number_input("Fluoride (F-)", value=0.0)
-                feed_data["NO3"] = st.number_input("Nitrate (NO3-)", value=2.0)
-                feed_data["PO4"] = st.number_input("Phosphate (PO4---)", value=2.0)
-                feed_data["SiO2"] = st.number_input("Silica (SiO2)", value=20.0)
-                feed_data["CO3"] = st.number_input("Carbonate (CO3--)", value=0.08)
-                feed_co2 = st.number_input("Carbon Dioxide (CO2)", value=90.32)
-            with ions_col4:
-                feed_data["TDS"] = st.number_input("Total Dissolved Solids (TDS)", value=2497.03)
-                feed_is = st.number_input("Ionic Strength", value=0.06)
-                feed_data["pH"] = st.number_input("pH", value=6.50)
+            # The Form Wrapper PREVENTS full-screen vanishing bugs
+            with st.form("ro_projection_form"):
+                st.markdown("### 📋 Project & Site Details")
+                c1, c2, c3, c4 = st.columns(4)
+                proj_name = c1.text_input("Project Name", "CPCL Chennai - TTP Plant - RO Skid 1")
+                client_name = c2.text_input("Client Name", "CPCL")
+                engineer = c3.text_input("Engineer", "G. Daimiwal")
+                feed_type = c4.selectbox("Feed Water Type", ["Surface Water - Lake", "Well or Ground Water", "Industrial Waste Water", "Municipal"])
                 
-            if st.button("🚀 Generate Detailed Projection Report", type="primary"):
-                st.session_state.ro_report_generated = True
+                st.markdown("### ⚙️ System Operating Parameters")
+                s1, s2, s3, s4 = st.columns(4)
+                feed_flow = s1.number_input("Feedwater Flow (m³/hr)", value=110.0)
+                sys_rec = s2.number_input("System Recovery (%)", value=80.00)
+                mem_rej = s3.number_input("Membrane Rejection (%)", value=99.22)
+                mem_type = s4.selectbox("Membrane Type", ["Thin Film High Rejection", "Brackish Water", "Sea Water"])
                 
-            if st.session_state.get("ro_report_generated", False):
+                st.markdown("### 💧 Detailed Water Analysis (mg/L at 25°C)")
+                ions_col1, ions_col2, ions_col3, ions_col4 = st.columns(4)
+                
+                feed_data = {}
+                with ions_col1:
+                    feed_data["Ca"] = st.number_input("Calcium (Ca++)", value=230.0)
+                    feed_data["Mg"] = st.number_input("Magnesium (Mg++)", value=140.0)
+                    feed_data["Na"] = st.number_input("Sodium (Na+)", value=400.84)
+                    feed_data["K"] = st.number_input("Potassium (K+)", value=50.0)
+                    feed_data["NH4"] = st.number_input("Ammonium (NH4+)", value=10.0)
+                    feed_data["Ba"] = st.number_input("Barium (Ba++)", value=0.0)
+                with ions_col2:
+                    feed_data["Sr"] = st.number_input("Strontium (Sr++)", value=0.0)
+                    feed_data["Fe"] = st.number_input("Iron (Fe 2+/3+)", value=0.50)
+                    feed_data["Al"] = st.number_input("Aluminium (Al+++)", value=0.0)
+                    feed_data["HCO3"] = st.number_input("Bicarbonate (HCO3-)", value=230.0)
+                    feed_data["Cl"] = st.number_input("Chloride (Cl-)", value=1221.61)
+                    feed_data["SO4"] = st.number_input("Sulfate (SO4--)", value=190.0)
+                with ions_col3:
+                    feed_data["F"] = st.number_input("Fluoride (F-)", value=0.0)
+                    feed_data["NO3"] = st.number_input("Nitrate (NO3-)", value=2.0)
+                    feed_data["PO4"] = st.number_input("Phosphate (PO4---)", value=2.0)
+                    feed_data["SiO2"] = st.number_input("Silica (SiO2)", value=20.0)
+                    feed_data["CO3"] = st.number_input("Carbonate (CO3--)", value=0.08)
+                    feed_co2 = st.number_input("Carbon Dioxide (CO2)", value=90.32)
+                with ions_col4:
+                    feed_data["TDS"] = st.number_input("Total Dissolved Solids (TDS)", value=2497.03)
+                    feed_is = st.number_input("Ionic Strength", value=0.06)
+                    feed_data["pH"] = st.number_input("pH", value=6.50)
+                    
+                submitted = st.form_submit_button("🚀 Generate Detailed Projection Report", type="primary")
+
+            if submitted:
+                # Save into session state to ensure tables never vanish upon window resizing
                 from projection_engine import UtilityProjectionEngine
                 engine = UtilityProjectionEngine()
-                results = engine.run_ro_projection(feed_data, sys_rec, mem_rej)
+                st.session_state.ro_report_data = engine.run_ro_projection(feed_data, sys_rec, mem_rej)
+                st.session_state.ro_report_inputs = {
+                    "proj_name": proj_name, "client_name": client_name, "engineer": engineer, 
+                    "feed_flow": feed_flow, "feed_data": feed_data, "feed_co2": feed_co2, "feed_is": feed_is, "cf_flow": 1 / (1 - (sys_rec / 100.0))
+                }
+
+            if "ro_report_data" in st.session_state:
+                results = st.session_state.ro_report_data
+                inputs = st.session_state.ro_report_inputs
                 best_prod = results['Recommendation']['Product']
                 
                 st.divider()
                 st.markdown(f"## 📄 RO Membrane Treatment Dosing Report")
                 
+                # Header Information
+                h1, h2 = st.columns(2)
+                with h1:
+                    st.write(f"**Project Name:** {inputs['proj_name']}")
+                    st.write(f"**Client Name:** {inputs['client_name']}")
+                with h2:
+                    st.write(f"**Date:** {datetime.date.today().strftime('%d-%m-%Y')}")
+                    st.write(f"**Engineer:** {inputs['engineer']}")
+
                 st.success(f"**Recommended Product:** {best_prod}")
                 
                 r1, r2, r3, r4 = st.columns(4)
                 dose_rate = results['Recommendation']['Target_Dose']
-                kg_day = feed_flow * 24 * dose_rate / 1000
+                kg_day = inputs["feed_flow"] * 24 * dose_rate / 1000
                 r1.metric("Dose Rate - Feed (mg/L)", f"{dose_rate}")
                 r2.metric("Estimated Use / Day (KG)", f"{kg_day:.3f}")
                 r3.metric("Estimated Use / Year (KG)", f"{kg_day * 365:.2f}")
@@ -628,26 +650,28 @@ def main():
                 st.markdown("#### 🔬 Projected Water Analysis Matrix")
                 p = results["Product_Stream"]
                 c = results["Concentrate_Stream"]
+                f = inputs["feed_data"]
                 
                 wa_data = {
-                    "Parameter": ["Ca++", "Mg++", "Na+", "K+", "NH4+", "Ba++", "Sr++", "Fe 2+/3+", "Al+++", "HCO3-", "Cl-", "SO4--", "F-", "NO3-", "PO4---", "SiO2", "CO3--", "CO2", "TDS", "pH"],
-                    "Raw Feed": [feed_data["Ca"], feed_data["Mg"], feed_data["Na"], feed_data["K"], feed_data["NH4"], feed_data["Ba"], feed_data["Sr"], feed_data["Fe"], feed_data["Al"], feed_data["HCO3"], feed_data["Cl"], feed_data["SO4"], feed_data["F"], feed_data["NO3"], feed_data["PO4"], feed_data["SiO2"], feed_data["CO3"], feed_co2, feed_data["TDS"], feed_data["pH"]],
-                    "Product": [p["Ca"], p["Mg"], p["Na"], p["K"], p["NH4"], p["Ba"], p["Sr"], p["Fe"], p["Al"], p["HCO3"], p["Cl"], p["SO4"], p["F"], p["NO3"], p["PO4"], p["SiO2"], p["CO3"], feed_co2, results["Product_TDS"], max(feed_data["pH"] - 1.5, 5.5)],
-                    "Concentrate": [c["Ca"], c["Mg"], c["Na"], c["K"], c["NH4"], c["Ba"], c["Sr"], c["Fe"], c["Al"], c["HCO3"], c["Cl"], c["SO4"], c["F"], c["NO3"], c["PO4"], c["SiO2"], c["CO3"], feed_co2, results["Concentrate_TDS"], min(feed_data["pH"] + 0.6, 9.5)]
+                    "Parameter": ["Ca++", "Mg++", "Na+", "K+", "NH4+", "Ba++", "Sr++", "Fe 2+/3+", "Al+++", "HCO3-", "Cl-", "SO4--", "F-", "NO3-", "PO4---", "SiO2", "CO3--", "CO2", "TDS", "Ionic Strength", "pH"],
+                    "Raw Feed": [f["Ca"], f["Mg"], f["Na"], f["K"], f["NH4"], f["Ba"], f["Sr"], f["Fe"], f["Al"], f["HCO3"], f["Cl"], f["SO4"], f["F"], f["NO3"], f["PO4"], f["SiO2"], f["CO3"], inputs["feed_co2"], f["TDS"], inputs["feed_is"], f["pH"]],
+                    "Treated": [f["Ca"], f["Mg"], f["Na"], f["K"], f["NH4"], f["Ba"], f["Sr"], f["Fe"], f["Al"], f["HCO3"], f["Cl"], f["SO4"], f["F"], f["NO3"], f["PO4"], f["SiO2"], f["CO3"], inputs["feed_co2"], f["TDS"], inputs["feed_is"], f["pH"]],
+                    "Product": [p["Ca"], p["Mg"], p["Na"], p["K"], p["NH4"], p["Ba"], p["Sr"], p["Fe"], p["Al"], p["HCO3"], p["Cl"], p["SO4"], p["F"], p["NO3"], p["PO4"], p["SiO2"], p["CO3"], inputs["feed_co2"], results["Product_TDS"], 0.00, max(f["pH"] - 1.5, 5.5)],
+                    "Concentrate": [c["Ca"], c["Mg"], c["Na"], c["K"], c["NH4"], c["Ba"], c["Sr"], c["Fe"], c["Al"], c["HCO3"], c["Cl"], c["SO4"], c["F"], c["NO3"], c["PO4"], c["SiO2"], c["CO3"], inputs["feed_co2"], results["Concentrate_TDS"], inputs["feed_is"] * inputs["cf_flow"], min(f["pH"] + 0.6, 9.5)]
                 }
                 
-                st.dataframe(pd.DataFrame(wa_data).style.format({col: "{:.2f}" for col in ["Raw Feed", "Product", "Concentrate"]}), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(wa_data).style.format({col: "{:.2f}" for col in ["Raw Feed", "Treated", "Product", "Concentrate"]}), use_container_width=True, hide_index=True)
                 
                 st.markdown("#### 📊 Saturation Index (SI) & Scaling Potential")
                 df_si = results["SI_DataFrame"]
-                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Before Treatment": "{:.3f}", f"With {best_prod}": "{:.2f}"}), use_container_width=True, hide_index=True)
+                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Before Treatment": "{:.3f}", "Max Saturation": "{:.2f}"}), use_container_width=True, hide_index=True)
                 
                 st.markdown("#### 📉 Saturation Limits vs Thresholds")
-                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Before Treatment', f'With {best_prod}'], var_name='Metric', value_name='Value')
+                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Before Treatment', 'Max Saturation'], var_name='Metric', value_name='Value')
                 chart = alt.Chart(chart_data).mark_bar().encode(
                     x=alt.X('Index:N', title='Parameter', sort=None),
-                    y=alt.Y('Value:Q', title='Saturation Multiplier'),
-                    color=alt.Color('Metric:N', scale=alt.Scale(domain=['Before Treatment', f'With {best_prod}'], range=['#d62728', '#4c78a8'])),
+                    y=alt.Y('Value:Q', title='Saturation Multipliers'),
+                    color=alt.Color('Metric:N', scale=alt.Scale(domain=['Before Treatment', 'Max Saturation'], range=['#d62728', '#4c78a8'])),
                     xOffset='Metric:N'
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
