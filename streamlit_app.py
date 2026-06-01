@@ -6,7 +6,7 @@ import math
 import numpy as np
 import io
 import os
-import json
+import jsoni
 import time
 import altair as alt
 import joblib
@@ -552,9 +552,7 @@ def main():
         return
 
     elif utility_choice == "Projection Engine":
-        import datetime
-        import pandas as pd
-        import altair as alt
+        
 
         st.title("🧮 Enterprise Chemical Projection Engine")
         target_utility = st.radio("Active Simulation Module", ["RO Plant", "MED", "Cooling Tower", "Boiler"], horizontal=True)
