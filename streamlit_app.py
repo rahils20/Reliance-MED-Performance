@@ -632,7 +632,9 @@ def main():
                 results = st.session_state.ro_report_data
                 inputs = st.session_state.ro_report_inputs
                 best_prod = results['Recommendation']['Product']
-                acid_dose_rate = results['Recommendation']['Acid_Dose']
+                
+                # THE FIX: Uses .get() to prevent crashes if the engine file wasn't fully updated or cached
+                acid_dose_rate = results['Recommendation'].get('Acid_Dose', 0.0)
                 
                 st.divider()
                 st.markdown(f"## 📄 RO Membrane Treatment Dosing Report")
@@ -665,7 +667,6 @@ def main():
                 st.markdown("#### 🔬 Projected Water Analysis Matrix")
                 p = results["Product_Stream"]
                 c = results["Concentrate_Stream"]
-                # Display the updated feed data which includes acid stoichiometry
                 f = inputs["feed_data"]
                 if acid_dose_rate > 0:
                     st.caption("*(Note: Feed parameters reflect adjusted alkalinity/sulfate post acid-injection)*")
