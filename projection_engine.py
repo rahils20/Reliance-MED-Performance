@@ -8,25 +8,21 @@ class UtilityProjectionEngine:
         # THERMODYNAMIC PRODUCT LIMIT MATRIX (Strictly from Rohit's Guide)
         # ---------------------------------------------------------
         self.ro_matrix = {
+            "Kem Watreat R 426": {
+                "Limits": {"LSI": 2.6, "SDSI": 2.5, "CaSO4": 4.0, "BaSO4": 160.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 1.0, "Iron": 0.5, "Aluminium": 0.5},
+                "Mapping_Factor": 1.0, "LSI_Range": (0.0, 0.9), "Base_Dose": 2.4
+            },
             "Kem Watreat R 346": {
-                # Maps to ameROyal 468 (Mapping Factor 1.4)
-                "Limits": {"LSI": 2.6, "SDSI": 2.5, "CaSO4": 2.5, "BaSO4": 1.0, "SrSO4": 1.0, "CaF2": 1.0, "SiO2": 1.0, "Fe": 0.5, "Al": 0.5},
+                "Limits": {"LSI": 2.6, "SDSI": 2.5, "CaSO4": 2.5, "BaSO4": 1.0, "SrSO4": 1.0, "CaF2": 1.0, "SiO2": 1.0, "Iron": 0.5, "Aluminium": 0.5},
                 "Mapping_Factor": 1.4, "LSI_Range": (-99.0, 99.0), "Base_Dose": 2.0
             },
             "Kem Watreat R 428 I": {
-                # Maps to ameROyal 363 (LSI -1.5 to -0.5)
-                "Limits": {"LSI": 2.5, "SDSI": 2.5, "CaSO4": 4.0, "BaSO4": 160.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 1.0, "Fe": 0.5, "Al": 0.5},
+                "Limits": {"LSI": 2.5, "SDSI": 2.5, "CaSO4": 4.0, "BaSO4": 160.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 1.0, "Iron": 0.5, "Aluminium": 0.5},
                 "Mapping_Factor": 1.0, "LSI_Range": (-1.5, -0.5), "Base_Dose": 2.6
             },
             "Kem Watreat R 4001": {
-                # Maps to ameROyal 642 (LSI 1.0 to 1.6)
-                "Limits": {"LSI": 2.6, "SDSI": 2.6, "CaSO4": 4.0, "BaSO4": 120.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 2.0, "Fe": 4.0, "Al": 4.0},
+                "Limits": {"LSI": 2.6, "SDSI": 2.6, "CaSO4": 4.0, "BaSO4": 120.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 2.0, "Iron": 4.0, "Aluminium": 4.0},
                 "Mapping_Factor": 1.0, "LSI_Range": (1.0, 1.6), "Base_Dose": 3.6
-            },
-            "Kem Watreat R 426": {
-                # Maps to ameROyal 248 (LSI 0.0 to 0.9)
-                "Limits": {"LSI": 2.6, "SDSI": 2.5, "CaSO4": 4.0, "BaSO4": 160.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 1.0, "Fe": 0.5, "Al": 0.5},
-                "Mapping_Factor": 1.0, "LSI_Range": (0.0, 0.9), "Base_Dose": 2.4
             }
         }
 
@@ -36,7 +32,7 @@ class UtilityProjectionEngine:
         cf_flow = 1 / (1 - rec_frac) if rec_frac < 1.0 else 10.0
 
         def sim_prod(val, charge):
-            actual_rej = rej_frac if charge == 1 else 1 - ((1 - rej_frac) * 0.15)
+            actual_rej = rej_frac if charge == 1 else 0.998 # Divalent ions face higher rejection
             return val * (1.0 - actual_rej) if val > 0 else 0.0
 
         def sim_conc(feed_val, prod_val):
@@ -62,6 +58,7 @@ class UtilityProjectionEngine:
         feed_ph = feed_data.get("pH", 7.0)
         feed_tds = feed_data.get("TDS", 1000.0)
         
+        # LSI calculation mapped to KEM MemPRO parameters
         si_lsi_raw = feed_ph - (11.5 - np.log10(max(feed_data.get("Ca", 1.0), 1.0)) - np.log10(max(feed_data.get("HCO3", 1.0), 1.0)) + (np.sqrt(feed_tds) / 4000))
         si_lsi_conc = si_lsi_raw + np.log10(cf_flow) + 1.2
         si_sdsi_raw = si_lsi_raw + 0.05
@@ -70,18 +67,17 @@ class UtilityProjectionEngine:
         actual_saturation = {
             "LSI": si_lsi_conc,
             "SDSI": si_sdsi_conc,
-            "CaSO4": (c_stream["Ca"] * c_stream["SO4"]) / 750000,
-            "BaSO4": (c_stream["Ba"] * c_stream["SO4"]) / 10000,
-            "SrSO4": (c_stream["Sr"] * c_stream["SO4"]) / 100000,
-            "CaF2": (c_stream["Ca"] * c_stream["F"]) / 2000,
-            "SiO2": c_stream["SiO2"] / 140,
-            "Fe": c_stream["Fe"],
-            "Al": c_stream["Al"]
+            "CaSO4": (c_stream["Ca"] * c_stream["SO4"]) / 2436000.0, # Calibrated to KEM MemPRO limit
+            "BaSO4": (c_stream["Ba"] * c_stream["SO4"]) / 10000.0,
+            "SrSO4": (c_stream["Sr"] * c_stream["SO4"]) / 100000.0,
+            "CaF2": (c_stream["Ca"] * c_stream["F"] * c_stream["F"]) / 2000.0,
+            "SiO2": c_stream["SiO2"] / 135.0,
+            "Iron": c_stream["Fe"],
+            "Aluminium": c_stream["Al"]
         }
 
-        # Base Fallback (R 346 is the baseline broad-spectrum with no specific LSI bounds)
-        best_product = "Kem Watreat R 346" 
-        best_dose = 2.0 * 1.4 # Factoring in Map Factor natively
+        best_product = "Kem Watreat R 346" # Base generic fallback
+        best_dose = 2.0 * 1.4
         active_limits = [2.6, 2.5, 2.5, 1.0, 1.0, 1.0, 1.0, 0.5, 0.5]
         lowest_penalty = float('inf')
 
@@ -89,13 +85,12 @@ class UtilityProjectionEngine:
             limits = specs["Limits"]
             
             disqualified = False
-            for param in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Fe", "Al"]:
+            for param in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"]:
                 if actual_saturation[param] > limits[param]:
                     disqualified = True
                     break
             
-            if disqualified:
-                continue
+            if disqualified: continue
 
             lsi_min, lsi_max = specs["LSI_Range"]
             if lsi_min <= si_lsi_conc <= lsi_max:
@@ -109,18 +104,18 @@ class UtilityProjectionEngine:
                 lowest_penalty = penalty
                 best_product = prod_name
                 best_dose = specs["Base_Dose"] * specs["Mapping_Factor"]
-                active_limits = [limits["LSI"], limits["SDSI"], limits["CaSO4"], limits["BaSO4"], limits["SrSO4"], limits["CaF2"], limits["SiO2"], limits["Fe"], limits["Al"]]
+                active_limits = [limits["LSI"], limits["SDSI"], limits["CaSO4"], limits["BaSO4"], limits["SrSO4"], limits["CaF2"], limits["SiO2"], limits["Iron"], limits["Aluminium"]]
 
         si_data = {
             "Index": ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
-            "Raw Feed": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 750000, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 140, feed_data.get("Fe", 0), feed_data.get("Al", 0)],
-            "Treated": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 750000, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 140, feed_data.get("Fe", 0), feed_data.get("Al", 0)],
-            "Before Treatment": [actual_saturation["LSI"], actual_saturation["SDSI"], actual_saturation["CaSO4"], actual_saturation["BaSO4"], actual_saturation["SrSO4"], actual_saturation["CaF2"], actual_saturation["SiO2"], actual_saturation["Fe"], actual_saturation["Al"]],
+            "Raw Feed": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 2436000.0, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 135.0, feed_data.get("Fe", 0), feed_data.get("Al", 0)],
+            "Treated": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 2436000.0, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 135.0, feed_data.get("Fe", 0), feed_data.get("Al", 0)],
+            "Before Treatment": [actual_saturation["LSI"], actual_saturation["SDSI"], actual_saturation["CaSO4"], actual_saturation["BaSO4"], actual_saturation["SrSO4"], actual_saturation["CaF2"], actual_saturation["SiO2"], actual_saturation["Iron"], actual_saturation["Aluminium"]],
         }
         
         df_si = pd.DataFrame(si_data)
-        df_si[f'With {best_product}'] = df_si['Before Treatment'] / np.array(active_limits)
-        df_si[f'With {best_product}'] = df_si[f'With {best_product}'].apply(lambda x: max(0, x))
+        df_si['Max Saturation'] = df_si['Before Treatment'] / np.array(active_limits)
+        df_si['Max Saturation'] = df_si['Max Saturation'].apply(lambda x: max(0, x)) # Prevents negative scaling bars
 
         return {
             "Product_Stream": p_stream,
