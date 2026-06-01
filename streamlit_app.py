@@ -553,6 +553,7 @@ def main():
     elif utility_choice == "Projection Engine":
         import datetime
         import pandas as pd
+        import altair as alt
 
         st.title("🧮 Enterprise Chemical Projection Engine")
         target_utility = st.radio("Active Simulation Module", ["RO Plant", "MED", "Cooling Tower", "Boiler"], horizontal=True)
@@ -632,8 +633,6 @@ def main():
                 results = st.session_state.ro_report_data
                 inputs = st.session_state.ro_report_inputs
                 best_prod = results['Recommendation']['Product']
-                
-                # THE FIX: Uses .get() to prevent crashes if the engine file wasn't fully updated or cached
                 acid_dose_rate = results['Recommendation'].get('Acid_Dose', 0.0)
                 
                 st.divider()
@@ -679,24 +678,27 @@ def main():
                     "Concentrate": [c["Ca"], c["Mg"], c["Na"], c["K"], c["NH4"], c["Ba"], c["Sr"], c["Fe"], c["Al"], c["HCO3"], c["Cl"], c["SO4"], c["F"], c["NO3"], c["PO4"], c["SiO2"], c["CO3"], inputs["feed_co2"], results["Concentrate_TDS"], inputs["feed_is"] * inputs["cf_flow"], min(f["pH"] + 0.6, 9.5)]
                 }
                 
-                df_wa = pd.DataFrame(wa_data).round(2)
-                html_wa = df_wa.to_html(index=False, classes="table table-striped", justify="left")
-                st.markdown(html_wa, unsafe_allow_html=True)
+                # Restored the clean Pandas styling
+                df_wa = pd.DataFrame(wa_data)
+                st.dataframe(df_wa.style.format({col: "{:.2f}" for col in ["Raw Feed", "Treated", "Product", "Concentrate"]}), use_container_width=True, hide_index=True)
                 
-                st.markdown("<br>#### 📊 Saturation Index (SI) & Scaling Potential", unsafe_allow_html=True)
+                st.markdown("#### 📊 Saturation Index (SI) & Scaling Potential")
                 df_si = results["SI_DataFrame"]
                 
-                df_si_display = df_si.copy()
-                for col in ["Raw Feed", "Treated", "Before Treatment"]:
-                    df_si_display[col] = df_si_display[col].apply(lambda x: f"{x:.3f}")
-                df_si_display["Max Saturation"] = df_si_display["Max Saturation"].apply(lambda x: f"{x:.2f}")
-                
-                html_si = df_si_display.to_html(index=False, classes="table table-striped", justify="left")
-                st.markdown(html_si, unsafe_allow_html=True)
+                # Restored the clean Pandas styling
+                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Before Treatment": "{:.3f}", "Max Saturation": "{:.2f}"}), use_container_width=True, hide_index=True)
                 
                 st.markdown("#### 📉 Saturation Limits vs Thresholds")
-                chart_df = df_si.set_index('Index')[['Before Treatment', 'Max Saturation']]
-                st.bar_chart(chart_df, color=["#d62728", "#4c78a8"])
+                
+                # Restored the exact Altair bar chart you had before
+                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Before Treatment', 'Max Saturation'], var_name='Metric', value_name='Value')
+                chart = alt.Chart(chart_data).mark_bar().encode(
+                    x=alt.X('Index:N', title='Parameter', sort=None),
+                    y=alt.Y('Value:Q', title='Saturation Multipliers'),
+                    color=alt.Color('Metric:N', scale=alt.Scale(domain=['Before Treatment', 'Max Saturation'], range=['#d62728', '#4c78a8'])),
+                    xOffset='Metric:N'
+                ).properties(height=350)
+                st.altair_chart(chart, use_container_width=True)
 
         elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
             st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
