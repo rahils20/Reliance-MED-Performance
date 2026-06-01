@@ -562,7 +562,6 @@ def main():
         if target_utility == "RO Plant":
             st.subheader("RO Membrane Treatment Dosing & Projection")
             
-            # Form Inputs
             c1, c2, c3, c4 = st.columns(4)
             proj_name = c1.text_input("Project Name", "CPCL Chennai - TTP Plant - RO Skid 1")
             client_name = c2.text_input("Client Name", "CPCL")
@@ -605,15 +604,18 @@ def main():
                 feed_data["pH"] = st.number_input("pH", value=6.50)
                 
             if st.button("🚀 Generate Detailed Projection Report", type="primary"):
-                # ALL HEAVY LIFTING DONE BY THE ENGINE
+                st.session_state.ro_report_generated = True
+                
+            if st.session_state.get("ro_report_generated", False):
                 from projection_engine import UtilityProjectionEngine
                 engine = UtilityProjectionEngine()
                 results = engine.run_ro_projection(feed_data, sys_rec, mem_rej)
+                best_prod = results['Recommendation']['Product']
                 
                 st.divider()
                 st.markdown(f"## 📄 RO Membrane Treatment Dosing Report")
                 
-                st.success(f"**Recommended Product:** {results['Recommendation']['Product']}")
+                st.success(f"**Recommended Product:** {best_prod}")
                 
                 r1, r2, r3, r4 = st.columns(4)
                 dose_rate = results['Recommendation']['Target_Dose']
@@ -638,18 +640,27 @@ def main():
                 
                 st.markdown("#### 📊 Saturation Index (SI) & Scaling Potential")
                 df_si = results["SI_DataFrame"]
-                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Concentrate": "{:.3f}", "Max Saturation": "{:.2f}"}), use_container_width=True, hide_index=True)
+                st.dataframe(df_si.style.format({"Raw Feed": "{:.3f}", "Treated": "{:.3f}", "Before Treatment": "{:.3f}", f"With {best_prod}": "{:.2f}"}), use_container_width=True, hide_index=True)
                 
                 st.markdown("#### 📉 Saturation Limits vs Thresholds")
-                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Concentrate', 'Max Saturation'], var_name='Metric', value_name='Value')
+                chart_data = pd.melt(df_si, id_vars=['Index'], value_vars=['Before Treatment', f'With {best_prod}'], var_name='Metric', value_name='Value')
                 chart = alt.Chart(chart_data).mark_bar().encode(
                     x=alt.X('Index:N', title='Parameter', sort=None),
-                    y=alt.Y('Value:Q', title='Saturation / Max Limit'),
-                    color=alt.Color('Metric:N', scale=alt.Scale(range=['#d62728', '#4c78a8'])),
+                    y=alt.Y('Value:Q', title='Saturation Multiplier'),
+                    color=alt.Color('Metric:N', scale=alt.Scale(domain=['Before Treatment', f'With {best_prod}'], range=['#d62728', '#4c78a8'])),
                     xOffset='Metric:N'
                 ).properties(height=350)
                 st.altair_chart(chart, use_container_width=True)
 
+        elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
+            st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
+
+        render_chatbot()
+        return
+
+    elif utility_choice == "Cooling Towers" or utility_choice == "Boilers":
+        st.title(f"🏭 {utility_choice} Diagnostic Interface")
+        st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
         render_chatbot()
         return
 
