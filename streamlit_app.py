@@ -6,7 +6,7 @@ import math
 import numpy as np
 import io
 import os
-import jsoni
+import json
 import time
 import altair as alt
 import joblib
