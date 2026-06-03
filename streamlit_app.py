@@ -713,7 +713,7 @@ def main():
         return
 
     elif utility_choice == "Product Calculator":
-    show_matrix_calculator()
+        show_matrix_calculator()
 
     # ------------------------------------------
     # RO PLANT ENGINE (HERO)
