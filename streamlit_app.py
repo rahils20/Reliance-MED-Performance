@@ -16,6 +16,7 @@ from io import BytesIO
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from calculator_tab import show_matrix_calculator
 
 try:
     import gspread
@@ -496,7 +497,7 @@ def main():
     # ------------------------------------------
     utility_choice = st.sidebar.selectbox(
         "Select Utility System",
-        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
+        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine", "Product Calculator"]
     )
 
     if utility_choice == "-- Central Hub --":
@@ -710,6 +711,9 @@ def main():
         st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
         render_chatbot()
         return
+
+    elif utility_choice == "Product Calculator":
+    show_matrix_calculator()
 
     # ------------------------------------------
     # RO PLANT ENGINE (HERO)
