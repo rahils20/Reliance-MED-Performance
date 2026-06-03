@@ -21,18 +21,23 @@ def show_matrix_calculator():
         'Polymaleic_Acid': {'LSI': 0.06, 'Silica': 0.02, 'Iron': 0.00},
         'HEDP': {'LSI': 0.05, 'Silica': 0.01, 'Iron': 0.01},
         'ATMP': {'LSI': 0.04, 'Silica': 0.01, 'Iron': 0.00},
+        'SMBS': {'LSI': 0.00, 'Silica': 0.00, 'Iron': 0.00},           # Reducing Agent
+        'Copolymer': {'LSI': 0.02, 'Silica': 0.05, 'Iron': 0.01},      # Strong Dispersant
         'Terpolymer': {'LSI': 0.02, 'Silica': 0.06, 'Iron': 0.01},
         'Homopolymer': {'LSI': 0.01, 'Silica': 0.04, 'Iron': 0.00},
+        'PMA': {'LSI': 0.06, 'Silica': 0.02, 'Iron': 0.00},            # Polymaleic Acid
         'DETMPA': {'LSI': 0.02, 'Silica': 0.00, 'Iron': 0.05},
-        'Caustic_Lye': {'LSI': 0.00, 'Silica': 0.00, 'Iron': 0.00},    # pH Adjuster only
-        'Caustic_Potash': {'LSI': 0.00, 'Silica': 0.00, 'Iron': 0.00}  # pH Adjuster only
+        'Caustic_Lye': {'LSI': 0.00, 'Silica': 0.00, 'Iron': 0.00},    # pH Adjuster
+        'NAOH_Flakes': {'LSI': 0.00, 'Silica': 0.00, 'Iron': 0.00},    # pH Adjuster
+        'Caustic_Potash': {'LSI': 0.00, 'Silica': 0.00, 'Iron': 0.00}  # pH Adjuster
     }
 
     st.subheader("1. Download Template")
     template_cols = ['Product_Name'] + list(CONSTANTS.keys())
     template_df = pd.DataFrame(columns=template_cols)
-    # Dummy row demonstrating % ACTIVE values
-    template_df.loc[0] = ['Example_Product_A', 5.0, 0.0, 3.5, 2.5, 10.0, 0.0, 2.5, 5.0, 0.0]
+    
+    # Dummy row demonstrating % ACTIVE values matching the new length (14 columns total)
+    template_df.loc[0] = ['Example_Product_A', 5.0, 0.0, 3.5, 2.5, 0.0, 5.0, 10.0, 0.0, 0.0, 2.5, 5.0, 0.0, 0.0]
     
     csv_buffer = io.StringIO()
     template_df.to_csv(csv_buffer, index=False)
@@ -60,7 +65,10 @@ def show_matrix_calculator():
                 
                 for rm in CONSTANTS.keys():
                     if rm in df_formulations.columns:
-                        percentage = float(row[rm])
+                        # Convert to float and handle any empty/NaN cells gracefully
+                        val = row[rm]
+                        percentage = float(val) if pd.notna(val) else 0.0
+                        
                         calc_lsi += percentage * CONSTANTS[rm]['LSI']
                         calc_silica += percentage * CONSTANTS[rm]['Silica']
                         calc_iron += percentage * CONSTANTS[rm]['Iron']
