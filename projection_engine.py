@@ -1,149 +1,166 @@
+import streamlit as st
 import math
-import numpy as np
 import pandas as pd
 
 class UtilityProjectionEngine:
     def __init__(self):
-        # ---------------------------------------------------------
-        # THERMODYNAMIC PRODUCT LIMIT MATRIX
-        # ---------------------------------------------------------
-        self.ro_matrix = {
-            "Kem Watreat R 426": {"Limits": {"LSI": 2.6, "SDSI": 2.5, "CaSO4": 4.0, "BaSO4": 160.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 1.0, "Iron": 0.5, "Aluminium": 0.5}, "Base_Dose": 2.4},
-            "Kem Watreat R 246": {"Limits": {"LSI": 2.6, "SDSI": 2.5, "CaSO4": 4.0, "BaSO4": 160.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 1.0, "Iron": 0.5, "Aluminium": 0.5}, "Base_Dose": 2.4},
-            "Kem Watreat R 346": {"Limits": {"LSI": 2.6, "SDSI": 2.5, "CaSO4": 2.5, "BaSO4": 1.0, "SrSO4": 1.0, "CaF2": 1.0, "SiO2": 1.0, "Iron": 0.5, "Aluminium": 0.5}, "Base_Dose": 2.8},
-            "Kem Watreat R 428 I": {"Limits": {"LSI": 2.5, "SDSI": 2.5, "CaSO4": 4.0, "BaSO4": 160.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 1.0, "Iron": 0.5, "Aluminium": 0.5}, "Base_Dose": 2.6},
-            "Kem Watreat R 4001": {"Limits": {"LSI": 2.6, "SDSI": 2.6, "CaSO4": 4.0, "BaSO4": 120.0, "SrSO4": 12.0, "CaF2": 120.0, "SiO2": 2.0, "Iron": 4.0, "Aluminium": 4.0}, "Base_Dose": 3.6}
-        }
+        pass
 
-    def run_ro_projection(self, feed_data, sys_rec, mem_rej, manual_prod=None, manual_dose=None):
-        rec_frac = sys_rec / 100.0
-        rej_frac = mem_rej / 100.0
-        cf_flow = 1 / (1 - rec_frac) if rec_frac < 1.0 else 10.0
-
-        def sim_prod(val, charge):
-            actual_rej = rej_frac if charge == 1 else 0.998 
-            return val * (1.0 - actual_rej) if val > 0 else 0.0
-
-        def sim_conc(feed_val, prod_val):
-            if rec_frac >= 1.0: return 0.0
-            return (feed_val - (rec_frac * prod_val)) / (1.0 - rec_frac)
-
-        ions = {
-            "Ca": 2, "Mg": 2, "Ba": 2, "Sr": 2, "Fe": 2, "Al": 2, "SO4": 2, "CO3": 2,
-            "Na": 1, "K": 1, "NH4": 1, "HCO3": 1, "Cl": 1, "F": 1, "NO3": 1, "PO4": 1, "SiO2": 1
-        }
-
-        # 1. Initial Mass Balance
-        p_stream, c_stream = {}, {}
-        for ion, charge in ions.items():
-            f_val = feed_data.get(ion, 0.0)
-            p_val = sim_prod(f_val, charge)
-            c_val = sim_conc(f_val, p_val)
-            p_stream[ion] = p_val
-            c_stream[ion] = c_val
-
-        feed_ph = feed_data.get("pH", 7.0)
-        feed_tds = feed_data.get("TDS", 1000.0)
-        
-        si_lsi_raw = feed_ph - (11.5 - np.log10(max(feed_data.get("Ca", 1.0), 1.0)) - np.log10(max(feed_data.get("HCO3", 1.0), 1.0)) + (np.sqrt(feed_tds) / 4000))
-        si_lsi_conc = si_lsi_raw + np.log10(cf_flow) + 1.2
-        si_sdsi_raw = si_lsi_raw - 0.05
-        si_sdsi_conc = si_lsi_conc - 0.4
-
-        # 2. ACID DOSING STOICHIOMETRY LOOP
-        acid_dose = 0.0
-        if si_lsi_conc > 2.6:
-            delta_lsi = si_lsi_conc - 2.5
-            target_log_hco3 = np.log10(max(feed_data.get("HCO3", 1.0), 1.0)) - delta_lsi
-            target_hco3 = 10 ** target_log_hco3
-            alk_destroyed = feed_data.get("HCO3", 0.0) - target_hco3
+    def calculate_accurate_lsi(self, pH, temp_c, ions):
+        """
+        Calculates a precise LSI using thermodynamic equilibrium constants 
+        and ionic strength activity corrections (Davies Equation).
+        """
+        try:
+            # 1. Constants & Temperature Setup
+            T = temp_c + 273.15  # Convert to Kelvin
             
-            if alk_destroyed > 0:
-                acid_dose = alk_destroyed * 0.98
-                
-                # Dynamically Adjust Feed based on Acid Injection
-                feed_data["HCO3"] = target_hco3
-                feed_data["SO4"] += acid_dose
-                
-                # Re-run Mass Balance for adjusted ions
-                p_stream["HCO3"] = sim_prod(feed_data["HCO3"], 1)
-                c_stream["HCO3"] = sim_conc(feed_data["HCO3"], p_stream["HCO3"])
-                p_stream["SO4"] = sim_prod(feed_data["SO4"], 2)
-                c_stream["SO4"] = sim_conc(feed_data["SO4"], p_stream["SO4"])
-                
-                # Recalculate Indices safely below 2.6
-                si_lsi_raw = feed_ph - (11.5 - np.log10(max(feed_data.get("Ca", 1.0), 1.0)) - np.log10(max(target_hco3, 1.0)) + (np.sqrt(feed_tds) / 4000))
-                si_lsi_conc = si_lsi_raw + np.log10(cf_flow) + 1.2
-                si_sdsi_raw = si_lsi_raw - 0.05
-                si_sdsi_conc = si_lsi_conc - 0.4
+            # Debye-Hückel constant baseline adjustment for temperature
+            A_dh = 0.4918 + 0.0007 * temp_c  
+            
+            # 2. Calculate Precise Thermodynamic Constants (pK2 and pKs)
+            log_K2 = -(2902.39 / T) + 6.498 - (0.02379 * T)
+            pK2 = -log_K2
+            
+            log_Ks = -171.9065 - (0.077993 * T) + (2839.319 / T) + (71.595 * math.log10(T))
+            pKs = -log_Ks
 
-        p_tds = sum(p_stream.values())
-        c_tds = sum(c_stream.values())
+            # 3. Molar Concentrations & True Ionic Strength Calculation
+            mol_wts = {'Ca': 40.08, 'Mg': 24.31, 'Na': 22.99, 'K': 39.10, 
+                       'HCO3': 61.02, 'Cl': 35.45, 'SO4': 96.06}
+            
+            molarity = {ion: (val / 1000) / mol_wts[ion] for ion, val in ions.items() if ion in mol_wts}
+            
+            # I = 0.5 * sum(M * z^2)
+            I = 0.5 * (
+                molarity.get('Ca', 0)*(2**2) + molarity.get('Mg', 0)*(2**2) + 
+                molarity.get('Na', 0)*(1**2) + molarity.get('K', 0)*(1**2) +
+                molarity.get('HCO3', 0)*(1**2) + molarity.get('Cl', 0)*(1**2) + 
+                molarity.get('SO4', 0)*(2**2)
+            )
 
-        # 3. Calculate Final Saturations
-        actual_saturation = {
-            "LSI": si_lsi_conc,
-            "SDSI": si_sdsi_conc,
-            "CaSO4": (c_stream["Ca"] * c_stream["SO4"]) / 1800000.0, 
-            "BaSO4": (c_stream["Ba"] * c_stream["SO4"]) / 10000.0,
-            "SrSO4": (c_stream["Sr"] * c_stream["SO4"]) / 100000.0,
-            "CaF2": (c_stream["Ca"] * (c_stream["F"] ** 2)) / 800.0,
-            "SiO2": c_stream["SiO2"] / 140.0,
-            "Iron": c_stream["Fe"],
-            "Aluminium": c_stream["Al"]
-        }
+            # 4. Activity Coefficients (Davies Equation)
+            def get_activity_coef(charge, ionic_strength):
+                if ionic_strength == 0: return 1.0
+                log_gamma = -A_dh * (charge**2) * ((math.sqrt(ionic_strength) / (1 + math.sqrt(ionic_strength))) - 0.3 * ionic_strength)
+                return 10**log_gamma
 
-        # 4. Product Selection (Auto vs Manual)
-        if manual_prod and manual_prod in self.ro_matrix:
-            # Engineer Overrode the Software
-            best_product = manual_prod
-            best_dose = manual_dose if manual_dose else self.ro_matrix[manual_prod]["Base_Dose"]
-        else:
-            # Software Auto-Optimization
-            best_product = "Kem Watreat R 346" 
-            best_dose = 2.8
-            survivors = []
-            for prod_name, specs in self.ro_matrix.items():
-                limits = specs["Limits"]
-                disqualified = False
-                for param in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"]:
-                    if actual_saturation[param] > limits[param]:
-                        disqualified = True
-                        break
-                if not disqualified:
-                    survivors.append(prod_name)
+            gamma_Ca = get_activity_coef(2, I)
+            gamma_HCO3 = get_activity_coef(1, I)
 
-            if "Kem Watreat R 4001" in survivors and (actual_saturation["Iron"] > 0.5 or actual_saturation["SiO2"] > 0.9):
-                best_product = "Kem Watreat R 4001"
-                best_dose = 3.6
-            elif "Kem Watreat R 428 I" in survivors and (actual_saturation["CaF2"] > 1.0 or actual_saturation["BaSO4"] > 1.0):
-                best_product = "Kem Watreat R 428 I"
-                best_dose = 2.6
-            elif "Kem Watreat R 246" in survivors and (si_lsi_conc > 1.5 or feed_data.get("HCO3", 0) > 100):
-                best_product = "Kem Watreat R 246"
-                best_dose = 2.4
-            elif len(survivors) > 0:
-                best_product = survivors[0]
-                best_dose = self.ro_matrix[best_product]["Base_Dose"]
+            # 5. Calculate Saturation pH (pHs)
+            # Ensure we don't hit math domain errors with zero concentrations
+            if molarity.get('Ca', 0) <= 0 or molarity.get('HCO3', 0) <= 0:
+                return None
 
-        active_limits = list(self.ro_matrix[best_product]["Limits"].values())
+            pHs = pK2 - pKs - math.log10(molarity['Ca']) - math.log10(molarity['HCO3']) - math.log10(gamma_Ca) - math.log10(gamma_HCO3)
+            
+            # 6. Final LSI
+            lsi = pH - pHs
+            
+            return {
+                "True Ionic Strength": round(I, 4),
+                "pK2": round(pK2, 3),
+                "pKs": round(pKs, 3),
+                "pHs": round(pHs, 3),
+                "LSI": round(lsi, 3)
+            }
+        except Exception as e:
+            st.error(f"Calculation error: {e}")
+            return None
 
-        si_data = {
-            "Index": ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
-            "Raw Feed": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 1800000.0, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 140.0, feed_data.get("Fe", 0), feed_data.get("Al", 0)],
-            "Treated": [si_lsi_raw, si_sdsi_raw, (feed_data.get("Ca", 0) * feed_data.get("SO4", 0)) / 1800000.0, 0.0, 0.0, 0.0, feed_data.get("SiO2", 0) / 140.0, feed_data.get("Fe", 0), feed_data.get("Al", 0)],
-            "Before Treatment": [actual_saturation["LSI"], actual_saturation["SDSI"], actual_saturation["CaSO4"], actual_saturation["BaSO4"], actual_saturation["SrSO4"], actual_saturation["CaF2"], actual_saturation["SiO2"], actual_saturation["Iron"], actual_saturation["Aluminium"]],
+    def render_engine(self):
+        st.header("RO Projection Engine")
+        
+        # --- INPUTS SECTION (Sidebar) ---
+        st.sidebar.subheader("System Parameters")
+        feed_temp = st.sidebar.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=30.0)
+        feed_ph = st.sidebar.number_input("Feed pH", min_value=1.0, max_value=14.0, value=7.5)
+        recovery = st.sidebar.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
+        
+        # Calculate Concentration Factor (CF)
+        cf = 1 / (1 - (recovery / 100))
+        
+        st.sidebar.subheader("Feed Water Ions (ppm / mg/L)")
+        # Collecting the specific ions required for the Davies equation
+        feed_ions = {
+            'Ca': st.sidebar.number_input("Calcium (Ca2+)", min_value=0.0, value=150.0),
+            'Mg': st.sidebar.number_input("Magnesium (Mg2+)", min_value=0.0, value=50.0),
+            'Na': st.sidebar.number_input("Sodium (Na+)", min_value=0.0, value=300.0),
+            'K': st.sidebar.number_input("Potassium (K+)", min_value=0.0, value=15.0),
+            'HCO3': st.sidebar.number_input("Bicarbonate (HCO3-)", min_value=0.0, value=250.0),
+            'Cl': st.sidebar.number_input("Chloride (Cl-)", min_value=0.0, value=400.0),
+            'SO4': st.sidebar.number_input("Sulfate (SO4 2-)", min_value=0.0, value=200.0)
         }
         
-        df_si = pd.DataFrame(si_data)
-        df_si['Max Saturation'] = df_si['Before Treatment'] / np.array(active_limits)
-        df_si['Max Saturation'] = df_si['Max Saturation'].apply(lambda x: max(0, x))
+        # Create Concentrate Ion Dictionary
+        conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
+        # Empirical estimate for RO concentrate pH shift
+        conc_ph = feed_ph + 0.3 
+        
+        # --- TABS SECTION ---
+        tab_indices, tab_products, tab_dosing = st.tabs([
+            "Saturation Indices", "Product Selection", "Dosing Projections"
+        ])
+        
+        # --- TAB 1: SATURATION INDICES ---
+        with tab_indices:
+            st.subheader("Thermodynamic Saturation Metrics")
+            st.markdown("Precision LSI calculated using Davies Equation and True Ionic Strength.")
+            
+            # Run calculations
+            feed_results = self.calculate_accurate_lsi(feed_ph, feed_temp, feed_ions)
+            conc_results = self.calculate_accurate_lsi(conc_ph, feed_temp, conc_ions)
+            
+            if feed_results and conc_results:
+                col1, col2, col3 = st.columns(3)
+                col1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
+                col2.metric(label="Feed Water LSI", value=feed_results['LSI'])
+                
+                # Highlight concentrate LSI dynamically
+                delta_color = "inverse" if conc_results['LSI'] > 0 else "normal"
+                col3.metric(label="Concentrate LSI", value=conc_results['LSI'], 
+                            delta="Scaling Risk" if conc_results['LSI'] > 0 else "Corrosive", 
+                            delta_color=delta_color)
+                
+                # Detailed Thermodynamic Breakdown Table
+                st.write("---")
+                st.write("**Thermodynamic Engine Breakdown**")
+                
+                data = {
+                    "Metric": ["pH", "Ionic Strength (I)", "Alkalinity Constant (pK2)", "Solubility Constant (pKs)", "Saturation pH (pHs)", "Final LSI"],
+                    "Feed Water": [
+                        round(feed_ph, 2), 
+                        feed_results['True Ionic Strength'], 
+                        feed_results['pK2'], 
+                        feed_results['pKs'], 
+                        feed_results['pHs'], 
+                        feed_results['LSI']
+                    ],
+                    "Concentrate": [
+                        round(conc_ph, 2), 
+                        conc_results['True Ionic Strength'], 
+                        conc_results['pK2'], 
+                        conc_results['pKs'], 
+                        conc_results['pHs'], 
+                        conc_results['LSI']
+                    ]
+                }
+                st.dataframe(pd.DataFrame(data), use_container_width=True)
+            else:
+                st.warning("Please ensure Calcium and Bicarbonate values are greater than zero to calculate LSI.")
+                
+            st.write("---")
+            st.write("**Concentrate Ion Profile (ppm)**")
+            st.json({ion: round(val, 2) for ion, val in conc_ions.items()})
+            
+        with tab_products:
+            st.info("Product selection matrix will be integrated here.")
+            
+        with tab_dosing:
+            st.info("Dosing projections will be added here.")
 
-        return {
-            "Product_Stream": {k: round(v, 2) for k, v in p_stream.items()},
-            "Concentrate_Stream": {k: round(v, 2) for k, v in c_stream.items()},
-            "Product_TDS": round(p_tds, 2),
-            "Concentrate_TDS": round(c_tds, 2),
-            "SI_DataFrame": df_si.round(3),
-            "Recommendation": {"Product": best_product, "Target_Dose": round(best_dose, 2), "Acid_Dose": round(acid_dose, 2)}
-        }
+# Ensure your main app routes correctly:
+# elif utility_choice == "Projection Engine":
+#     engine = UtilityProjectionEngine()
+#     engine.render_engine()
