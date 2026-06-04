@@ -2,7 +2,7 @@ import streamlit as st
 import math
 import pandas as pd
 
-# 1. FORCE WIDE LAYOUT TO FIX THE 3-COLUMN ISSUE
+# 1. FORCE WIDE LAYOUT (Fixes the squished UI issue)
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
@@ -11,7 +11,8 @@ class UtilityProjectionEngine:
 
     def calculate_scaling_indices(self, pH, temp_c, ions):
         """
-        Calculates LSI, SDSI, and Saturation Ratios for scaling minerals.
+        Calculates LSI, SDSI, and True Mineral Saturation Indices (SI) 
+        using Activity Coefficients to match commercial software.
         """
         try:
             T_K = temp_c + 273.15  
@@ -20,7 +21,6 @@ class UtilityProjectionEngine:
             pK2 = (2902.39 / T_K) - 6.498 + (0.02379 * T_K)
             pKs = 171.9065 + (0.077993 * T_K) - (2839.319 / T_K) - (71.595 * math.log10(T_K))
 
-            # Updated Ion Properties including Silica, Iron, Aluminium
             ion_properties = {
                 'Ca': {'mw': 40.08, 'z': 2}, 'Mg': {'mw': 24.31, 'z': 2},
                 'Na': {'mw': 22.99, 'z': 1}, 'K':  {'mw': 39.10, 'z': 1},
@@ -43,12 +43,12 @@ class UtilityProjectionEngine:
             if molarity.get('Ca', 0) <= 0 or molarity.get('HCO3', 0) <= 0:
                 return {"Ionic_Strength": 0.0, "LSI": -5.0, "SDSI": -5.0, "CaSO4": 0.0, "BaSO4": 0.0, "SrSO4": 0.0, "CaF2": 0.0, "SiO2": 0.0, "Fe": 0.0, "Al": 0.0}
 
-            # LSI/SDSI Math
             def get_activity_coef(charge, ionic_strength):
                 if ionic_strength == 0: return 1.0
                 log_gamma = -A_dh * (charge**2) * ((math.sqrt(ionic_strength) / (1 + math.sqrt(ionic_strength))) - 0.3 * ionic_strength)
                 return 10**log_gamma
 
+            # --- LSI & SDSI ---
             gamma_Ca = get_activity_coef(2, I)
             gamma_HCO3 = get_activity_coef(1, I)
 
@@ -60,23 +60,37 @@ class UtilityProjectionEngine:
             K_stiff_davis = pK2 - pKs + (2.5 * math.sqrt(I) / (1 + 1.5 * math.sqrt(I)))
             true_sdsi = pH - (pCa + pAlk + K_stiff_davis)
 
-            # --- MINERAL SATURATION RATIOS (SI) ---
-            # Approximate Ksp values at 25C
+            # --- MINERAL SATURATION INDICES (SI) ---
             ksp_CaSO4 = 2.4e-5
             ksp_BaSO4 = 1.1e-10
             ksp_SrSO4 = 3.2e-7
             ksp_CaF2 = 3.9e-11
             
-            # Simple Saturation Ratio = IAP / Ksp
-            si_CaSO4 = (molarity.get('Ca', 0) * molarity.get('SO4', 0)) / ksp_CaSO4
-            si_BaSO4 = (molarity.get('Ba', 0) * molarity.get('SO4', 0)) / ksp_BaSO4
-            si_SrSO4 = (molarity.get('Sr', 0) * molarity.get('SO4', 0)) / ksp_SrSO4
-            si_CaF2 = (molarity.get('Ca', 0) * (molarity.get('F', 0)**2)) / ksp_CaF2
+            gamma_SO4 = get_activity_coef(2, I)
+            gamma_Ba = get_activity_coef(2, I)
+            gamma_Sr = get_activity_coef(2, I)
+            gamma_F = get_activity_coef(1, I)
+
+            def calc_si_activity(m1, g1, m2, g2, ksp, is_fluoride=False):
+                if m1 == 0 or m2 == 0: return 0.0
+                if is_fluoride:
+                    iap = (m1 * g1) * ((m2 * g2)**2)
+                else:
+                    iap = (m1 * g1) * (m2 * g2)
+                
+                if iap == 0: return 0.0
+                si = math.log10(iap / ksp)
+                return max(0.0, si) # Truncate negative (safe) numbers to 0.00 to match commercial software
+
+            si_CaSO4 = calc_si_activity(molarity.get('Ca', 0), gamma_Ca, molarity.get('SO4', 0), gamma_SO4, ksp_CaSO4)
+            si_BaSO4 = calc_si_activity(molarity.get('Ba', 0), gamma_Ba, molarity.get('SO4', 0), gamma_SO4, ksp_BaSO4)
+            si_SrSO4 = calc_si_activity(molarity.get('Sr', 0), gamma_Sr, molarity.get('SO4', 0), gamma_SO4, ksp_SrSO4)
+            si_CaF2 = calc_si_activity(molarity.get('Ca', 0), gamma_Ca, molarity.get('F', 0), gamma_F, ksp_CaF2, is_fluoride=True)
             
-            # Silica limits (~120 ppm solubility), Iron/Al limits based on raw concentration
-            si_SiO2 = ions.get('SiO2', 0) / 120.0
-            si_Fe = ions.get('Fe', 0) / 0.1
-            si_Al = ions.get('Al', 0) / 0.05
+            # Silica, Iron, Al limits (Simple concentration ratios)
+            si_SiO2 = max(0.0, math.log10(ions.get('SiO2', 0.001) / 120.0)) if ions.get('SiO2', 0) > 120 else 0.0
+            si_Fe = max(0.0, math.log10(ions.get('Fe', 0.001) / 0.1)) if ions.get('Fe', 0) > 0.1 else 0.0
+            si_Al = max(0.0, math.log10(ions.get('Al', 0.001) / 0.05)) if ions.get('Al', 0) > 0.05 else 0.0
 
             return {
                 "Ionic_Strength": round(I, 4),
@@ -96,25 +110,23 @@ class UtilityProjectionEngine:
 
     def auto_optimize_ph(self, raw_ph, temp_c, ions, cf, target_conc_lsi=2.5):
         """
-        Iteratively lowers feed pH AND destroys Bicarbonate alkalinity to simulate actual acid dosing,
-        bringing it closer to KemMemPro logic.
+        Iteratively lowers feed pH AND destroys Bicarbonate alkalinity 
+        to simulate actual acid dosing.
         """
         test_ph = raw_ph
-        # Start with raw concentrate ions
         conc_ions = {ion: val * cf for ion, val in ions.items()}
         raw_alkalinity = conc_ions.get('HCO3', 0)
         
         while test_ph > 4.0:
             conc_ph = test_ph + math.log10(cf)
-            
-            # Simulate alkalinity destruction (Rough approximation: drop in pH destroys % of HCO3)
             ph_drop = raw_ph - test_ph
+            
+            # Simulate Bicarbonate destruction due to acid
             adjusted_hco3 = max(1.0, raw_alkalinity * (1 - (ph_drop * 0.15))) 
             conc_ions['HCO3'] = adjusted_hco3
             
             res = self.calculate_scaling_indices(conc_ph, temp_c, conc_ions)
             if res and res['LSI'] <= target_conc_lsi:
-                # Return the optimal Feed pH and the adjusted Feed HCO3
                 feed_hco3 = max(1.0, ions.get('HCO3', 0) * (1 - (ph_drop * 0.15)))
                 return round(test_ph, 2), feed_hco3
                 
@@ -173,12 +185,15 @@ class UtilityProjectionEngine:
         cf = 1 / (1 - (recovery / 100))
         passage_rate = 1 - (salt_rejection / 100)
         
+        # 1. Deep copy for treated feed
         treated_feed_ions = feed_ions.copy()
         
+        # 2. Adjust pH and Alkalinity
         if auto_acid:
             treated_ph, adjusted_hco3 = self.auto_optimize_ph(feed_ph, feed_temp, feed_ions, cf, target_conc_lsi=2.5)
             treated_feed_ions['HCO3'] = adjusted_hco3
         
+        # 3. Project downstream streams
         raw_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
         treated_conc_ions = {ion: val * cf for ion, val in treated_feed_ions.items()}
         perm_ions = {ion: val * passage_rate for ion, val in feed_ions.items()}
@@ -190,7 +205,7 @@ class UtilityProjectionEngine:
         with tab_results:
             st.subheader("Saturation Index (SI) Report")
             
-            # Execute our 5 independent thermodynamic profiles
+            # Execute thermodynamic profiles
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
             treated_feed_data = self.calculate_scaling_indices(treated_ph, feed_temp, treated_feed_ions)
             perm_data = self.calculate_scaling_indices(perm_ph, feed_temp, perm_ions) 
@@ -199,10 +214,9 @@ class UtilityProjectionEngine:
             
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
-                # Putting OUR 5 columns into the table format.
-                # NO assumed or hardcoded Max Saturation limits.
+                # Construct the DataFrame
                 report_data = {
-                    "Parameter": ["pH", "Ionic Strength", "LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
+                    "Saturation Index (SI)": ["pH", "Ionic Strength", "LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
                     
                     "Raw Feed": [
                         f"{feed_ph:.2f}", f"{feed_data['Ionic_Strength']:.4f}", f"{feed_data['LSI']:.3f}", f"{feed_data['SDSI']:.3f}", 
@@ -235,8 +249,9 @@ class UtilityProjectionEngine:
                     ]
                 }
                 
-                # Render the clean table
                 df_report = pd.DataFrame(report_data)
+                
+                # Display table (hide_index removes the ugly row numbers)
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
 
                 st.write("---")
