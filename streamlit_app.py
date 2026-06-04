@@ -556,12 +556,14 @@ def main():
     elif utility_choice == "Projection Engine":
         engine = UtilityProjectionEngine()
         engine.render_engine()
+        return  # <-- THIS CRITICAL LINE STOPS THE MED BLEED-OVER
 
-    elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
-        st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
+    elif utility_choice in ["Cooling Towers", "Boilers"]:
+        st.title(f"🏭 {utility_choice} Diagnostic Interface")
+        st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
         render_chatbot()
         return
-
+        
     elif utility_choice in ["Cooling Towers", "Boilers"]:
         st.title(f"🏭 {utility_choice} Diagnostic Interface")
         st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
