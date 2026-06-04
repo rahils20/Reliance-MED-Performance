@@ -66,7 +66,6 @@ class UtilityProjectionEngine:
             }
             
         except Exception as e:
-            st.error(f"Calculation Error: {e}")
             return None
 
     def render_engine(self):
@@ -86,8 +85,12 @@ class UtilityProjectionEngine:
                 feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=30.0)
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
                 
-                st.write("**pH Inputs**")
-                feed_ph = st.number_input("Feed pH", min_value=1.0, max_value=14.0, value=7.5)
+                st.write("**Chemical Pre-Treatment (pH)**")
+                feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
+                # New Input: Acid Dosing Target
+                treated_ph = st.number_input("Adjusted Feed pH (Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5, 
+                                             help="Lowering this simulates acid injection before the membranes.")
+                
                 conc_ph = st.number_input("Concentrate pH (Manual)", min_value=1.0, max_value=14.0, value=8.1)
                 
             with col2:
@@ -116,18 +119,18 @@ class UtilityProjectionEngine:
             st.subheader("Thermodynamic Saturation Indices")
             
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
-            # Treated Data mirrors Feed Data until Acid dosing inputs are built
-            treated_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions) 
+            # Treated Data now dynamically uses the Adjusted pH
+            treated_data = self.calculate_scaling_indices(treated_ph, feed_temp, feed_ions) 
             conc_data = self.calculate_scaling_indices(conc_ph, feed_temp, conc_ions)
             
-            if feed_data and conc_data:
+            if feed_data and treated_data and conc_data:
                 st.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
                 st.write("---")
 
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    st.markdown("### Feed Water")
+                    st.markdown("### Raw Feed")
                     f_lsi_color = "inverse" if feed_data['LSI'] > 0 else "normal"
                     f_sdsi_color = "inverse" if feed_data['SDSI'] > 0 else "normal"
                     
@@ -135,16 +138,17 @@ class UtilityProjectionEngine:
                               delta="Scaling Risk" if feed_data['LSI'] > 0 else "Corrosive", delta_color=f_lsi_color)
                     st.metric(label="Stiff & Davis (SDSI)", value=feed_data['SDSI'],
                               delta="Scaling Risk" if feed_data['SDSI'] > 0 else "Corrosive", delta_color=f_sdsi_color)
-                    st.caption(f"True Ionic Strength: {feed_data['Ionic_Strength']}")
 
                 with col2:
-                    st.markdown("### Treated Water")
-                    # Delta forced to "off" to show a neutral/positive indicator for chemical treatment success
+                    st.markdown("### Treated Feed")
+                    # Fixed: Now accurately reports the risk of the chemically adjusted water
+                    t_lsi_color = "inverse" if treated_data['LSI'] > 0 else "normal"
+                    t_sdsi_color = "inverse" if treated_data['SDSI'] > 0 else "normal"
+
                     st.metric(label="Langelier Index (LSI)", value=treated_data['LSI'], 
-                              delta="Optimal Range", delta_color="off")
+                              delta="Scaling Risk" if treated_data['LSI'] > 0 else "Corrosive", delta_color=t_lsi_color)
                     st.metric(label="Stiff & Davis (SDSI)", value=treated_data['SDSI'],
-                              delta="Optimal Range", delta_color="off")
-                    st.caption(f"True Ionic Strength: {treated_data['Ionic_Strength']}")
+                              delta="Scaling Risk" if treated_data['SDSI'] > 0 else "Corrosive", delta_color=t_sdsi_color)
 
                 with col3:
                     st.markdown("### Concentrate Stream")
@@ -155,14 +159,13 @@ class UtilityProjectionEngine:
                               delta="Scaling Risk" if conc_data['LSI'] > 0 else "Corrosive", delta_color=c_lsi_color)
                     st.metric(label="Stiff & Davis (SDSI)", value=conc_data['SDSI'],
                               delta="Scaling Risk" if conc_data['SDSI'] > 0 else "Corrosive", delta_color=c_sdsi_color)
-                    st.caption(f"True Ionic Strength: {conc_data['Ionic_Strength']}")
                     
                 st.write("---")
                 with st.expander("View Full Thermodynamic Breakdown Table"):
                     data = {
                         "Metric": ["pH", "Ionic Strength (I)", "Saturation pH (pHs - LSI)", "Saturation pH (pHs - SDSI)", "Final LSI", "Final SDSI"],
-                        "Feed Water": [round(feed_ph, 2), feed_data['Ionic_Strength'], feed_data['pHs_LSI'], feed_data['pHs_SDSI'], feed_data['LSI'], feed_data['SDSI']],
-                        "Treated Water": [round(feed_ph, 2), treated_data['Ionic_Strength'], treated_data['pHs_LSI'], treated_data['pHs_SDSI'], treated_data['LSI'], treated_data['SDSI']],
+                        "Raw Feed": [round(feed_ph, 2), feed_data['Ionic_Strength'], feed_data['pHs_LSI'], feed_data['pHs_SDSI'], feed_data['LSI'], feed_data['SDSI']],
+                        "Treated Feed": [round(treated_ph, 2), treated_data['Ionic_Strength'], treated_data['pHs_LSI'], treated_data['pHs_SDSI'], treated_data['LSI'], treated_data['SDSI']],
                         "Concentrate": [round(conc_ph, 2), conc_data['Ionic_Strength'], conc_data['pHs_LSI'], conc_data['pHs_SDSI'], conc_data['LSI'], conc_data['SDSI']]
                     }
                     st.dataframe(pd.DataFrame(data), use_container_width=True)
