@@ -6,10 +6,34 @@ class UtilityProjectionEngine:
     def __init__(self):
         pass
 
-    def calculate_accurate_lsi(self, pH, temp_c, ions):
+    def calculate_classic_lsi(self, pH, temp_c, tds, ca_ppm, hco3_ppm):
         """
-        Calculates a precise LSI using thermodynamic equilibrium constants 
-        and ionic strength activity corrections (Davies Equation).
+        Calculates classic Langelier Saturation Index (LSI) 
+        using the standard TDS-based A+B-C-D approximation.
+        """
+        try:
+            # Convert to "as CaCO3" equivalents for classic formula
+            ca_caco3 = ca_ppm * 2.497
+            alk_caco3 = hco3_ppm * 0.8202
+
+            if ca_caco3 <= 0 or alk_caco3 <= 0 or tds <= 0:
+                return None
+
+            T_k = temp_c + 273.15
+            A = (math.log10(tds) - 1) / 10.0
+            B = -13.12 * math.log10(T_k) + 34.55
+            C = math.log10(ca_caco3) - 0.4
+            D = math.log10(alk_caco3)
+
+            pHs = (9.3 + A + B) - (C + D)
+            return round(pH - pHs, 2)
+        except Exception:
+            return None
+
+    def calculate_sdsi(self, pH, temp_c, ions):
+        """
+        Calculates Stiff & Davis Stability Index (SDSI) utilizing 
+        True Ionic Strength and Davies Equation activity coefficients.
         """
         try:
             T = temp_c + 273.15  
@@ -21,33 +45,23 @@ class UtilityProjectionEngine:
             log_Ks = -171.9065 - (0.077993 * T) + (2839.319 / T) + (71.595 * math.log10(T))
             pKs = -log_Ks
 
-            # Expanded Dictionary for all Major and Marginal Ions
             ion_properties = {
-                'Ca': {'mw': 40.08, 'z': 2},
-                'Mg': {'mw': 24.31, 'z': 2},
-                'Na': {'mw': 22.99, 'z': 1},
-                'K':  {'mw': 39.10, 'z': 1},
-                'Ba': {'mw': 137.33, 'z': 2},
-                'Sr': {'mw': 87.62, 'z': 2},
-                'HCO3': {'mw': 61.02, 'z': 1},
-                'Cl': {'mw': 35.45, 'z': 1},
-                'SO4': {'mw': 96.06, 'z': 2},
-                'F':  {'mw': 19.00, 'z': 1},
-                'NO3': {'mw': 62.00, 'z': 1},
-                'PO4': {'mw': 94.97, 'z': 3}
+                'Ca': {'mw': 40.08, 'z': 2}, 'Mg': {'mw': 24.31, 'z': 2},
+                'Na': {'mw': 22.99, 'z': 1}, 'K':  {'mw': 39.10, 'z': 1},
+                'Ba': {'mw': 137.33, 'z': 2}, 'Sr': {'mw': 87.62, 'z': 2},
+                'HCO3': {'mw': 61.02, 'z': 1}, 'Cl': {'mw': 35.45, 'z': 1},
+                'SO4': {'mw': 96.06, 'z': 2}, 'F':  {'mw': 19.00, 'z': 1},
+                'NO3': {'mw': 62.00, 'z': 1}, 'PO4': {'mw': 94.97, 'z': 3}
             }
             
-            # 1. Convert ppm to Molarity
             molarity = {}
             for ion, val in ions.items():
                 if ion in ion_properties:
                     molarity[ion] = (val / 1000) / ion_properties[ion]['mw']
             
-            # 2. Calculate True Ionic Strength: I = 0.5 * Sum(C_i * z_i^2)
             ionic_sum = sum(molarity[ion] * (ion_properties[ion]['z']**2) for ion in molarity)
             I = 0.5 * ionic_sum
 
-            # 3. Activity Coefficients (Davies Equation)
             def get_activity_coef(charge, ionic_strength):
                 if ionic_strength == 0: return 1.0
                 log_gamma = -A_dh * (charge**2) * ((math.sqrt(ionic_strength) / (1 + math.sqrt(ionic_strength))) - 0.3 * ionic_strength)
@@ -59,20 +73,15 @@ class UtilityProjectionEngine:
             if molarity.get('Ca', 0) <= 0 or molarity.get('HCO3', 0) <= 0:
                 return None
 
-            # 4. Calculate pHs and LSI
             pHs = pK2 - pKs - math.log10(molarity['Ca']) - math.log10(molarity['HCO3']) - math.log10(gamma_Ca) - math.log10(gamma_HCO3)
             
-            lsi = pH - pHs
+            sdsi = pH - pHs
             
             return {
-                "True Ionic Strength": round(I, 4),
-                "pK2": round(pK2, 3),
-                "pKs": round(pKs, 3),
-                "pHs": round(pHs, 3),
-                "LSI": round(lsi, 3)
+                "Ionic_Strength": round(I, 4),
+                "SDSI": round(sdsi, 2)
             }
-        except Exception as e:
-            st.error(f"Calculation error: {e}")
+        except Exception:
             return None
 
     def render_engine(self):
@@ -91,10 +100,11 @@ class UtilityProjectionEngine:
                 st.write("**Operational Parameters**")
                 feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=30.0)
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
+                # ADDED TDS INPUT HERE
+                feed_tds = st.number_input("Feed TDS (ppm)", min_value=1.0, value=1000.0)
                 
                 st.write("**pH Inputs**")
                 feed_ph = st.number_input("Feed pH", min_value=1.0, max_value=14.0, value=7.5)
-                # Manual override added here:
                 conc_ph = st.number_input("Concentrate pH (Manual)", min_value=1.0, max_value=14.0, value=8.1)
                 
             with col2:
@@ -116,68 +126,60 @@ class UtilityProjectionEngine:
 
         # --- BACKGROUND CALCULATIONS ---
         cf = 1 / (1 - (recovery / 100))
+        conc_tds = feed_tds * cf
         conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
         
         # --- TAB 2: RESULTS ---
         with tab_results:
             st.subheader("Saturation Indices")
-            st.markdown("Precision thermodynamic calculations based on the Davies Equation.")
             
-            feed_results = self.calculate_accurate_lsi(feed_ph, feed_temp, feed_ions)
-            conc_results = self.calculate_accurate_lsi(conc_ph, feed_temp, conc_ions)
+            # Feed Calculations
+            feed_lsi = self.calculate_classic_lsi(feed_ph, feed_temp, feed_tds, feed_ions['Ca'], feed_ions['HCO3'])
+            feed_sdsi_data = self.calculate_sdsi(feed_ph, feed_temp, feed_ions)
             
-            if feed_results and conc_results:
-                col1, col2, col3 = st.columns(3)
-                col1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
-                col2.metric(label="Feed Water LSI", value=feed_results['LSI'])
-                
-                delta_color = "inverse" if conc_results['LSI'] > 0 else "normal"
-                col3.metric(label="Concentrate LSI", value=conc_results['LSI'], 
-                            delta="Scaling Risk" if conc_results['LSI'] > 0 else "Corrosive", 
-                            delta_color=delta_color)
-                
+            # Concentrate Calculations
+            conc_lsi = self.calculate_classic_lsi(conc_ph, feed_temp, conc_tds, conc_ions['Ca'], conc_ions['HCO3'])
+            conc_sdsi_data = self.calculate_sdsi(conc_ph, feed_temp, conc_ions)
+            
+            if feed_sdsi_data and conc_sdsi_data:
+                st.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
                 st.write("---")
-                st.write("**Thermodynamic Engine Breakdown**")
+
+                col1, col2 = st.columns(2)
                 
-                data = {
-                    "Metric": ["pH", "Ionic Strength (I)", "Alkalinity Constant (pK2)", "Solubility Constant (pKs)", "Saturation pH (pHs)", "Final LSI"],
-                    "Feed Water": [
-                        round(feed_ph, 2), 
-                        feed_results['True Ionic Strength'], 
-                        feed_results['pK2'], 
-                        feed_results['pKs'], 
-                        feed_results['pHs'], 
-                        feed_results['LSI']
-                    ],
-                    "Concentrate": [
-                        round(conc_ph, 2), 
-                        conc_results['True Ionic Strength'], 
-                        conc_results['pK2'], 
-                        conc_results['pKs'], 
-                        conc_results['pHs'], 
-                        conc_results['LSI']
-                    ]
-                }
-                st.dataframe(pd.DataFrame(data), use_container_width=True)
-                
+                with col1:
+                    st.markdown("### Feed Water")
+                    st.metric(label="Langelier Index (LSI)", value=feed_lsi)
+                    st.metric(label="Stiff & Davis (SDSI)", value=feed_sdsi_data['SDSI'])
+                    st.caption(f"Calculated Ionic Strength: {feed_sdsi_data['Ionic_Strength']}")
+
+                with col2:
+                    st.markdown("### Concentrate Stream")
+                    
+                    lsi_color = "inverse" if conc_lsi > 0 else "normal"
+                    sdsi_color = "inverse" if conc_sdsi_data['SDSI'] > 0 else "normal"
+                    
+                    st.metric(label="Langelier Index (LSI)", value=conc_lsi, 
+                              delta="Scaling Risk" if conc_lsi > 0 else "Corrosive", delta_color=lsi_color)
+                    st.metric(label="Stiff & Davis (SDSI)", value=conc_sdsi_data['SDSI'],
+                              delta="Scaling Risk" if conc_sdsi_data['SDSI'] > 0 else "Corrosive", delta_color=sdsi_color)
+                    st.caption(f"Calculated Ionic Strength: {conc_sdsi_data['Ionic_Strength']}")
+                    
                 with st.expander("View Full Concentrate Ion Profile"):
                     st.json({ion: round(val, 3) for ion, val in conc_ions.items()})
             else:
-                st.warning("Please ensure Calcium and Bicarbonate values are greater than zero to calculate LSI.")
+                st.warning("Please ensure Calcium, Bicarbonate, and TDS values are greater than zero.")
                 
         # --- TAB 3: PROJECTION REPORT ---
         with tab_report:
             st.subheader("Final Projection Report")
             st.info("The automated product selection and dosing recommendations will populate here based on the results from Tab 2.")
-            
             st.write("---")
             st.write("**Manual Overrides**")
             col1, col2 = st.columns(2)
             with col1:
-                override_product = st.checkbox("Override Recommended Product")
-                if override_product:
+                if st.checkbox("Override Recommended Product"):
                     st.selectbox("Select Manual Product", ["ameROyal 468", "ameROyal 428", "ameROyal 642", "ameROyal 363"])
             with col2:
-                override_dose = st.checkbox("Override Recommended Dose")
-                if override_dose:
+                if st.checkbox("Override Recommended Dose"):
                     st.number_input("Manual Dose (ppm)", min_value=0.0, value=5.0)
