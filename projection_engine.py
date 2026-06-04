@@ -87,11 +87,8 @@ class UtilityProjectionEngine:
                 
                 st.write("**Chemical Pre-Treatment (pH)**")
                 feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
-                # New Input: Acid Dosing Target
                 treated_ph = st.number_input("Adjusted Feed pH (Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5, 
                                              help="Lowering this simulates acid injection before the membranes.")
-                
-                conc_ph = st.number_input("Concentrate pH (Manual)", min_value=1.0, max_value=14.0, value=8.1)
                 
             with col2:
                 st.write("**Feed Water Ions (ppm / mg/L)**")
@@ -114,17 +111,22 @@ class UtilityProjectionEngine:
         cf = 1 / (1 - (recovery / 100))
         conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
         
+        # DYNAMIC CONCENTRATE pH LINK
+        # The RO concentrate pH naturally shifts upward from the treated baseline
+        conc_ph = treated_ph + math.log10(cf)
+        
         # --- TAB 2: RESULTS ---
         with tab_results:
             st.subheader("Thermodynamic Saturation Indices")
             
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
-            # Treated Data now dynamically uses the Adjusted pH
             treated_data = self.calculate_scaling_indices(treated_ph, feed_temp, feed_ions) 
             conc_data = self.calculate_scaling_indices(conc_ph, feed_temp, conc_ions)
             
             if feed_data and treated_data and conc_data:
-                st.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
+                col_m1, col_m2 = st.columns(2)
+                col_m1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
+                col_m2.metric(label="Calculated Concentrate pH", value=round(conc_ph, 2), delta="Logarithmic Shift", delta_color="off")
                 st.write("---")
 
                 col1, col2, col3 = st.columns(3)
@@ -141,7 +143,6 @@ class UtilityProjectionEngine:
 
                 with col2:
                     st.markdown("### Treated Feed")
-                    # Fixed: Now accurately reports the risk of the chemically adjusted water
                     t_lsi_color = "inverse" if treated_data['LSI'] > 0 else "normal"
                     t_sdsi_color = "inverse" if treated_data['SDSI'] > 0 else "normal"
 
