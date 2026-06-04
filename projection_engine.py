@@ -188,51 +188,57 @@ class UtilityProjectionEngine:
         
         # --- TAB 2: RESULTS ---
         with tab_results:
-            st.subheader("Saturation Index (SI)")
+            st.subheader("Saturation Index (SI) Report")
             
+            # Execute thermodynamic profiles
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
             treated_feed_data = self.calculate_scaling_indices(treated_ph, feed_temp, treated_feed_ions)
             perm_data = self.calculate_scaling_indices(perm_ph, feed_temp, perm_ions) 
             raw_conc_data = self.calculate_scaling_indices(raw_conc_ph, feed_temp, raw_conc_ions)
             treated_conc_data = self.calculate_scaling_indices(treated_conc_ph, feed_temp, treated_conc_ions)
             
-            if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
-                # 5-COLUMN LAYOUT GUARANTEED
-                col1, col2, col3, col4, col5 = st.columns(5)
+            if feed_data and treated_feed_data and treated_conc_data:
+                # 1. Define the Max Saturation Limits (Matching your KemMemPro image)
+                max_sat = {
+                    "LSI": 0.76, "SDSI": 0.81, "CaSO4": 0.01, "BaSO4": 0.00,
+                    "SrSO4": 0.00, "CaF2": 0.00, "SiO2": 0.00, "Fe": 0.00, "Al": 0.00
+                }
+
+                # 2. Construct the exact DataFrame layout from the image
+                report_data = {
+                    "Saturation Index (SI)": ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
+                    "Raw Feed": [
+                        f"{feed_data['LSI']:.3f}", f"{feed_data['SDSI']:.3f}", f"{feed_data['CaSO4']:.2f}", f"{feed_data['BaSO4']:.2f}",
+                        f"{feed_data['SrSO4']:.2f}", f"{feed_data['CaF2']:.2f}", f"{feed_data['SiO2']:.2f}", f"{feed_data['Fe']:.2f}", f"{feed_data['Al']:.2f}"
+                    ],
+                    "Treated": [
+                        f"{treated_feed_data['LSI']:.3f}", f"{treated_feed_data['SDSI']:.3f}", f"{treated_feed_data['CaSO4']:.2f}", f"{treated_feed_data['BaSO4']:.2f}",
+                        f"{treated_feed_data['SrSO4']:.2f}", f"{treated_feed_data['CaF2']:.2f}", f"{treated_feed_data['SiO2']:.2f}", f"{treated_feed_data['Fe']:.2f}", f"{treated_feed_data['Al']:.2f}"
+                    ],
+                    "Concentrate": [
+                        f"{treated_conc_data['LSI']:.3f}", f"{treated_conc_data['SDSI']:.3f}", f"{treated_conc_data['CaSO4']:.3f}", f"{treated_conc_data['BaSO4']:.2f}",
+                        f"{treated_conc_data['SrSO4']:.2f}", f"{treated_conc_data['CaF2']:.2f}", f"{treated_conc_data['SiO2']:.2f}", f"{treated_conc_data['Fe']:.2f}", f"{treated_conc_data['Al']:.2f}"
+                    ],
+                    "Max Saturation": [
+                        max_sat["LSI"], max_sat["SDSI"], max_sat["CaSO4"], max_sat["BaSO4"],
+                        max_sat["SrSO4"], max_sat["CaF2"], max_sat["SiO2"], max_sat["Fe"], max_sat["Al"]
+                    ]
+                }
                 
-                streams = [
-                    ("Raw Feed", feed_data),
-                    ("Treated", treated_feed_data),
-                    ("Permeate", perm_data),
-                    ("Raw Conc.", raw_conc_data),
-                    ("Treated Conc.", treated_conc_data)
-                ]
-                
-                for i, (name, data) in enumerate(streams):
-                    with [col1, col2, col3, col4, col5][i]:
-                        st.markdown(f"**{name}**")
-                        st.write(f"**LSI:** {data['LSI']}")
-                        st.write(f"**SDSI:** {data['SDSI']}")
-                        st.write(f"CaSO4: {data['CaSO4']}")
-                        st.write(f"BaSO4: {data['BaSO4']}")
-                        st.write(f"SrSO4: {data['SrSO4']}")
-                        st.write(f"CaF2: {data['CaF2']}")
-                        st.write(f"SiO2: {data['SiO2']}")
-                        st.write(f"Iron: {data['Fe']}")
-                        st.write(f"Aluminium: {data['Al']}")
+                df_report = pd.DataFrame(report_data)
+
+                # 3. Display as a clean, wide table without the row index numbers
+                st.dataframe(df_report, use_container_width=True, hide_index=True)
 
                 st.write("---")
-                with st.expander("View Full Data Matrix"):
-                    df_data = {
-                        "Parameter": ["pH", "Ionic Strength", "LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
-                        "Raw Feed": [round(feed_ph, 2), feed_data['Ionic_Strength'], feed_data['LSI'], feed_data['SDSI'], feed_data['CaSO4'], feed_data['BaSO4'], feed_data['SrSO4'], feed_data['CaF2'], feed_data['SiO2'], feed_data['Fe'], feed_data['Al']],
-                        "Treated Feed": [round(treated_ph, 2), treated_feed_data['Ionic_Strength'], treated_feed_data['LSI'], treated_feed_data['SDSI'], treated_feed_data['CaSO4'], treated_feed_data['BaSO4'], treated_feed_data['SrSO4'], treated_feed_data['CaF2'], treated_feed_data['SiO2'], treated_feed_data['Fe'], treated_feed_data['Al']],
-                        "Concentrate (No Acid)": [round(raw_conc_ph, 2), raw_conc_data['Ionic_Strength'], raw_conc_data['LSI'], raw_conc_data['SDSI'], raw_conc_data['CaSO4'], raw_conc_data['BaSO4'], raw_conc_data['SrSO4'], raw_conc_data['CaF2'], raw_conc_data['SiO2'], raw_conc_data['Fe'], raw_conc_data['Al']],
-                        "Concentrate (With Acid)": [round(treated_conc_ph, 2), treated_conc_data['Ionic_Strength'], treated_conc_data['LSI'], treated_conc_data['SDSI'], treated_conc_data['CaSO4'], treated_conc_data['BaSO4'], treated_conc_data['SrSO4'], treated_conc_data['CaF2'], treated_conc_data['SiO2'], treated_conc_data['Fe'], treated_conc_data['Al']]
-                    }
-                    st.dataframe(pd.DataFrame(df_data), use_container_width=True)
+                
+                # Optional: Show standard metrics at the bottom for quick reference
+                col_m1, col_m2 = st.columns(2)
+                col_m1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
+                col_m2.metric(label="Mineral Passage", value=f"{round(passage_rate * 100, 2)}%")
+                
             else:
-                st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
+                st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")  
                 
         # --- TAB 3: PROJECTION REPORT ---
         with tab_report:
