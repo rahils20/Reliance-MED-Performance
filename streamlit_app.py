@@ -557,17 +557,15 @@ def main():
         engine.render_engine()
 
     elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
-            st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
-
+        st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
         render_chatbot()
         return
 
-    elif utility_choice == "Cooling Towers" or utility_choice == "Boilers":
+    elif utility_choice in ["Cooling Towers", "Boilers"]:
         st.title(f"🏭 {utility_choice} Diagnostic Interface")
         st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
         render_chatbot()
         return
-
     # ------------------------------------------
     # RO PLANT ENGINE (HERO)
     # ------------------------------------------
