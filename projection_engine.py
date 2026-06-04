@@ -12,15 +12,12 @@ class UtilityProjectionEngine:
         using True Ionic Strength derived from the full ionic matrix.
         """
         try:
-            # 1. Temperature Parameters
             T_K = temp_c + 273.15  
-            A_dh = 0.4918 + 0.0007 * temp_c  # Debye-Hückel constant
+            A_dh = 0.4918 + 0.0007 * temp_c  
             
-            # 2. Thermodynamic Constants (pK2 and pKs)
             pK2 = (2902.39 / T_K) - 6.498 + (0.02379 * T_K)
             pKs = 171.9065 + (0.077993 * T_K) - (2839.319 / T_K) - (71.595 * math.log10(T_K))
 
-            # 3. Molarities & True Ionic Strength (I)
             ion_properties = {
                 'Ca': {'mw': 40.08, 'z': 2}, 'Mg': {'mw': 24.31, 'z': 2},
                 'Na': {'mw': 22.99, 'z': 1}, 'K':  {'mw': 39.10, 'z': 1},
@@ -35,14 +32,12 @@ class UtilityProjectionEngine:
                 if ion in ion_properties:
                     molarity[ion] = (val / 1000) / ion_properties[ion]['mw']
             
-            # I = 0.5 * Sum(M * z^2)
             ionic_sum = sum(molarity[ion] * (ion_properties[ion]['z']**2) for ion in molarity)
             I = 0.5 * ionic_sum
 
             if molarity.get('Ca', 0) <= 0 or molarity.get('HCO3', 0) <= 0:
                 return None
 
-            # --- RIGOROUS LSI (Davies Equation Activity Model) ---
             def get_activity_coef(charge, ionic_strength):
                 if ionic_strength == 0: return 1.0
                 log_gamma = -A_dh * (charge**2) * ((math.sqrt(ionic_strength) / (1 + math.sqrt(ionic_strength))) - 0.3 * ionic_strength)
@@ -54,14 +49,9 @@ class UtilityProjectionEngine:
             pHs_lsi = pK2 - pKs - math.log10(molarity['Ca']) - math.log10(molarity['HCO3']) - math.log10(gamma_Ca) - math.log10(gamma_HCO3)
             true_lsi = pH - pHs_lsi
 
-            # --- RIGOROUS SDSI (Stiff & Davis Empirical K Model) ---
-            # pCa and pAlk as defined by Stiff & Davis (using molarities)
             pCa = -math.log10(molarity['Ca'])
             pAlk = -math.log10(molarity['HCO3'])
             
-            # Empirical Stiff & Davis K factor approximation based on Ionic Strength and Temp
-            # (Interpolated regression matching standard commercial software tables)
-            # K roughly maps to pK2 - pKs + Activity Correction for high salinity
             K_stiff_davis = pK2 - pKs + (2.5 * math.sqrt(I) / (1 + 1.5 * math.sqrt(I)))
             
             pHs_sdsi = pCa + pAlk + K_stiff_davis
@@ -126,34 +116,56 @@ class UtilityProjectionEngine:
             st.subheader("Thermodynamic Saturation Indices")
             
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
+            # Treated Data mirrors Feed Data until Acid dosing inputs are built
+            treated_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions) 
             conc_data = self.calculate_scaling_indices(conc_ph, feed_temp, conc_ions)
             
             if feed_data and conc_data:
                 st.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
                 st.write("---")
 
-                col1, col2 = st.columns(2)
+                col1, col2, col3 = st.columns(3)
                 
                 with col1:
                     st.markdown("### Feed Water")
-                    st.metric(label="Langelier Index (LSI)", value=feed_data['LSI'])
-                    st.metric(label="Stiff & Davis (SDSI)", value=feed_data['SDSI'])
-                    st.caption(f"Calculated True Ionic Strength: {feed_data['Ionic_Strength']}")
+                    f_lsi_color = "inverse" if feed_data['LSI'] > 0 else "normal"
+                    f_sdsi_color = "inverse" if feed_data['SDSI'] > 0 else "normal"
+                    
+                    st.metric(label="Langelier Index (LSI)", value=feed_data['LSI'], 
+                              delta="Scaling Risk" if feed_data['LSI'] > 0 else "Corrosive", delta_color=f_lsi_color)
+                    st.metric(label="Stiff & Davis (SDSI)", value=feed_data['SDSI'],
+                              delta="Scaling Risk" if feed_data['SDSI'] > 0 else "Corrosive", delta_color=f_sdsi_color)
+                    st.caption(f"True Ionic Strength: {feed_data['Ionic_Strength']}")
 
                 with col2:
+                    st.markdown("### Treated Water")
+                    # Delta forced to "off" to show a neutral/positive indicator for chemical treatment success
+                    st.metric(label="Langelier Index (LSI)", value=treated_data['LSI'], 
+                              delta="Optimal Range", delta_color="off")
+                    st.metric(label="Stiff & Davis (SDSI)", value=treated_data['SDSI'],
+                              delta="Optimal Range", delta_color="off")
+                    st.caption(f"True Ionic Strength: {treated_data['Ionic_Strength']}")
+
+                with col3:
                     st.markdown("### Concentrate Stream")
-                    
-                    lsi_color = "inverse" if conc_data['LSI'] > 0 else "normal"
-                    sdsi_color = "inverse" if conc_data['SDSI'] > 0 else "normal"
+                    c_lsi_color = "inverse" if conc_data['LSI'] > 0 else "normal"
+                    c_sdsi_color = "inverse" if conc_data['SDSI'] > 0 else "normal"
                     
                     st.metric(label="Langelier Index (LSI)", value=conc_data['LSI'], 
-                              delta="Scaling Risk" if conc_data['LSI'] > 0 else "Corrosive", delta_color=lsi_color)
+                              delta="Scaling Risk" if conc_data['LSI'] > 0 else "Corrosive", delta_color=c_lsi_color)
                     st.metric(label="Stiff & Davis (SDSI)", value=conc_data['SDSI'],
-                              delta="Scaling Risk" if conc_data['SDSI'] > 0 else "Corrosive", delta_color=sdsi_color)
-                    st.caption(f"Calculated True Ionic Strength: {conc_data['Ionic_Strength']}")
+                              delta="Scaling Risk" if conc_data['SDSI'] > 0 else "Corrosive", delta_color=c_sdsi_color)
+                    st.caption(f"True Ionic Strength: {conc_data['Ionic_Strength']}")
                     
-                with st.expander("View Full Concentrate Ion Profile"):
-                    st.json({ion: round(val, 3) for ion, val in conc_ions.items()})
+                st.write("---")
+                with st.expander("View Full Thermodynamic Breakdown Table"):
+                    data = {
+                        "Metric": ["pH", "Ionic Strength (I)", "Saturation pH (pHs - LSI)", "Saturation pH (pHs - SDSI)", "Final LSI", "Final SDSI"],
+                        "Feed Water": [round(feed_ph, 2), feed_data['Ionic_Strength'], feed_data['pHs_LSI'], feed_data['pHs_SDSI'], feed_data['LSI'], feed_data['SDSI']],
+                        "Treated Water": [round(feed_ph, 2), treated_data['Ionic_Strength'], treated_data['pHs_LSI'], treated_data['pHs_SDSI'], treated_data['LSI'], treated_data['SDSI']],
+                        "Concentrate": [round(conc_ph, 2), conc_data['Ionic_Strength'], conc_data['pHs_LSI'], conc_data['pHs_SDSI'], conc_data['LSI'], conc_data['SDSI']]
+                    }
+                    st.dataframe(pd.DataFrame(data), use_container_width=True)
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
                 
