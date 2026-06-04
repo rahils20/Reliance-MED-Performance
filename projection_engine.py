@@ -94,7 +94,8 @@ class UtilityProjectionEngine:
         # These run immediately so the downstream tabs have the data ready
         cf = 1 / (1 - (recovery / 100))
         conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
-        conc_ph = feed_ph + 0.3 # Empirical estimate for RO concentrate pH shift
+        # Accurate RO pH shift based on CO2 passage and Bicarbonate rejection
+        conc_ph = feed_ph + math.log10(cf)
         
         # --- TAB 2: RESULTS ---
         with tab_results:
