@@ -497,7 +497,7 @@ def main():
     # ------------------------------------------
     utility_choice = st.sidebar.selectbox(
         "Select Utility System",
-        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine", "Product Calculator"]
+        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
     )
 
     if utility_choice == "-- Central Hub --":
@@ -711,9 +711,6 @@ def main():
         st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
         render_chatbot()
         return
-
-    elif utility_choice == "Product Calculator":
-        show_matrix_calculator()
 
     # ------------------------------------------
     # RO PLANT ENGINE (HERO)
