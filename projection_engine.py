@@ -68,6 +68,22 @@ class UtilityProjectionEngine:
         except Exception as e:
             return None
 
+    def auto_optimize_ph(self, raw_ph, temp_c, ions, cf, target_conc_lsi=2.5):
+        """
+        Iteratively lowers the feed pH until the Concentrate LSI hits the safe target limit,
+        representing the absolute minimum acid required.
+        """
+        test_ph = raw_ph
+        conc_ions = {ion: val * cf for ion, val in ions.items()}
+        
+        while test_ph > 4.0:
+            conc_ph = test_ph + math.log10(cf)
+            res = self.calculate_scaling_indices(conc_ph, temp_c, conc_ions)
+            if res and res['LSI'] <= target_conc_lsi:
+                return round(test_ph, 2)
+            test_ph -= 0.05
+        return 4.0
+
     def render_engine(self):
         st.header("RO Projection Engine")
         
@@ -86,10 +102,17 @@ class UtilityProjectionEngine:
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
                 salt_rejection = st.slider("Membrane Salt Rejection (%)", min_value=90.0, max_value=99.8, value=99.0, step=0.1)
                 
-                st.write("**pH Inputs**")
+                st.write("**Chemical Pre-Treatment (pH)**")
                 feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
-                treated_ph = st.number_input("Adjusted Feed pH (Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5, 
-                                             help="Lowering this simulates acid injection before the membranes.")
+                
+                auto_acid = st.checkbox("🪄 Auto-Optimize Acid Dosing (Target Concentrate LSI ≤ 2.5)", value=True, 
+                                        help="Calculates minimum acid needed so ameROyal can handle the rest.")
+                
+                if not auto_acid:
+                    treated_ph = st.number_input("Adjusted Feed pH (Manual Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5)
+                else:
+                    treated_ph = feed_ph # Placeholder, calculated in background
+                
                 perm_ph = st.number_input("Permeate pH (RO Water)", min_value=1.0, max_value=14.0, value=6.0,
                                           help="Permeate pH drops significantly due to unbuffered CO2 passage.")
                 
@@ -114,6 +137,12 @@ class UtilityProjectionEngine:
         cf = 1 / (1 - (recovery / 100))
         passage_rate = 1 - (salt_rejection / 100)
         
+        # Run Optimizer if selected
+        if auto_acid:
+            treated_ph = self.auto_optimize_ph(feed_ph, feed_temp, feed_ions, cf, target_conc_lsi=2.5)
+            if auto_acid and treated_ph < feed_ph:
+                st.toast(f"Acid Optimized: Feed pH dropped to {treated_ph} to reach safe bounds.")
+
         conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
         perm_ions = {ion: val * passage_rate for ion, val in feed_ions.items()}
         
