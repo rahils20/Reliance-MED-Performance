@@ -21,18 +21,33 @@ class UtilityProjectionEngine:
             log_Ks = -171.9065 - (0.077993 * T) + (2839.319 / T) + (71.595 * math.log10(T))
             pKs = -log_Ks
 
-            mol_wts = {'Ca': 40.08, 'Mg': 24.31, 'Na': 22.99, 'K': 39.10, 
-                       'HCO3': 61.02, 'Cl': 35.45, 'SO4': 96.06}
+            # Expanded Dictionary for all Major and Marginal Ions
+            ion_properties = {
+                'Ca': {'mw': 40.08, 'z': 2},
+                'Mg': {'mw': 24.31, 'z': 2},
+                'Na': {'mw': 22.99, 'z': 1},
+                'K':  {'mw': 39.10, 'z': 1},
+                'Ba': {'mw': 137.33, 'z': 2},
+                'Sr': {'mw': 87.62, 'z': 2},
+                'HCO3': {'mw': 61.02, 'z': 1},
+                'Cl': {'mw': 35.45, 'z': 1},
+                'SO4': {'mw': 96.06, 'z': 2},
+                'F':  {'mw': 19.00, 'z': 1},
+                'NO3': {'mw': 62.00, 'z': 1},
+                'PO4': {'mw': 94.97, 'z': 3}
+            }
             
-            molarity = {ion: (val / 1000) / mol_wts[ion] for ion, val in ions.items() if ion in mol_wts}
+            # 1. Convert ppm to Molarity
+            molarity = {}
+            for ion, val in ions.items():
+                if ion in ion_properties:
+                    molarity[ion] = (val / 1000) / ion_properties[ion]['mw']
             
-            I = 0.5 * (
-                molarity.get('Ca', 0)*(2**2) + molarity.get('Mg', 0)*(2**2) + 
-                molarity.get('Na', 0)*(1**2) + molarity.get('K', 0)*(1**2) +
-                molarity.get('HCO3', 0)*(1**2) + molarity.get('Cl', 0)*(1**2) + 
-                molarity.get('SO4', 0)*(2**2)
-            )
+            # 2. Calculate True Ionic Strength: I = 0.5 * Sum(C_i * z_i^2)
+            ionic_sum = sum(molarity[ion] * (ion_properties[ion]['z']**2) for ion in molarity)
+            I = 0.5 * ionic_sum
 
+            # 3. Activity Coefficients (Davies Equation)
             def get_activity_coef(charge, ionic_strength):
                 if ionic_strength == 0: return 1.0
                 log_gamma = -A_dh * (charge**2) * ((math.sqrt(ionic_strength) / (1 + math.sqrt(ionic_strength))) - 0.3 * ionic_strength)
@@ -44,6 +59,7 @@ class UtilityProjectionEngine:
             if molarity.get('Ca', 0) <= 0 or molarity.get('HCO3', 0) <= 0:
                 return None
 
+            # 4. Calculate pHs and LSI
             pHs = pK2 - pKs - math.log10(molarity['Ca']) - math.log10(molarity['HCO3']) - math.log10(gamma_Ca) - math.log10(gamma_HCO3)
             
             lsi = pH - pHs
@@ -62,7 +78,6 @@ class UtilityProjectionEngine:
     def render_engine(self):
         st.header("RO Projection Engine")
         
-        # --- Create the Workflow Tabs ---
         tab_inputs, tab_results, tab_report = st.tabs([
             "1. Inputs", "2. Results", "3. Projection Report"
         ])
@@ -75,8 +90,12 @@ class UtilityProjectionEngine:
             with col1:
                 st.write("**Operational Parameters**")
                 feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=30.0)
-                feed_ph = st.number_input("Feed pH", min_value=1.0, max_value=14.0, value=7.5)
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
+                
+                st.write("**pH Inputs**")
+                feed_ph = st.number_input("Feed pH", min_value=1.0, max_value=14.0, value=7.5)
+                # Manual override added here:
+                conc_ph = st.number_input("Concentrate pH (Manual)", min_value=1.0, max_value=14.0, value=8.1)
                 
             with col2:
                 st.write("**Feed Water Ions (ppm / mg/L)**")
@@ -85,17 +104,19 @@ class UtilityProjectionEngine:
                     'Mg': st.number_input("Magnesium (Mg2+)", min_value=0.0, value=50.0),
                     'Na': st.number_input("Sodium (Na+)", min_value=0.0, value=300.0),
                     'K': st.number_input("Potassium (K+)", min_value=0.0, value=15.0),
+                    'Ba': st.number_input("Barium (Ba2+)", min_value=0.0, value=0.05),
+                    'Sr': st.number_input("Strontium (Sr2+)", min_value=0.0, value=1.2),
                     'HCO3': st.number_input("Bicarbonate (HCO3-)", min_value=0.0, value=250.0),
                     'Cl': st.number_input("Chloride (Cl-)", min_value=0.0, value=400.0),
-                    'SO4': st.number_input("Sulfate (SO4 2-)", min_value=0.0, value=200.0)
+                    'SO4': st.number_input("Sulfate (SO4 2-)", min_value=0.0, value=200.0),
+                    'F': st.number_input("Fluoride (F-)", min_value=0.0, value=0.5),
+                    'NO3': st.number_input("Nitrate (NO3-)", min_value=0.0, value=5.0),
+                    'PO4': st.number_input("Phosphate (PO4 3-)", min_value=0.0, value=0.1)
                 }
 
         # --- BACKGROUND CALCULATIONS ---
-        # These run immediately so the downstream tabs have the data ready
         cf = 1 / (1 - (recovery / 100))
         conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
-        # Accurate RO pH shift based on CO2 passage and Bicarbonate rejection
-        conc_ph = feed_ph + math.log10(cf)
         
         # --- TAB 2: RESULTS ---
         with tab_results:
@@ -139,8 +160,8 @@ class UtilityProjectionEngine:
                 }
                 st.dataframe(pd.DataFrame(data), use_container_width=True)
                 
-                with st.expander("View Concentrate Ion Profile"):
-                    st.json({ion: round(val, 2) for ion, val in conc_ions.items()})
+                with st.expander("View Full Concentrate Ion Profile"):
+                    st.json({ion: round(val, 3) for ion, val in conc_ions.items()})
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero to calculate LSI.")
                 
@@ -151,12 +172,11 @@ class UtilityProjectionEngine:
             
             st.write("---")
             st.write("**Manual Overrides**")
-            # Setting up the UI shells for the future override logic
             col1, col2 = st.columns(2)
             with col1:
                 override_product = st.checkbox("Override Recommended Product")
                 if override_product:
-                    st.selectbox("Select Manual Product", ["ameROyal 468", "ameROyal 428", "ameROyal 642"])
+                    st.selectbox("Select Manual Product", ["ameROyal 468", "ameROyal 428", "ameROyal 642", "ameROyal 363"])
             with col2:
                 override_dose = st.checkbox("Override Recommended Dose")
                 if override_dose:
