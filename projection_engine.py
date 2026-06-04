@@ -36,7 +36,7 @@ class UtilityProjectionEngine:
             I = 0.5 * ionic_sum
 
             if molarity.get('Ca', 0) <= 0 or molarity.get('HCO3', 0) <= 0:
-                return None
+                return {"Ionic_Strength": 0.0, "LSI": -5.0, "SDSI": -5.0, "pHs_LSI": 14.0, "pHs_SDSI": 14.0}
 
             def get_activity_coef(charge, ionic_strength):
                 if ionic_strength == 0: return 1.0
@@ -84,11 +84,14 @@ class UtilityProjectionEngine:
                 st.write("**Operational Parameters**")
                 feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=30.0)
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
+                salt_rejection = st.slider("Membrane Salt Rejection (%)", min_value=90.0, max_value=99.8, value=99.0, step=0.1)
                 
-                st.write("**Chemical Pre-Treatment (pH)**")
+                st.write("**pH Inputs**")
                 feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
                 treated_ph = st.number_input("Adjusted Feed pH (Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5, 
                                              help="Lowering this simulates acid injection before the membranes.")
+                perm_ph = st.number_input("Permeate pH (RO Water)", min_value=1.0, max_value=14.0, value=6.0,
+                                          help="Permeate pH drops significantly due to unbuffered CO2 passage.")
                 
             with col2:
                 st.write("**Feed Water Ions (ppm / mg/L)**")
@@ -109,65 +112,73 @@ class UtilityProjectionEngine:
 
         # --- BACKGROUND CALCULATIONS ---
         cf = 1 / (1 - (recovery / 100))
-        conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
+        passage_rate = 1 - (salt_rejection / 100)
         
-        # DYNAMIC CONCENTRATE pH LINK
-        # The RO concentrate pH naturally shifts upward from the treated baseline
-        conc_ph = treated_ph + math.log10(cf)
+        conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
+        perm_ions = {ion: val * passage_rate for ion, val in feed_ions.items()}
+        
+        raw_conc_ph = feed_ph + math.log10(cf)
+        treated_conc_ph = treated_ph + math.log10(cf)
         
         # --- TAB 2: RESULTS ---
         with tab_results:
             st.subheader("Thermodynamic Saturation Indices")
             
+            # Execute 5 independent thermodynamic profiles
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
-            treated_data = self.calculate_scaling_indices(treated_ph, feed_temp, feed_ions) 
-            conc_data = self.calculate_scaling_indices(conc_ph, feed_temp, conc_ions)
+            treated_feed_data = self.calculate_scaling_indices(treated_ph, feed_temp, feed_ions)
+            perm_data = self.calculate_scaling_indices(perm_ph, feed_temp, perm_ions) 
+            raw_conc_data = self.calculate_scaling_indices(raw_conc_ph, feed_temp, conc_ions)
+            treated_conc_data = self.calculate_scaling_indices(treated_conc_ph, feed_temp, conc_ions)
             
-            if feed_data and treated_data and conc_data:
+            if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 col_m1, col_m2 = st.columns(2)
                 col_m1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
-                col_m2.metric(label="Calculated Concentrate pH", value=round(conc_ph, 2), delta="Logarithmic Shift", delta_color="off")
+                col_m2.metric(label="Mineral Passage", value=f"{round(passage_rate * 100, 2)}%")
                 st.write("---")
 
-                col1, col2, col3 = st.columns(3)
+                # The 5-Column Matrix Layout
+                col1, col2, col3, col4, col5 = st.columns(5)
                 
                 with col1:
-                    st.markdown("### Raw Feed")
+                    st.markdown("##### Raw Feed")
                     f_lsi_color = "inverse" if feed_data['LSI'] > 0 else "normal"
-                    f_sdsi_color = "inverse" if feed_data['SDSI'] > 0 else "normal"
-                    
-                    st.metric(label="Langelier Index (LSI)", value=feed_data['LSI'], 
-                              delta="Scaling Risk" if feed_data['LSI'] > 0 else "Corrosive", delta_color=f_lsi_color)
-                    st.metric(label="Stiff & Davis (SDSI)", value=feed_data['SDSI'],
-                              delta="Scaling Risk" if feed_data['SDSI'] > 0 else "Corrosive", delta_color=f_sdsi_color)
+                    st.metric(label="LSI", value=feed_data['LSI'], delta="Scaling Risk" if feed_data['LSI'] > 0 else "Safe", delta_color=f_lsi_color)
+                    st.metric(label="SDSI", value=feed_data['SDSI'], delta="Scaling Risk" if feed_data['SDSI'] > 0 else "Safe", delta_color=f_lsi_color)
 
                 with col2:
-                    st.markdown("### Treated Feed")
-                    t_lsi_color = "inverse" if treated_data['LSI'] > 0 else "normal"
-                    t_sdsi_color = "inverse" if treated_data['SDSI'] > 0 else "normal"
-
-                    st.metric(label="Langelier Index (LSI)", value=treated_data['LSI'], 
-                              delta="Scaling Risk" if treated_data['LSI'] > 0 else "Corrosive", delta_color=t_lsi_color)
-                    st.metric(label="Stiff & Davis (SDSI)", value=treated_data['SDSI'],
-                              delta="Scaling Risk" if treated_data['SDSI'] > 0 else "Corrosive", delta_color=t_sdsi_color)
+                    st.markdown("##### Treated Feed")
+                    tf_lsi_color = "inverse" if treated_feed_data['LSI'] > 0 else "normal"
+                    st.metric(label="LSI", value=treated_feed_data['LSI'], delta="Scaling Risk" if treated_feed_data['LSI'] > 0 else "Safe", delta_color=tf_lsi_color)
+                    st.metric(label="SDSI", value=treated_feed_data['SDSI'], delta="Scaling Risk" if treated_feed_data['SDSI'] > 0 else "Safe", delta_color=tf_lsi_color)
 
                 with col3:
-                    st.markdown("### Concentrate Stream")
-                    c_lsi_color = "inverse" if conc_data['LSI'] > 0 else "normal"
-                    c_sdsi_color = "inverse" if conc_data['SDSI'] > 0 else "normal"
-                    
-                    st.metric(label="Langelier Index (LSI)", value=conc_data['LSI'], 
-                              delta="Scaling Risk" if conc_data['LSI'] > 0 else "Corrosive", delta_color=c_lsi_color)
-                    st.metric(label="Stiff & Davis (SDSI)", value=conc_data['SDSI'],
-                              delta="Scaling Risk" if conc_data['SDSI'] > 0 else "Corrosive", delta_color=c_sdsi_color)
-                    
+                    st.markdown("##### Permeate")
+                    st.metric(label="LSI", value=perm_data['LSI'], delta="Corrosive", delta_color="inverse")
+                    st.metric(label="SDSI", value=perm_data['SDSI'], delta="Corrosive", delta_color="inverse")
+
+                with col4:
+                    st.markdown("##### Raw Conc.")
+                    rc_lsi_color = "inverse" if raw_conc_data['LSI'] > 0 else "normal"
+                    st.metric(label="LSI", value=raw_conc_data['LSI'], delta="Scaling Risk" if raw_conc_data['LSI'] > 0 else "Safe", delta_color=rc_lsi_color)
+                    st.metric(label="SDSI", value=raw_conc_data['SDSI'], delta="Scaling Risk" if raw_conc_data['SDSI'] > 0 else "Safe", delta_color=rc_lsi_color)
+
+                with col5:
+                    st.markdown("##### Treated Conc.")
+                    tc_lsi_color = "inverse" if treated_conc_data['LSI'] > 0 else "normal"
+                    st.metric(label="LSI", value=treated_conc_data['LSI'], delta="Scaling Risk" if treated_conc_data['LSI'] > 0 else "Safe", delta_color=tc_lsi_color)
+                    st.metric(label="SDSI", value=treated_conc_data['SDSI'], delta="Scaling Risk" if treated_conc_data['SDSI'] > 0 else "Safe", delta_color=tc_lsi_color)
+
                 st.write("---")
                 with st.expander("View Full Thermodynamic Breakdown Table"):
                     data = {
-                        "Metric": ["pH", "Ionic Strength (I)", "Saturation pH (pHs - LSI)", "Saturation pH (pHs - SDSI)", "Final LSI", "Final SDSI"],
-                        "Raw Feed": [round(feed_ph, 2), feed_data['Ionic_Strength'], feed_data['pHs_LSI'], feed_data['pHs_SDSI'], feed_data['LSI'], feed_data['SDSI']],
-                        "Treated Feed": [round(treated_ph, 2), treated_data['Ionic_Strength'], treated_data['pHs_LSI'], treated_data['pHs_SDSI'], treated_data['LSI'], treated_data['SDSI']],
-                        "Concentrate": [round(conc_ph, 2), conc_data['Ionic_Strength'], conc_data['pHs_LSI'], conc_data['pHs_SDSI'], conc_data['LSI'], conc_data['SDSI']]
+                        "Stream": ["Raw Feed", "Treated Feed", "RO Permeate", "Raw Concentrate", "Treated Concentrate"],
+                        "pH": [round(feed_ph, 2), round(treated_ph, 2), round(perm_ph, 2), round(raw_conc_ph, 2), round(treated_conc_ph, 2)],
+                        "Ionic Strength (I)": [feed_data['Ionic_Strength'], treated_feed_data['Ionic_Strength'], perm_data['Ionic_Strength'], raw_conc_data['Ionic_Strength'], treated_conc_data['Ionic_Strength']],
+                        "Sat. pHs (LSI)": [feed_data['pHs_LSI'], treated_feed_data['pHs_LSI'], perm_data['pHs_LSI'], raw_conc_data['pHs_LSI'], treated_conc_data['pHs_LSI']],
+                        "Sat. pHs (SDSI)": [feed_data['pHs_SDSI'], treated_feed_data['pHs_SDSI'], perm_data['pHs_SDSI'], raw_conc_data['pHs_SDSI'], treated_conc_data['pHs_SDSI']],
+                        "Final LSI": [feed_data['LSI'], treated_feed_data['LSI'], perm_data['LSI'], raw_conc_data['LSI'], treated_conc_data['LSI']],
+                        "Final SDSI": [feed_data['SDSI'], treated_feed_data['SDSI'], perm_data['SDSI'], raw_conc_data['SDSI'], treated_conc_data['SDSI']]
                     }
                     st.dataframe(pd.DataFrame(data), use_container_width=True)
             else:
