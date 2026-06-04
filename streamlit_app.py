@@ -556,7 +556,7 @@ def main():
         engine = UtilityProjectionEngine()
         engine.render_engine()
 
-        elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
+    elif target_utility in ["MED", "Cooling Tower", "Boiler"]:
             st.info(f"🚧 Detailed comprehensive report UI for {target_utility} is queued.")
 
         render_chatbot()
