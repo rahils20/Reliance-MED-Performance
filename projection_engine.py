@@ -80,8 +80,8 @@ class UtilityProjectionEngine:
                 
                 if iap == 0: return 0.0
                 si = math.log10(iap / ksp)
-                return max(0.0, si) # Truncate negative (safe) numbers to 0.00 to match commercial software
-
+                return si
+                
             si_CaSO4 = calc_si_activity(molarity.get('Ca', 0), gamma_Ca, molarity.get('SO4', 0), gamma_SO4, ksp_CaSO4)
             si_BaSO4 = calc_si_activity(molarity.get('Ba', 0), gamma_Ba, molarity.get('SO4', 0), gamma_SO4, ksp_BaSO4)
             si_SrSO4 = calc_si_activity(molarity.get('Sr', 0), gamma_Sr, molarity.get('SO4', 0), gamma_SO4, ksp_SrSO4)
