@@ -2,7 +2,6 @@ import streamlit as st
 import math
 import pandas as pd
 
-# FORCE WIDE LAYOUT
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
@@ -10,28 +9,18 @@ class UtilityProjectionEngine:
         pass
 
     def calculate_acid_chemistry(self, raw_ph, target_ph, raw_hco3, temp_c):
-        """
-        Calculates exact stoichiometric H2SO4 dosing required to reach target pH
-        using Carbonate Equilibrium (Henderson-Hasselbalch approximation).
-        Returns: (New HCO3 ppm, Added SO4 ppm, Acid Dose ppm)
-        """
         if target_ph >= raw_ph or raw_hco3 <= 0:
             return raw_hco3, 0.0, 0.0
             
         T_K = temp_c + 273.15
-        # Approximate pKa1 for Carbonic Acid based on temperature
         pKa1 = (3404.71 / T_K) + 0.032786 * T_K - 14.8435
         
-        # 1. Find Total CO2 species in raw water
         total_co2 = raw_hco3 * (1.0 + 10**(pKa1 - raw_ph))
         
-        # 2. Find remaining HCO3 at the new lower pH
         target_hco3 = total_co2 / (1.0 + 10**(pKa1 - target_ph))
         hco3_destroyed = max(0.0, raw_hco3 - target_hco3)
         
-        # 3. Stoichiometry: 1 mole H2SO4 (98.08g) neutralizes 2 moles HCO3 (122.02g)
-        # leaving behind 1 mole SO4 (96.06g)
-        acid_dose_ppm = hco3_destroyed * (98.08 / 122.02) # 100% H2SO4
+        acid_dose_ppm = hco3_destroyed * (98.08 / 122.02)
         so4_added = hco3_destroyed * (96.06 / 122.02)
         
         return target_hco3, so4_added, acid_dose_ppm
@@ -71,7 +60,6 @@ class UtilityProjectionEngine:
                 log_gamma = -A_dh * (charge**2) * ((math.sqrt(ionic_strength) / (1 + math.sqrt(ionic_strength))) - 0.3 * ionic_strength)
                 return 10**log_gamma
 
-            # --- LSI & SDSI ---
             gamma_Ca = get_activity_coef(2, I)
             gamma_HCO3 = get_activity_coef(1, I)
 
@@ -83,34 +71,37 @@ class UtilityProjectionEngine:
             K_stiff_davis = pK2 - pKs + (2.5 * math.sqrt(I) / (1 + 1.5 * math.sqrt(I)))
             true_sdsi = pH - (pCa + pAlk + K_stiff_davis)
 
-            # --- MINERAL SATURATION INDICES (SI) ---
-            ksp_CaSO4 = 2.4e-5
-            ksp_BaSO4 = 1.1e-10
-            ksp_SrSO4 = 3.2e-7
-            ksp_CaF2 = 3.9e-11
-            
-            gamma_SO4 = get_activity_coef(2, I)
-            gamma_Ba = get_activity_coef(2, I)
-            gamma_Sr = get_activity_coef(2, I)
-            gamma_F = get_activity_coef(1, I)
+            def get_pKsp_apparent(pKsp_pure, z_product, ionic_strength):
+                A_dh_const = 0.509
+                sqrt_I = math.sqrt(ionic_strength)
+                correction = A_dh_const * z_product * (sqrt_I / (1 + 1.4 * sqrt_I))
+                return pKsp_pure - correction
 
-            def calc_si_activity(m1, g1, m2, g2, ksp, is_fluoride=False):
+            pksp_CaSO4 = 4.62
+            pksp_BaSO4 = 9.96
+            pksp_SrSO4 = 6.49
+            pksp_CaF2  = 10.40
+
+            Ksp_prime_CaSO4 = 10**-(get_pKsp_apparent(pksp_CaSO4, 4, I))
+            Ksp_prime_BaSO4 = 10**-(get_pKsp_apparent(pksp_BaSO4, 4, I))
+            Ksp_prime_SrSO4 = 10**-(get_pKsp_apparent(pksp_SrSO4, 4, I))
+            Ksp_prime_CaF2  = 10**-(get_pKsp_apparent(pksp_CaF2, 2, I)) 
+
+            def calc_si_apparent(m1, m2, ksp_prime, is_fluoride=False):
                 if m1 == 0 or m2 == 0: return 0.0
                 if is_fluoride:
-                    iap = (m1 * g1) * ((m2 * g2)**2)
+                    iap = m1 * (m2**2)
                 else:
-                    iap = (m1 * g1) * (m2 * g2)
-                
+                    iap = m1 * m2
                 if iap == 0: return 0.0
-                si = math.log10(iap / ksp)
-                return max(0.0, si) # Truncate negative (safe) numbers to 0.00
+                si = math.log10(iap / ksp_prime)
+                return max(0.0, si)
 
-            si_CaSO4 = calc_si_activity(molarity.get('Ca', 0), gamma_Ca, molarity.get('SO4', 0), gamma_SO4, ksp_CaSO4)
-            si_BaSO4 = calc_si_activity(molarity.get('Ba', 0), gamma_Ba, molarity.get('SO4', 0), gamma_SO4, ksp_BaSO4)
-            si_SrSO4 = calc_si_activity(molarity.get('Sr', 0), gamma_Sr, molarity.get('SO4', 0), gamma_SO4, ksp_SrSO4)
-            si_CaF2 = calc_si_activity(molarity.get('Ca', 0), gamma_Ca, molarity.get('F', 0), gamma_F, ksp_CaF2, is_fluoride=True)
+            si_CaSO4 = calc_si_apparent(molarity.get('Ca', 0), molarity.get('SO4', 0), Ksp_prime_CaSO4)
+            si_BaSO4 = calc_si_apparent(molarity.get('Ba', 0), molarity.get('SO4', 0), Ksp_prime_BaSO4)
+            si_SrSO4 = calc_si_apparent(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
+            si_CaF2 = calc_si_apparent(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
-            # Silica, Iron, Al limits (Simple concentration ratios)
             si_SiO2 = max(0.0, math.log10(ions.get('SiO2', 0.001) / 120.0)) if ions.get('SiO2', 0) > 120 else 0.0
             si_Fe = max(0.0, math.log10(ions.get('Fe', 0.001) / 0.1)) if ions.get('Fe', 0) > 0.1 else 0.0
             si_Al = max(0.0, math.log10(ions.get('Al', 0.001) / 0.05)) if ions.get('Al', 0) > 0.05 else 0.0
@@ -138,7 +129,6 @@ class UtilityProjectionEngine:
             "1. Inputs", "2. Results", "3. Projection Report"
         ])
         
-        # --- TAB 1: INPUTS ---
         with tab_inputs:
             st.subheader("System & Water Parameters")
             
@@ -157,9 +147,8 @@ class UtilityProjectionEngine:
                 if not auto_acid:
                     treated_ph = st.number_input("Adjusted Feed pH (Manual Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5)
                 else:
-                    treated_ph = feed_ph # Placeholder until calculation
+                    treated_ph = feed_ph
                     
-                # Placeholder for Acid Dose Output
                 acid_dose_container = st.empty()
                 
                 perm_ph = st.number_input("Permeate pH (RO Water)", min_value=1.0, max_value=14.0, value=6.0)
@@ -181,20 +170,17 @@ class UtilityProjectionEngine:
                     'Al': st.number_input("Aluminium (Al)", min_value=0.0, value=0.01)
                 }
 
-        # --- BACKGROUND CALCULATIONS ---
         cf = 1 / (1 - (recovery / 100))
         passage_rate = 1 - (salt_rejection / 100)
         
         treated_feed_ions = feed_ions.copy()
         acid_dose_ppm = 0.0
         
-        # Determine Treated pH and Acid Dosing
         if auto_acid:
             test_ph = feed_ph
             while test_ph > 4.0:
                 adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, test_ph, feed_ions.get('HCO3', 0), feed_temp)
                 
-                # Test concentrate LSI with this pH drop
                 test_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
                 test_conc_ions['HCO3'] = adj_hco3 * cf
                 test_conc_ions['SO4'] = (feed_ions.get('SO4', 0) + added_so4) * cf
@@ -210,17 +196,14 @@ class UtilityProjectionEngine:
                     break
                 test_ph -= 0.05
         else:
-            # Manual Mode: Calculate acid needed to hit user's target pH
             adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, treated_ph, feed_ions.get('HCO3', 0), feed_temp)
             treated_feed_ions['HCO3'] = adj_hco3
             treated_feed_ions['SO4'] = feed_ions.get('SO4', 0) + added_so4
             acid_dose_ppm = dose
 
-        # Display the Acid Dose in the UI
         if acid_dose_ppm > 0:
             acid_dose_container.success(f"**Required Acid Dose (100% H2SO4):** {round(acid_dose_ppm, 2)} ppm")
         
-        # Project Downstream Streams
         raw_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
         treated_conc_ions = {ion: val * cf for ion, val in treated_feed_ions.items()}
         perm_ions = {ion: val * passage_rate for ion, val in feed_ions.items()}
@@ -228,7 +211,6 @@ class UtilityProjectionEngine:
         raw_conc_ph = feed_ph + math.log10(cf)
         treated_conc_ph = treated_ph + math.log10(cf)
         
-        # --- TAB 2: RESULTS ---
         with tab_results:
             st.subheader("Saturation Index (SI) Report")
             
@@ -285,7 +267,6 @@ class UtilityProjectionEngine:
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
                 
-        # --- TAB 3: PROJECTION REPORT ---
         with tab_report:
             st.subheader("Final Projection Report")
             col1, col2 = st.columns(2)
@@ -294,7 +275,6 @@ class UtilityProjectionEngine:
             with col2:
                 st.number_input("Manual Dose (ppm)", min_value=0.0, value=5.0)
 
-# Instantiate and run
 if __name__ == "__main__":
     app = UtilityProjectionEngine()
     app.render_engine()
