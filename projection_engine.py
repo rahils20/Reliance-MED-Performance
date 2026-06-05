@@ -2,18 +2,41 @@ import streamlit as st
 import math
 import pandas as pd
 
-# 1. FORCE WIDE LAYOUT 
+# FORCE WIDE LAYOUT
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
     def __init__(self):
         pass
 
+    def calculate_acid_chemistry(self, raw_ph, target_ph, raw_hco3, temp_c):
+        """
+        Calculates exact stoichiometric H2SO4 dosing required to reach target pH
+        using Carbonate Equilibrium (Henderson-Hasselbalch approximation).
+        Returns: (New HCO3 ppm, Added SO4 ppm, Acid Dose ppm)
+        """
+        if target_ph >= raw_ph or raw_hco3 <= 0:
+            return raw_hco3, 0.0, 0.0
+            
+        T_K = temp_c + 273.15
+        # Approximate pKa1 for Carbonic Acid based on temperature
+        pKa1 = (3404.71 / T_K) + 0.032786 * T_K - 14.8435
+        
+        # 1. Find Total CO2 species in raw water
+        total_co2 = raw_hco3 * (1.0 + 10**(pKa1 - raw_ph))
+        
+        # 2. Find remaining HCO3 at the new lower pH
+        target_hco3 = total_co2 / (1.0 + 10**(pKa1 - target_ph))
+        hco3_destroyed = max(0.0, raw_hco3 - target_hco3)
+        
+        # 3. Stoichiometry: 1 mole H2SO4 (98.08g) neutralizes 2 moles HCO3 (122.02g)
+        # leaving behind 1 mole SO4 (96.06g)
+        acid_dose_ppm = hco3_destroyed * (98.08 / 122.02) # 100% H2SO4
+        so4_added = hco3_destroyed * (96.06 / 122.02)
+        
+        return target_hco3, so4_added, acid_dose_ppm
+
     def calculate_scaling_indices(self, pH, temp_c, ions):
-        """
-        Calculates LSI, SDSI, and True Mineral Saturation Indices (SI) 
-        using Activity Coefficients to match commercial software.
-        """
         try:
             T_K = temp_c + 273.15  
             A_dh = 0.4918 + 0.0007 * temp_c  
@@ -108,41 +131,6 @@ class UtilityProjectionEngine:
         except Exception as e:
             return None
 
-    def auto_optimize_ph(self, raw_ph, temp_c, ions, cf, target_conc_lsi=2.5):
-        """
-        Iteratively lowers feed pH AND destroys Bicarbonate alkalinity.
-        Crucially: Adds the resulting Sulfate (SO4) penalty from H2SO4 dosing.
-        """
-        test_ph = raw_ph
-        conc_ions = {ion: val * cf for ion, val in ions.items()}
-        
-        raw_hco3 = ions.get('HCO3', 0)
-        raw_so4 = ions.get('SO4', 0)
-        
-        while test_ph > 4.0:
-            conc_ph = test_ph + math.log10(cf)
-            ph_drop = raw_ph - test_ph
-            
-            # Simulate Bicarbonate destruction due to acid
-            hco3_destroyed = raw_hco3 * (ph_drop * 0.15)
-            adjusted_hco3 = max(1.0, raw_hco3 - hco3_destroyed) 
-            
-            # Add the Sulfate penalty (1 ppm HCO3 destroyed = ~0.786 ppm SO4 added)
-            added_so4 = hco3_destroyed * 0.786
-            adjusted_so4 = raw_so4 + added_so4
-            
-            conc_ions['HCO3'] = adjusted_hco3 * cf
-            conc_ions['SO4'] = adjusted_so4 * cf
-            
-            res = self.calculate_scaling_indices(conc_ph, temp_c, conc_ions)
-            if res and res['LSI'] <= target_conc_lsi:
-                # Return the new pH, the new HCO3, and the NEW SO4
-                return round(test_ph, 2), adjusted_hco3, adjusted_so4
-                
-            test_ph -= 0.05
-            
-        return 4.0, raw_hco3, raw_so4
-
     def render_engine(self):
         st.title("RO Projection Engine")
         
@@ -161,7 +149,7 @@ class UtilityProjectionEngine:
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
                 salt_rejection = st.slider("Membrane Salt Rejection (%)", min_value=90.0, max_value=99.8, value=99.0, step=0.1)
                 
-                st.write("**Chemical Pre-Treatment (pH)**")
+                st.write("**Chemical Pre-Treatment (pH & Acid)**")
                 feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
                 
                 auto_acid = st.checkbox("🪄 Auto-Optimize Acid Dosing (Target Concentrate LSI ≤ 2.5)", value=True)
@@ -169,7 +157,10 @@ class UtilityProjectionEngine:
                 if not auto_acid:
                     treated_ph = st.number_input("Adjusted Feed pH (Manual Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5)
                 else:
-                    treated_ph = feed_ph 
+                    treated_ph = feed_ph # Placeholder until calculation
+                    
+                # Placeholder for Acid Dose Output
+                acid_dose_container = st.empty()
                 
                 perm_ph = st.number_input("Permeate pH (RO Water)", min_value=1.0, max_value=14.0, value=6.0)
                 
@@ -194,16 +185,42 @@ class UtilityProjectionEngine:
         cf = 1 / (1 - (recovery / 100))
         passage_rate = 1 - (salt_rejection / 100)
         
-        # 1. Deep copy for treated feed
         treated_feed_ions = feed_ions.copy()
+        acid_dose_ppm = 0.0
         
-        # 2. Adjust pH, Alkalinity, AND add the Sulfate penalty!
+        # Determine Treated pH and Acid Dosing
         if auto_acid:
-            treated_ph, adjusted_hco3, adjusted_so4 = self.auto_optimize_ph(feed_ph, feed_temp, feed_ions, cf, target_conc_lsi=2.5)
-            treated_feed_ions['HCO3'] = adjusted_hco3
-            treated_feed_ions['SO4'] = adjusted_so4 # The added penalty
+            test_ph = feed_ph
+            while test_ph > 4.0:
+                adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, test_ph, feed_ions.get('HCO3', 0), feed_temp)
+                
+                # Test concentrate LSI with this pH drop
+                test_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
+                test_conc_ions['HCO3'] = adj_hco3 * cf
+                test_conc_ions['SO4'] = (feed_ions.get('SO4', 0) + added_so4) * cf
+                
+                conc_ph = test_ph + math.log10(cf)
+                res = self.calculate_scaling_indices(conc_ph, feed_temp, test_conc_ions)
+                
+                if res and res['LSI'] <= 2.5:
+                    treated_ph = round(test_ph, 2)
+                    treated_feed_ions['HCO3'] = adj_hco3
+                    treated_feed_ions['SO4'] = feed_ions.get('SO4', 0) + added_so4
+                    acid_dose_ppm = dose
+                    break
+                test_ph -= 0.05
+        else:
+            # Manual Mode: Calculate acid needed to hit user's target pH
+            adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, treated_ph, feed_ions.get('HCO3', 0), feed_temp)
+            treated_feed_ions['HCO3'] = adj_hco3
+            treated_feed_ions['SO4'] = feed_ions.get('SO4', 0) + added_so4
+            acid_dose_ppm = dose
+
+        # Display the Acid Dose in the UI
+        if acid_dose_ppm > 0:
+            acid_dose_container.success(f"**Required Acid Dose (100% H2SO4):** {round(acid_dose_ppm, 2)} ppm")
         
-        # 3. Project downstream streams
+        # Project Downstream Streams
         raw_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
         treated_conc_ions = {ion: val * cf for ion, val in treated_feed_ions.items()}
         perm_ions = {ion: val * passage_rate for ion, val in feed_ions.items()}
@@ -215,7 +232,6 @@ class UtilityProjectionEngine:
         with tab_results:
             st.subheader("Saturation Index (SI) Report")
             
-            # Execute thermodynamic profiles
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
             treated_feed_data = self.calculate_scaling_indices(treated_ph, feed_temp, treated_feed_ions)
             perm_data = self.calculate_scaling_indices(perm_ph, feed_temp, perm_ions) 
@@ -224,7 +240,6 @@ class UtilityProjectionEngine:
             
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
-                # Construct the DataFrame
                 report_data = {
                     "Saturation Index (SI)": ["pH", "Ionic Strength", "LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
                     
@@ -260,8 +275,6 @@ class UtilityProjectionEngine:
                 }
                 
                 df_report = pd.DataFrame(report_data)
-                
-                # Display table (hide_index removes the row numbers)
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
 
                 st.write("---")
