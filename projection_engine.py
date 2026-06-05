@@ -2,7 +2,7 @@ import streamlit as st
 import math
 import pandas as pd
 
-# 1. FORCE WIDE LAYOUT (Fixes the squished UI issue)
+# 1. FORCE WIDE LAYOUT 
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
@@ -80,8 +80,8 @@ class UtilityProjectionEngine:
                 
                 if iap == 0: return 0.0
                 si = math.log10(iap / ksp)
-                return si
-                
+                return max(0.0, si) # Truncate negative (safe) numbers to 0.00
+
             si_CaSO4 = calc_si_activity(molarity.get('Ca', 0), gamma_Ca, molarity.get('SO4', 0), gamma_SO4, ksp_CaSO4)
             si_BaSO4 = calc_si_activity(molarity.get('Ba', 0), gamma_Ba, molarity.get('SO4', 0), gamma_SO4, ksp_BaSO4)
             si_SrSO4 = calc_si_activity(molarity.get('Sr', 0), gamma_Sr, molarity.get('SO4', 0), gamma_SO4, ksp_SrSO4)
@@ -110,29 +110,38 @@ class UtilityProjectionEngine:
 
     def auto_optimize_ph(self, raw_ph, temp_c, ions, cf, target_conc_lsi=2.5):
         """
-        Iteratively lowers feed pH AND destroys Bicarbonate alkalinity 
-        to simulate actual acid dosing.
+        Iteratively lowers feed pH AND destroys Bicarbonate alkalinity.
+        Crucially: Adds the resulting Sulfate (SO4) penalty from H2SO4 dosing.
         """
         test_ph = raw_ph
         conc_ions = {ion: val * cf for ion, val in ions.items()}
-        raw_alkalinity = conc_ions.get('HCO3', 0)
+        
+        raw_hco3 = ions.get('HCO3', 0)
+        raw_so4 = ions.get('SO4', 0)
         
         while test_ph > 4.0:
             conc_ph = test_ph + math.log10(cf)
             ph_drop = raw_ph - test_ph
             
             # Simulate Bicarbonate destruction due to acid
-            adjusted_hco3 = max(1.0, raw_alkalinity * (1 - (ph_drop * 0.15))) 
-            conc_ions['HCO3'] = adjusted_hco3
+            hco3_destroyed = raw_hco3 * (ph_drop * 0.15)
+            adjusted_hco3 = max(1.0, raw_hco3 - hco3_destroyed) 
+            
+            # Add the Sulfate penalty (1 ppm HCO3 destroyed = ~0.786 ppm SO4 added)
+            added_so4 = hco3_destroyed * 0.786
+            adjusted_so4 = raw_so4 + added_so4
+            
+            conc_ions['HCO3'] = adjusted_hco3 * cf
+            conc_ions['SO4'] = adjusted_so4 * cf
             
             res = self.calculate_scaling_indices(conc_ph, temp_c, conc_ions)
             if res and res['LSI'] <= target_conc_lsi:
-                feed_hco3 = max(1.0, ions.get('HCO3', 0) * (1 - (ph_drop * 0.15)))
-                return round(test_ph, 2), feed_hco3
+                # Return the new pH, the new HCO3, and the NEW SO4
+                return round(test_ph, 2), adjusted_hco3, adjusted_so4
                 
             test_ph -= 0.05
             
-        return 4.0, ions.get('HCO3', 0)
+        return 4.0, raw_hco3, raw_so4
 
     def render_engine(self):
         st.title("RO Projection Engine")
@@ -188,10 +197,11 @@ class UtilityProjectionEngine:
         # 1. Deep copy for treated feed
         treated_feed_ions = feed_ions.copy()
         
-        # 2. Adjust pH and Alkalinity
+        # 2. Adjust pH, Alkalinity, AND add the Sulfate penalty!
         if auto_acid:
-            treated_ph, adjusted_hco3 = self.auto_optimize_ph(feed_ph, feed_temp, feed_ions, cf, target_conc_lsi=2.5)
+            treated_ph, adjusted_hco3, adjusted_so4 = self.auto_optimize_ph(feed_ph, feed_temp, feed_ions, cf, target_conc_lsi=2.5)
             treated_feed_ions['HCO3'] = adjusted_hco3
+            treated_feed_ions['SO4'] = adjusted_so4 # The added penalty
         
         # 3. Project downstream streams
         raw_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
@@ -251,7 +261,7 @@ class UtilityProjectionEngine:
                 
                 df_report = pd.DataFrame(report_data)
                 
-                # Display table (hide_index removes the ugly row numbers)
+                # Display table (hide_index removes the row numbers)
                 st.dataframe(df_report, use_container_width=True, hide_index=True)
 
                 st.write("---")
