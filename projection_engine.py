@@ -102,9 +102,23 @@ class UtilityProjectionEngine:
             si_SrSO4 = calc_si_apparent(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
             si_CaF2 = calc_si_apparent(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
-            si_SiO2 = max(0.0, math.log10(ions.get('SiO2', 0.001) / 120.0)) if ions.get('SiO2', 0) > 120 else 0.0
-            si_Fe = max(0.0, math.log10(ions.get('Fe', 0.001) / 0.1)) if ions.get('Fe', 0) > 0.1 else 0.0
-            si_Al = max(0.0, math.log10(ions.get('Al', 0.001) / 0.05)) if ions.get('Al', 0) > 0.05 else 0.0
+            # --- LINEAR RATIO MINERALS (Trace Metals & Amorphous Silica) ---
+            
+            # 1. Silica (Dynamic Temperature Interpolation based on Chembond logic)
+            if temp_c <= 25:
+                sio2_limit = 125.0
+            elif temp_c <= 30:
+                # Interpolate between 125 at 25C and 135 at 30C
+                sio2_limit = 125.0 + ((temp_c - 25.0) * ((135.0 - 125.0) / 5.0))
+            else:
+                # Interpolate between 135 at 30C and ~144.8 at 35C
+                sio2_limit = 135.0 + ((temp_c - 30.0) * ((144.8 - 135.0) / 5.0))
+                
+            si_SiO2 = ions.get('SiO2', 0) / sio2_limit
+            
+            # 2. Iron and Aluminium (Static Hard Limits at 0.05)
+            si_Fe = ions.get('Fe', 0) / 0.05
+            si_Al = ions.get('Al', 0) / 0.05
 
             return {
                 "Ionic_Strength": round(I, 4),
