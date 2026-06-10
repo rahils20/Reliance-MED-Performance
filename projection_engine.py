@@ -175,7 +175,7 @@ class UtilityProjectionEngine:
             # 30% active Terpolymer logic (Broad Spectrum Dispersion)
             active_dose = dose_ppm * 0.30
             
-            # 1. Moderate LSI/SDSI Control (Lower exponential factor than homopolymer)
+            # 1. Moderate LSI/SDSI Control
             if effective['LSI'] > 0:
                 k_lsi = 1.0 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
@@ -187,7 +187,7 @@ class UtilityProjectionEngine:
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
             
-            # 2. Strong Sulfate Control (CaSO4, BaSO4, SrSO4)
+            # 2. Strong Sulfate Control
             for sulfate in ['CaSO4', 'BaSO4', 'SrSO4']:
                 if effective[sulfate] > 0:
                     k_sulf = 1.2 / (effective[sulfate] ** 0.5)
@@ -207,10 +207,48 @@ class UtilityProjectionEngine:
                 eta_fe = 1.0 - math.exp(-k_fe * active_dose)
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
                 
-            # CaF2 receives minimal threshold reduction
             if effective['CaF2'] > 0:
                 reduction = min((active_dose / 3.0) * 0.15, 0.15)
                 effective['CaF2'] = round(max(0.0, effective['CaF2'] - reduction), 3)
+
+        elif product_name == "Kem Watreat R 428 I":
+            # Blended Phosphonate (HEDP 7.7%) + Homopolymer (10%) Synergy
+            active_polymer = dose_ppm * 0.10
+            active_hedp = dose_ppm * 0.077
+            total_active = active_polymer + active_hedp
+            
+            # 1. Exceptional LSI/SDSI Control (Synergy drives a higher k-factor)
+            if effective['LSI'] > 0:
+                k_lsi = 2.0 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * total_active)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
+                
+            if effective['SDSI'] > 0:
+                k_sdsi = 2.0 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+
+            # 2. Strong CaSO4 Control (Driven by HEDP)
+            if effective['CaSO4'] > 0:
+                k_caso4 = 1.5 / (effective['CaSO4'] ** 0.5)
+                eta_caso4 = 1.0 - math.exp(-k_caso4 * total_active)
+                effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
+
+            # 3. Moderate Barium/Strontium Control (HEDP Sequestration)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    k_heavy_sulf = 0.8 / (effective[sulf] ** 0.5)
+                    eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_hedp)
+                    effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+
+            # 4. Iron Sequestration (Mild reduction via HEDP)
+            if effective['Fe'] > 0:
+                k_fe = 1.0 / (effective['Fe'] ** 0.5)
+                eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
+                effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
+
+            # Silica, Silicates, and CaF2 remain strictly unaffected
             
         return effective
 
@@ -375,7 +413,7 @@ class UtilityProjectionEngine:
             with col1:
                 selected_product = st.selectbox(
                     "Select Antiscalant Formulation", 
-                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 4001", "Kem Watreat R 170", "Kem Watreat R 6863", "Kem Watreat R 6196"]
+                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 428 I", "Kem Watreat R 4001", "Kem Watreat R 170", "Kem Watreat R 6863", "Kem Watreat R 6196"]
                 )
             with col2:
                 manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=5.0)
