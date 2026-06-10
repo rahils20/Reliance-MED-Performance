@@ -145,12 +145,16 @@ class UtilityProjectionEngine:
             return None
 
     def calculate_effective_scaling(self, raw_data, product_name, dose_ppm):
+        """
+        Applies kinetic reduction algorithms to raw thermodynamic data
+        based on specific formulation chemistry and active solid limits.
+        """
         effective = raw_data.copy()
         
         if product_name == "Kem Watreat R 824":
+            # 40% active PAA homopolymer logic (Strong CaCO3, Weak elsewhere)
             active_dose = dose_ppm * 0.40
             
-            # Dynamic decay model for positive scaling values
             if effective['LSI'] > 0:
                 k_lsi = 1.6 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
@@ -165,11 +169,49 @@ class UtilityProjectionEngine:
             if effective['CaSO4'] > 0:
                 reduction = min((active_dose / 3.2) * 0.20, 0.20)
                 effective['CaSO4'] = round(max(0.0, effective['CaSO4'] - reduction), 3)
+
+        elif product_name == "Kem Watreat R 246":
+            # 30% active Terpolymer logic (Broad Spectrum Dispersion)
+            active_dose = dose_ppm * 0.30
+            
+            # 1. Moderate LSI/SDSI Control (Lower exponential factor than homopolymer)
+            if effective['LSI'] > 0:
+                k_lsi = 1.0 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
                 
-            # Remaining indices (BaSO4, SrSO4, CaF2, Si(OH)4, Silicates, Fe, Al) stay raw
+            if effective['SDSI'] > 0:
+                k_sdsi = 1.0 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+            
+            # 2. Strong Sulfate Control (CaSO4, BaSO4, SrSO4)
+            for sulfate in ['CaSO4', 'BaSO4', 'SrSO4']:
+                if effective[sulfate] > 0:
+                    k_sulf = 1.2 / (effective[sulfate] ** 0.5)
+                    eta_sulf = 1.0 - math.exp(-k_sulf * active_dose)
+                    effective[sulfate] = round(effective[sulfate] * (1.0 - eta_sulf), 3)
+            
+            # 3. Excellent Silica & Silicate Dispersion
+            for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
+                if effective[silica] > 0:
+                    k_si = 1.5 / (effective[silica] ** 0.5)
+                    eta_si = 1.0 - math.exp(-k_si * active_dose)
+                    effective[silica] = round(effective[silica] * (1.0 - eta_si), 3)
+            
+            # 4. Iron Dispersion / Sequestration
+            if effective['Fe'] > 0:
+                k_fe = 1.8 / (effective['Fe'] ** 0.5)
+                eta_fe = 1.0 - math.exp(-k_fe * active_dose)
+                effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
+                
+            # CaF2 and Al receive minimal threshold reduction
+            if effective['CaF2'] > 0:
+                reduction = min((active_dose / 3.0) * 0.15, 0.15)
+                effective['CaF2'] = round(max(0.0, effective['CaF2'] - reduction), 3)
             
         return effective
-
     def render_engine(self):
         st.title("RO Projection Engine - V3 (Kinetic Update)")
         
