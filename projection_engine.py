@@ -102,21 +102,15 @@ class UtilityProjectionEngine:
             si_SrSO4 = calc_si_apparent(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
             si_CaF2 = calc_si_apparent(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
-            # --- LINEAR RATIO MINERALS (Trace Metals & Amorphous Silica) ---
-            
-            # 1. Silica (Dynamic Temperature Interpolation based on Chembond logic)
+            # --- LINEAR RATIO MINERALS ---
             if temp_c <= 25:
                 sio2_limit = 125.0
             elif temp_c <= 30:
-                # Interpolate between 125 at 25C and 135 at 30C
                 sio2_limit = 125.0 + ((temp_c - 25.0) * ((135.0 - 125.0) / 5.0))
             else:
-                # Interpolate between 135 at 30C and ~144.8 at 35C
                 sio2_limit = 135.0 + ((temp_c - 30.0) * ((144.8 - 135.0) / 5.0))
                 
             si_SiO2 = ions.get('SiO2', 0) / sio2_limit
-            
-            # 2. Iron and Aluminium (Static Hard Limits at 0.05)
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
@@ -135,6 +129,44 @@ class UtilityProjectionEngine:
             
         except Exception as e:
             return None
+
+    def calculate_effective_scaling(self, raw_data, product_name, dose_ppm):
+        """
+        Applies kinetic reduction algorithms to raw thermodynamic data
+        based on specific formulation chemistry and active solid limits.
+        """
+        effective = raw_data.copy()
+        
+        if product_name == "Kem Watreat R 824":
+            # 40% active PAA homopolymer logic
+            active_dose = dose_ppm * 0.40
+            
+            def get_efficiency(raw_si, active_d, ceiling):
+                if raw_si <= 0: return 1.0 # Safe
+                if raw_si > ceiling: return 0.10 # Homopolymer calcium gel failure
+                
+                # Sigmoid curve parameters targeting ~3.0 active ppm max
+                alpha = 3.0
+                gamma = 2.5
+                exponent = -((alpha * active_d) - (gamma * raw_si))
+                exponent = max(min(exponent, 100), -100) # prevent overflow
+                return 1.0 / (1.0 + math.exp(exponent))
+            
+            # Reduce LSI and SDSI
+            eta_lsi = get_efficiency(effective['LSI'], active_dose, ceiling=2.50)
+            eta_sdsi = get_efficiency(effective['SDSI'], active_dose, ceiling=2.00)
+            
+            effective['LSI'] = round(effective['LSI'] * (1 - eta_lsi), 3)
+            effective['SDSI'] = round(effective['SDSI'] * (1 - eta_sdsi), 3)
+            
+            # Moderate reduction for CaSO4 (Max 0.20 offset at 3.2 active ppm)
+            if effective['CaSO4'] > 0:
+                reduction = min((active_dose / 3.2) * 0.20, 0.20)
+                effective['CaSO4'] = round(max(0.0, effective['CaSO4'] - reduction), 3)
+                
+            # BaSO4, SrSO4, CaF2, SiO2, Fe, Al remain strictly unaffected
+            
+        return effective
 
     def render_engine(self):
         st.title("RO Projection Engine")
@@ -282,12 +314,44 @@ class UtilityProjectionEngine:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
                 
         with tab_report:
-            st.subheader("Final Projection Report")
+            st.subheader("Kinetic Performance & Dosage Projection")
             col1, col2 = st.columns(2)
             with col1:
-                st.selectbox("Select Manual Product", ["ameROyal 468", "ameROyal 428", "ameROyal 642", "ameROyal 363"])
+                selected_product = st.selectbox(
+                    "Select Antiscalant Formulation", 
+                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 4001", "Kem Watreat R 170", "Kem Watreat R 6863", "Kem Watreat R 6196"]
+                )
             with col2:
-                st.number_input("Manual Dose (ppm)", min_value=0.0, value=5.0)
+                # We default this to 0 since we map the curve below, but keep it for single point logic later
+                manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=5.0)
+
+            # Generate the dynamic array for Visual Option A
+            if 'treated_conc_data' in locals() and treated_conc_data:
+                st.write(f"### Performance Curve: {selected_product}")
+                
+                # Build the background array from 0.0 to 10.0 ppm
+                dose_range = [x * 0.5 for x in range(0, 21)] 
+                performance_data = []
+                
+                for d in dose_range:
+                    eff_data = self.calculate_effective_scaling(treated_conc_data, selected_product, d)
+                    performance_data.append({
+                        "Dose (ppm)": d,
+                        "Effective LSI": eff_data['LSI'],
+                        "Effective SDSI": eff_data['SDSI'],
+                        "Effective CaSO4": eff_data['CaSO4']
+                    })
+                
+                df_performance = pd.DataFrame(performance_data)
+                
+                # Render Visual Option A (Line Chart)
+                st.line_chart(
+                    df_performance.set_index("Dose (ppm)")[["Effective LSI", "Effective SDSI", "Effective CaSO4"]],
+                    use_container_width=True
+                )
+                
+                with st.expander("View Raw Kinetic Data Matrix"):
+                    st.dataframe(df_performance, use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
     app = UtilityProjectionEngine()
