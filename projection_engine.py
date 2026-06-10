@@ -1,6 +1,7 @@
 import streamlit as st
 import math
 import pandas as pd
+import plotly.express as px
 
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
@@ -206,12 +207,13 @@ class UtilityProjectionEngine:
                 eta_fe = 1.0 - math.exp(-k_fe * active_dose)
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
                 
-            # CaF2 and Al receive minimal threshold reduction
+            # CaF2 receives minimal threshold reduction
             if effective['CaF2'] > 0:
                 reduction = min((active_dose / 3.0) * 0.15, 0.15)
                 effective['CaF2'] = round(max(0.0, effective['CaF2'] - reduction), 3)
             
         return effective
+
     def render_engine(self):
         st.title("RO Projection Engine - V3 (Kinetic Update)")
         
@@ -367,7 +369,8 @@ class UtilityProjectionEngine:
                 
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
-            st.info("Review product performance below to track chemical suppression trends across full mineral configurations.")
+            st.info("Review product performance below to track chemical suppression trends. Double-click an item in the legend to isolate it.")
+            
             col1, col2 = st.columns(2)
             with col1:
                 selected_product = st.selectbox(
@@ -387,30 +390,46 @@ class UtilityProjectionEngine:
                     eff_data = self.calculate_effective_scaling(treated_conc_data, selected_product, d)
                     performance_data.append({
                         "Dose (ppm)": d,
-                        "Effective LSI": eff_data['LSI'],
-                        "Effective SDSI": eff_data['SDSI'],
-                        "Effective CaCO3": eff_data['CaCO3'],
-                        "Effective CaSO4": eff_data['CaSO4'],
-                        "Effective BaSO4": eff_data['BaSO4'],
-                        "Effective SrSO4": eff_data['SrSO4'],
-                        "Effective CaF2": eff_data['CaF2'],
-                        "Effective Si(OH)4": eff_data['Si(OH)4'],
-                        "Effective CaSiO3": eff_data['CaSiO3'],
-                        "Effective MgSiO3": eff_data['MgSiO3'],
-                        "Effective FeSiO3": eff_data['FeSiO3']
+                        "LSI": eff_data['LSI'],
+                        "SDSI": eff_data['SDSI'],
+                        "CaCO3": eff_data['CaCO3'],
+                        "CaSO4": eff_data['CaSO4'],
+                        "BaSO4": eff_data['BaSO4'],
+                        "SrSO4": eff_data['SrSO4'],
+                        "CaF2": eff_data['CaF2'],
+                        "Si(OH)4": eff_data['Si(OH)4'],
+                        "CaSiO3": eff_data['CaSiO3'],
+                        "MgSiO3": eff_data['MgSiO3'],
+                        "FeSiO3": eff_data['FeSiO3']
                     })
                 
                 df_performance = pd.DataFrame(performance_data)
                 
-                # Plot full layout requested for comparison profiling
-                st.line_chart(
-                    df_performance.set_index("Dose (ppm)")[
-                        ["Effective LSI", "Effective SDSI", "Effective CaCO3", "Effective CaSO4", 
-                         "Effective BaSO4", "Effective SrSO4", "Effective CaF2", "Effective Si(OH)4",
-                         "Effective CaSiO3", "Effective MgSiO3", "Effective FeSiO3"]
-                    ],
-                    use_container_width=True
+                # Plotly Express Implementation
+                fig = px.line(
+                    df_performance,
+                    x="Dose (ppm)",
+                    y=[col for col in df_performance.columns if col != "Dose (ppm)"],
+                    labels={
+                        "value": "Effective Saturation Index (SI)",
+                        "variable": "Mineral Species",
+                        "Dose (ppm)": "Product Dose (ppm)"
+                    }
                 )
+                
+                # Custom layout for clear visibility
+                fig.update_layout(
+                    title=f"Scaling Suppression Projection: {selected_product}",
+                    hovermode="x unified",
+                    legend_title_text="Mineral Indices",
+                    height=600,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                
+                # Add Safe Zone baseline
+                fig.add_hline(y=0, line_dash="dash", line_color="green", annotation_text="Safe Zone")
+
+                st.plotly_chart(fig, use_container_width=True)
                 
                 with st.expander("View Comprehensive Kinetic Matrix"):
                     st.dataframe(df_performance, use_container_width=True, hide_index=True)
