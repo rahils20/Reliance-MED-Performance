@@ -264,14 +264,12 @@ class UtilityProjectionEngine:
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
 
         elif product_name == "Kem Watreat R 170":
-            # High-Phosphonate Blend (PBTC 0.54% + DETMPA 13.5% + Homopolymer 6%)
-            # Exceptional for Carbonates, Heavy Metal/Sulfate Sequestration, AND Silica Dispersion
+            # PBTC 0.54% + DETMPA 13.5% + Homopolymer 6%
             active_pbtc = dose_ppm * 0.0054
             active_detmpa = dose_ppm * 0.135
             active_poly = dose_ppm * 0.06
             total_active = active_pbtc + active_detmpa + active_poly
             
-            # 1. Strong CaCO3 Control (Synergy of PBTC + Polymer)
             if effective['LSI'] > 0:
                 k_lsi = 2.2 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * total_active)
@@ -283,7 +281,6 @@ class UtilityProjectionEngine:
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
 
-            # 2. Exceptional Heavy Sulfate Control (Driven by massive 13.5% DETMPA fraction)
             if effective['CaSO4'] > 0:
                 k_caso4 = 2.0 / (effective['CaSO4'] ** 0.5)
                 eta_caso4 = 1.0 - math.exp(-k_caso4 * active_detmpa)
@@ -295,13 +292,12 @@ class UtilityProjectionEngine:
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_detmpa)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
 
-            # 3. Aggressive Iron Sequestration
             if effective['Fe'] > 0:
                 k_fe = 1.6 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_detmpa)
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
                 
-            # 4. High-Performance Silica & Silicate Dispersion
+            # Starvation Mechanism for Silica / Metal-Silicates via DETMPA Sequestration
             for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
                 if effective[silica] > 0:
                     k_si = 2.5 / (effective[silica] ** 0.5)
@@ -413,42 +409,42 @@ class UtilityProjectionEngine:
                 report_data = {
                     "Saturation Index (SI)": [
                         "pH", "Ionic Strength", "LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", 
-                        "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3", "Iron", "Aluminium"
+                        "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Iron", "Aluminium"
                     ],
                     
                     "Raw Feed": [
                         f"{feed_ph:.2f}", f"{feed_data['Ionic_Strength']:.4f}", f"{feed_data['LSI']:.3f}", f"{feed_data['SDSI']:.3f}", 
                         f"{feed_data['CaCO3']:.3f}", f"{feed_data['CaSO4']:.3f}", f"{feed_data['BaSO4']:.3f}", f"{feed_data['SrSO4']:.3f}", 
-                        f"{feed_data['CaF2']:.3f}", f"{feed_data['Si(OH)4']:.3f}", f"{feed_data['CaSiO3']:.3f}", f"{feed_data['MgSiO3']:.3f}", 
-                        f"{feed_data['FeSiO3']:.3f}", f"{feed_data['Fe']:.3f}", f"{feed_data['Al']:.3f}"
+                        f"{feed_data['CaF2']:.3f}", f"{feed_data['Si(OH)4']:.3f}", f"{feed_data['SiO2']:.3f}", f"{feed_data['CaSiO3']:.3f}", 
+                        f"{feed_data['MgSiO3']:.3f}", f"{feed_data['FeSiO3']:.3f}", f"{feed_data['Fe']:.3f}", f"{feed_data['Al']:.3f}"
                     ],
                     
                     "Treated Feed": [
                         f"{treated_ph:.2f}", f"{treated_feed_data['Ionic_Strength']:.4f}", f"{treated_feed_data['LSI']:.3f}", f"{treated_feed_data['SDSI']:.3f}", 
                         f"{treated_feed_data['CaCO3']:.3f}", f"{treated_feed_data['CaSO4']:.3f}", f"{treated_feed_data['BaSO4']:.3f}", f"{treated_feed_data['SrSO4']:.3f}", 
-                        f"{treated_feed_data['CaF2']:.3f}", f"{treated_feed_data['Si(OH)4']:.3f}", f"{treated_feed_data['CaSiO3']:.3f}", f"{treated_feed_data['MgSiO3']:.3f}", 
-                        f"{treated_feed_data['FeSiO3']:.3f}", f"{treated_feed_data['Fe']:.3f}", f"{treated_feed_data['Al']:.3f}"
+                        f"{treated_feed_data['CaF2']:.3f}", f"{treated_feed_data['Si(OH)4']:.3f}", f"{treated_feed_data['SiO2']:.3f}", f"{treated_feed_data['CaSiO3']:.3f}", 
+                        f"{treated_feed_data['MgSiO3']:.3f}", f"{treated_feed_data['FeSiO3']:.3f}", f"{treated_feed_data['Fe']:.3f}", f"{treated_feed_data['Al']:.3f}"
                     ],
                     
                     "Permeate": [
                         f"{perm_ph:.2f}", f"{perm_data['Ionic_Strength']:.4f}", f"{perm_data['LSI']:.3f}", f"{perm_data['SDSI']:.3f}", 
                         f"{perm_data['CaCO3']:.3f}", f"{perm_data['CaSO4']:.3f}", f"{perm_data['BaSO4']:.3f}", f"{perm_data['SrSO4']:.3f}", 
-                        f"{perm_data['CaF2']:.3f}", f"{perm_data['Si(OH)4']:.3f}", f"{perm_data['CaSiO3']:.3f}", f"{perm_data['MgSiO3']:.3f}", 
-                        f"{perm_data['FeSiO3']:.3f}", f"{perm_data['Fe']:.3f}", f"{perm_data['Al']:.3f}"
+                        f"{perm_data['CaF2']:.3f}", f"{perm_data['Si(OH)4']:.3f}", f"{perm_data['SiO2']:.3f}", f"{perm_data['CaSiO3']:.3f}", 
+                        f"{perm_data['MgSiO3']:.3f}", f"{perm_data['FeSiO3']:.3f}", f"{perm_data['Fe']:.3f}", f"{perm_data['Al']:.3f}"
                     ],
                     
                     "Raw Concentrate": [
                         f"{raw_conc_ph:.2f}", f"{raw_conc_data['Ionic_Strength']:.4f}", f"{raw_conc_data['LSI']:.3f}", f"{raw_conc_data['SDSI']:.3f}", 
                         f"{raw_conc_data['CaCO3']:.3f}", f"{raw_conc_data['CaSO4']:.3f}", f"{raw_conc_data['BaSO4']:.3f}", f"{raw_conc_data['SrSO4']:.3f}", 
-                        f"{raw_conc_data['CaF2']:.3f}", f"{raw_conc_data['Si(OH)4']:.3f}", f"{raw_conc_data['CaSiO3']:.3f}", f"{raw_conc_data['MgSiO3']:.3f}", 
-                        f"{raw_conc_data['FeSiO3']:.3f}", f"{raw_conc_data['Fe']:.3f}", f"{raw_conc_data['Al']:.3f}"
+                        f"{raw_conc_data['CaF2']:.3f}", f"{raw_conc_data['Si(OH)4']:.3f}", f"{raw_conc_data['SiO2']:.3f}", f"{raw_conc_data['CaSiO3']:.3f}", 
+                        f"{raw_conc_data['MgSiO3']:.3f}", f"{raw_conc_data['FeSiO3']:.3f}", f"{raw_conc_data['Fe']:.3f}", f"{raw_conc_data['Al']:.3f}"
                     ],
                     
                     "Treated Concentrate": [
                         f"{treated_conc_ph:.2f}", f"{treated_conc_data['Ionic_Strength']:.4f}", f"{treated_conc_data['LSI']:.3f}", f"{treated_conc_data['SDSI']:.3f}", 
                         f"{treated_conc_data['CaCO3']:.3f}", f"{treated_conc_data['CaSO4']:.3f}", f"{treated_conc_data['BaSO4']:.3f}", f"{treated_conc_data['SrSO4']:.3f}", 
-                        f"{treated_conc_data['CaF2']:.3f}", f"{treated_conc_data['Si(OH)4']:.3f}", f"{treated_conc_data['CaSiO3']:.3f}", f"{treated_conc_data['MgSiO3']:.3f}", 
-                        f"{treated_conc_data['FeSiO3']:.3f}", f"{treated_conc_data['Fe']:.3f}", f"{treated_conc_data['Al']:.3f}"
+                        f"{treated_conc_data['CaF2']:.3f}", f"{treated_conc_data['Si(OH)4']:.3f}", f"{treated_conc_data['SiO2']:.3f}", f"{treated_conc_data['CaSiO3']:.3f}", 
+                        f"{treated_conc_data['MgSiO3']:.3f}", f"{treated_conc_data['FeSiO3']:.3f}", f"{treated_conc_data['Fe']:.3f}", f"{treated_conc_data['Al']:.3f}"
                     ]
                 }
                 
@@ -494,6 +490,7 @@ class UtilityProjectionEngine:
                         "SrSO4": eff_data['SrSO4'],
                         "CaF2": eff_data['CaF2'],
                         "Si(OH)4": eff_data['Si(OH)4'],
+                        "SiO2 (Silica)": eff_data['SiO2'],
                         "CaSiO3": eff_data['CaSiO3'],
                         "MgSiO3": eff_data['MgSiO3'],
                         "FeSiO3": eff_data['FeSiO3']
