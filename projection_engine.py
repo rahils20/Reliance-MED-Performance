@@ -53,7 +53,11 @@ class UtilityProjectionEngine:
             I = 0.5 * ionic_sum
 
             if molarity.get('Ca', 0) <= 0 or molarity.get('HCO3', 0) <= 0:
-                return {"Ionic_Strength": 0.0, "LSI": -5.0, "SDSI": -5.0, "CaSO4": 0.0, "BaSO4": 0.0, "SrSO4": 0.0, "CaF2": 0.0, "SiO2": 0.0, "Fe": 0.0, "Al": 0.0}
+                return {
+                    "Ionic_Strength": 0.0, "LSI": -5.0, "SDSI": -5.0, "CaCO3": -5.0, "CaSO4": 0.0, 
+                    "BaSO4": 0.0, "SrSO4": 0.0, "CaF2": 0.0, "Si(OH)4": 0.0, "SiO2": 0.0,
+                    "CaSiO3": 0.0, "MgSiO3": 0.0, "FeSiO3": 0.0, "Fe": 0.0, "Al": 0.0
+                }
 
             def get_activity_coef(charge, ionic_strength):
                 if ionic_strength == 0: return 1.0
@@ -114,15 +118,25 @@ class UtilityProjectionEngine:
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
+            # --- EXTENDED METAL SILICATES & SPECIATION ---
+            si_CaSiO3 = max(0.0, (ions.get('Ca', 0) * ions.get('SiO2', 0)) / 2500.0)
+            si_MgSiO3 = max(0.0, (ions.get('Mg', 0) * ions.get('SiO2', 0)) / 1800.0)
+            si_FeSiO3 = max(0.0, (ions.get('Fe', 0) * ions.get('SiO2', 0)) / 8.0)
+
             return {
                 "Ionic_Strength": round(I, 4),
                 "LSI": round(true_lsi, 3),
                 "SDSI": round(true_sdsi, 3),
+                "CaCO3": round(true_lsi, 3), 
                 "CaSO4": round(si_CaSO4, 3),
                 "BaSO4": round(si_BaSO4, 3),
                 "SrSO4": round(si_SrSO4, 3),
                 "CaF2": round(si_CaF2, 3),
+                "Si(OH)4": round(si_SiO2, 3),
                 "SiO2": round(si_SiO2, 3),
+                "CaSiO3": round(si_CaSiO3, 3),
+                "MgSiO3": round(si_MgSiO3, 3),
+                "FeSiO3": round(si_FeSiO3, 3),
                 "Fe": round(si_Fe, 3),
                 "Al": round(si_Al, 3)
             }
@@ -131,45 +145,32 @@ class UtilityProjectionEngine:
             return None
 
     def calculate_effective_scaling(self, raw_data, product_name, dose_ppm):
-        """
-        Applies kinetic reduction algorithms to raw thermodynamic data
-        based on specific formulation chemistry and active solid limits.
-        """
         effective = raw_data.copy()
         
         if product_name == "Kem Watreat R 824":
-            # 40% active PAA homopolymer logic
             active_dose = dose_ppm * 0.40
             
-            def get_efficiency(raw_si, active_d, ceiling):
-                if raw_si <= 0: return 1.0 # Safe
-                if raw_si > ceiling: return 0.10 # Homopolymer calcium gel failure
+            # Dynamic decay model for positive scaling values
+            if effective['LSI'] > 0:
+                k_lsi = 1.6 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
                 
-                # Sigmoid curve parameters targeting ~3.0 active ppm max
-                alpha = 3.0
-                gamma = 2.5
-                exponent = -((alpha * active_d) - (gamma * raw_si))
-                exponent = max(min(exponent, 100), -100) # prevent overflow
-                return 1.0 / (1.0 + math.exp(exponent))
+            if effective['SDSI'] > 0:
+                k_sdsi = 1.6 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
             
-            # Reduce LSI and SDSI
-            eta_lsi = get_efficiency(effective['LSI'], active_dose, ceiling=2.50)
-            eta_sdsi = get_efficiency(effective['SDSI'], active_dose, ceiling=2.00)
-            
-            effective['LSI'] = round(effective['LSI'] * (1 - eta_lsi), 3)
-            effective['SDSI'] = round(effective['SDSI'] * (1 - eta_sdsi), 3)
-            
-            # Moderate reduction for CaSO4 (Max 0.20 offset at 3.2 active ppm)
             if effective['CaSO4'] > 0:
                 reduction = min((active_dose / 3.2) * 0.20, 0.20)
                 effective['CaSO4'] = round(max(0.0, effective['CaSO4'] - reduction), 3)
                 
-            # BaSO4, SrSO4, CaF2, SiO2, Fe, Al remain strictly unaffected
+            # Remaining indices (BaSO4, SrSO4, CaF2, Si(OH)4, Silicates, Fe, Al) stay raw
             
         return effective
 
     def render_engine(self):
-        # MASSIVE TITLE CHANGE TO PROVE CACHE CLEAR
         st.title("RO Projection Engine - V3 (Kinetic Update)")
         
         tab_inputs, tab_results, tab_report = st.tabs([
@@ -270,36 +271,44 @@ class UtilityProjectionEngine:
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
                 report_data = {
-                    "Saturation Index (SI)": ["pH", "Ionic Strength", "LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "SiO2", "Iron", "Aluminium"],
+                    "Saturation Index (SI)": [
+                        "pH", "Ionic Strength", "LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", 
+                        "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3", "Iron", "Aluminium"
+                    ],
                     
                     "Raw Feed": [
                         f"{feed_ph:.2f}", f"{feed_data['Ionic_Strength']:.4f}", f"{feed_data['LSI']:.3f}", f"{feed_data['SDSI']:.3f}", 
-                        f"{feed_data['CaSO4']:.3f}", f"{feed_data['BaSO4']:.3f}", f"{feed_data['SrSO4']:.3f}", f"{feed_data['CaF2']:.3f}", 
-                        f"{feed_data['SiO2']:.3f}", f"{feed_data['Fe']:.3f}", f"{feed_data['Al']:.3f}"
+                        f"{feed_data['CaCO3']:.3f}", f"{feed_data['CaSO4']:.3f}", f"{feed_data['BaSO4']:.3f}", f"{feed_data['SrSO4']:.3f}", 
+                        f"{feed_data['CaF2']:.3f}", f"{feed_data['Si(OH)4']:.3f}", f"{feed_data['CaSiO3']:.3f}", f"{feed_data['MgSiO3']:.3f}", 
+                        f"{feed_data['FeSiO3']:.3f}", f"{feed_data['Fe']:.3f}", f"{feed_data['Al']:.3f}"
                     ],
                     
                     "Treated Feed": [
                         f"{treated_ph:.2f}", f"{treated_feed_data['Ionic_Strength']:.4f}", f"{treated_feed_data['LSI']:.3f}", f"{treated_feed_data['SDSI']:.3f}", 
-                        f"{treated_feed_data['CaSO4']:.3f}", f"{treated_feed_data['BaSO4']:.3f}", f"{treated_feed_data['SrSO4']:.3f}", f"{treated_feed_data['CaF2']:.3f}", 
-                        f"{treated_feed_data['SiO2']:.3f}", f"{treated_feed_data['Fe']:.3f}", f"{treated_feed_data['Al']:.3f}"
+                        f"{treated_feed_data['CaCO3']:.3f}", f"{treated_feed_data['CaSO4']:.3f}", f"{treated_feed_data['BaSO4']:.3f}", f"{treated_feed_data['SrSO4']:.3f}", 
+                        f"{treated_feed_data['CaF2']:.3f}", f"{treated_feed_data['Si(OH)4']:.3f}", f"{treated_feed_data['CaSiO3']:.3f}", f"{treated_feed_data['MgSiO3']:.3f}", 
+                        f"{treated_feed_data['FeSiO3']:.3f}", f"{treated_feed_data['Fe']:.3f}", f"{treated_feed_data['Al']:.3f}"
                     ],
                     
                     "Permeate": [
                         f"{perm_ph:.2f}", f"{perm_data['Ionic_Strength']:.4f}", f"{perm_data['LSI']:.3f}", f"{perm_data['SDSI']:.3f}", 
-                        f"{perm_data['CaSO4']:.3f}", f"{perm_data['BaSO4']:.3f}", f"{perm_data['SrSO4']:.3f}", f"{perm_data['CaF2']:.3f}", 
-                        f"{perm_data['SiO2']:.3f}", f"{perm_data['Fe']:.3f}", f"{perm_data['Al']:.3f}"
+                        f"{perm_data['CaCO3']:.3f}", f"{perm_data['CaSO4']:.3f}", f"{perm_data['BaSO4']:.3f}", f"{perm_data['SrSO4']:.3f}", 
+                        f"{perm_data['CaF2']:.3f}", f"{perm_data['Si(OH)4']:.3f}", f"{perm_data['CaSiO3']:.3f}", f"{perm_data['MgSiO3']:.3f}", 
+                        f"{perm_data['FeSiO3']:.3f}", f"{perm_data['Fe']:.3f}", f"{perm_data['Al']:.3f}"
                     ],
                     
                     "Raw Concentrate": [
                         f"{raw_conc_ph:.2f}", f"{raw_conc_data['Ionic_Strength']:.4f}", f"{raw_conc_data['LSI']:.3f}", f"{raw_conc_data['SDSI']:.3f}", 
-                        f"{raw_conc_data['CaSO4']:.3f}", f"{raw_conc_data['BaSO4']:.3f}", f"{raw_conc_data['SrSO4']:.3f}", f"{raw_conc_data['CaF2']:.3f}", 
-                        f"{raw_conc_data['SiO2']:.3f}", f"{raw_conc_data['Fe']:.3f}", f"{raw_conc_data['Al']:.3f}"
+                        f"{raw_conc_data['CaCO3']:.3f}", f"{raw_conc_data['CaSO4']:.3f}", f"{raw_conc_data['BaSO4']:.3f}", f"{raw_conc_data['SrSO4']:.3f}", 
+                        f"{raw_conc_data['CaF2']:.3f}", f"{raw_conc_data['Si(OH)4']:.3f}", f"{raw_conc_data['CaSiO3']:.3f}", f"{raw_conc_data['MgSiO3']:.3f}", 
+                        f"{raw_conc_data['FeSiO3']:.3f}", f"{raw_conc_data['Fe']:.3f}", f"{raw_conc_data['Al']:.3f}"
                     ],
                     
                     "Treated Concentrate": [
                         f"{treated_conc_ph:.2f}", f"{treated_conc_data['Ionic_Strength']:.4f}", f"{treated_conc_data['LSI']:.3f}", f"{treated_conc_data['SDSI']:.3f}", 
-                        f"{treated_conc_data['CaSO4']:.3f}", f"{treated_conc_data['BaSO4']:.3f}", f"{treated_conc_data['SrSO4']:.3f}", f"{treated_conc_data['CaF2']:.3f}", 
-                        f"{treated_conc_data['SiO2']:.3f}", f"{treated_conc_data['Fe']:.3f}", f"{treated_conc_data['Al']:.3f}"
+                        f"{treated_conc_data['CaCO3']:.3f}", f"{treated_conc_data['CaSO4']:.3f}", f"{treated_conc_data['BaSO4']:.3f}", f"{treated_conc_data['SrSO4']:.3f}", 
+                        f"{treated_conc_data['CaF2']:.3f}", f"{treated_conc_data['Si(OH)4']:.3f}", f"{treated_conc_data['CaSiO3']:.3f}", f"{treated_conc_data['MgSiO3']:.3f}", 
+                        f"{treated_conc_data['FeSiO3']:.3f}", f"{treated_conc_data['Fe']:.3f}", f"{treated_conc_data['Al']:.3f}"
                     ]
                 }
                 
@@ -316,7 +325,7 @@ class UtilityProjectionEngine:
                 
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
-            st.info("Check this tab to see the dynamic performance chart updating in real time.")
+            st.info("Review product performance below to track chemical suppression trends across full mineral configurations.")
             col1, col2 = st.columns(2)
             with col1:
                 selected_product = st.selectbox(
@@ -327,7 +336,7 @@ class UtilityProjectionEngine:
                 manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=5.0)
 
             if 'treated_conc_data' in locals() and treated_conc_data:
-                st.write(f"### Performance Curve: {selected_product}")
+                st.write(f"### Performance Curve Matrix: {selected_product}")
                 
                 dose_range = [x * 0.5 for x in range(0, 21)] 
                 performance_data = []
@@ -338,17 +347,30 @@ class UtilityProjectionEngine:
                         "Dose (ppm)": d,
                         "Effective LSI": eff_data['LSI'],
                         "Effective SDSI": eff_data['SDSI'],
-                        "Effective CaSO4": eff_data['CaSO4']
+                        "Effective CaCO3": eff_data['CaCO3'],
+                        "Effective CaSO4": eff_data['CaSO4'],
+                        "Effective BaSO4": eff_data['BaSO4'],
+                        "Effective SrSO4": eff_data['SrSO4'],
+                        "Effective CaF2": eff_data['CaF2'],
+                        "Effective Si(OH)4": eff_data['Si(OH)4'],
+                        "Effective CaSiO3": eff_data['CaSiO3'],
+                        "Effective MgSiO3": eff_data['MgSiO3'],
+                        "Effective FeSiO3": eff_data['FeSiO3']
                     })
                 
                 df_performance = pd.DataFrame(performance_data)
                 
+                # Plot full layout requested for comparison profiling
                 st.line_chart(
-                    df_performance.set_index("Dose (ppm)")[["Effective LSI", "Effective SDSI", "Effective CaSO4"]],
+                    df_performance.set_index("Dose (ppm)")[
+                        ["Effective LSI", "Effective SDSI", "Effective CaCO3", "Effective CaSO4", 
+                         "Effective BaSO4", "Effective SrSO4", "Effective CaF2", "Effective Si(OH)4",
+                         "Effective CaSiO3", "Effective MgSiO3", "Effective FeSiO3"]
+                    ],
                     use_container_width=True
                 )
                 
-                with st.expander("View Raw Kinetic Data Matrix"):
+                with st.expander("View Comprehensive Kinetic Matrix"):
                     st.dataframe(df_performance, use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
