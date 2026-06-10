@@ -169,7 +169,8 @@ class UtilityProjectionEngine:
         return effective
 
     def render_engine(self):
-        st.title("RO Projection Engine")
+        # MASSIVE TITLE CHANGE TO PROVE CACHE CLEAR
+        st.title("RO Projection Engine - V3 (Kinetic Update)")
         
         tab_inputs, tab_results, tab_report = st.tabs([
             "1. Inputs", "2. Results", "3. Projection Report"
@@ -258,7 +259,7 @@ class UtilityProjectionEngine:
         treated_conc_ph = treated_ph + math.log10(cf)
         
         with tab_results:
-            st.subheader("Saturation Index (SI) Report")
+            st.subheader("Raw Thermodynamic Saturation (Untreated)")
             
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
             treated_feed_data = self.calculate_scaling_indices(treated_ph, feed_temp, treated_feed_ions)
@@ -315,6 +316,7 @@ class UtilityProjectionEngine:
                 
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
+            st.info("Check this tab to see the dynamic performance chart updating in real time.")
             col1, col2 = st.columns(2)
             with col1:
                 selected_product = st.selectbox(
@@ -322,14 +324,11 @@ class UtilityProjectionEngine:
                     ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 4001", "Kem Watreat R 170", "Kem Watreat R 6863", "Kem Watreat R 6196"]
                 )
             with col2:
-                # We default this to 0 since we map the curve below, but keep it for single point logic later
                 manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=5.0)
 
-            # Generate the dynamic array for Visual Option A
             if 'treated_conc_data' in locals() and treated_conc_data:
                 st.write(f"### Performance Curve: {selected_product}")
                 
-                # Build the background array from 0.0 to 10.0 ppm
                 dose_range = [x * 0.5 for x in range(0, 21)] 
                 performance_data = []
                 
@@ -344,7 +343,6 @@ class UtilityProjectionEngine:
                 
                 df_performance = pd.DataFrame(performance_data)
                 
-                # Render Visual Option A (Line Chart)
                 st.line_chart(
                     df_performance.set_index("Dose (ppm)")[["Effective LSI", "Effective SDSI", "Effective CaSO4"]],
                     use_container_width=True
