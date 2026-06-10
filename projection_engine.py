@@ -107,7 +107,6 @@ class UtilityProjectionEngine:
             si_SrSO4 = calc_si_apparent(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
             si_CaF2 = calc_si_apparent(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
-            # --- LINEAR RATIO MINERALS ---
             if temp_c <= 25:
                 sio2_limit = 125.0
             elif temp_c <= 30:
@@ -119,7 +118,6 @@ class UtilityProjectionEngine:
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
-            # --- EXTENDED METAL SILICATES & SPECIATION ---
             si_CaSiO3 = max(0.0, (ions.get('Ca', 0) * ions.get('SiO2', 0)) / 2500.0)
             si_MgSiO3 = max(0.0, (ions.get('Mg', 0) * ions.get('SiO2', 0)) / 1800.0)
             si_FeSiO3 = max(0.0, (ions.get('Fe', 0) * ions.get('SiO2', 0)) / 8.0)
@@ -153,7 +151,6 @@ class UtilityProjectionEngine:
         effective = raw_data.copy()
         
         if product_name == "Kem Watreat R 824":
-            # 40% active PAA homopolymer logic (Strong CaCO3, Weak elsewhere)
             active_dose = dose_ppm * 0.40
             
             if effective['LSI'] > 0:
@@ -172,10 +169,8 @@ class UtilityProjectionEngine:
                 effective['CaSO4'] = round(max(0.0, effective['CaSO4'] - reduction), 3)
 
         elif product_name == "Kem Watreat R 246":
-            # 30% active Terpolymer logic (Broad Spectrum Dispersion)
             active_dose = dose_ppm * 0.30
             
-            # 1. Moderate LSI/SDSI Control
             if effective['LSI'] > 0:
                 k_lsi = 1.0 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
@@ -187,21 +182,18 @@ class UtilityProjectionEngine:
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
             
-            # 2. Strong Sulfate Control
             for sulfate in ['CaSO4', 'BaSO4', 'SrSO4']:
                 if effective[sulfate] > 0:
                     k_sulf = 1.2 / (effective[sulfate] ** 0.5)
                     eta_sulf = 1.0 - math.exp(-k_sulf * active_dose)
                     effective[sulfate] = round(effective[sulfate] * (1.0 - eta_sulf), 3)
             
-            # 3. Excellent Silica & Silicate Dispersion
             for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
                 if effective[silica] > 0:
                     k_si = 1.5 / (effective[silica] ** 0.5)
                     eta_si = 1.0 - math.exp(-k_si * active_dose)
                     effective[silica] = round(effective[silica] * (1.0 - eta_si), 3)
             
-            # 4. Iron Dispersion / Sequestration
             if effective['Fe'] > 0:
                 k_fe = 1.8 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_dose)
@@ -212,12 +204,10 @@ class UtilityProjectionEngine:
                 effective['CaF2'] = round(max(0.0, effective['CaF2'] - reduction), 3)
 
         elif product_name == "Kem Watreat R 428 I":
-            # Blended Phosphonate (HEDP 7.7%) + Homopolymer (10%) Synergy
             active_polymer = dose_ppm * 0.10
             active_hedp = dose_ppm * 0.077
             total_active = active_polymer + active_hedp
             
-            # 1. Exceptional LSI/SDSI Control (Synergy drives a higher k-factor)
             if effective['LSI'] > 0:
                 k_lsi = 2.0 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * total_active)
@@ -229,25 +219,60 @@ class UtilityProjectionEngine:
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
 
-            # 2. Strong CaSO4 Control (Driven by HEDP)
             if effective['CaSO4'] > 0:
                 k_caso4 = 1.5 / (effective['CaSO4'] ** 0.5)
                 eta_caso4 = 1.0 - math.exp(-k_caso4 * total_active)
                 effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
 
-            # 3. Moderate Barium/Strontium Control (HEDP Sequestration)
             for sulf in ['BaSO4', 'SrSO4']:
                 if effective[sulf] > 0:
                     k_heavy_sulf = 0.8 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_hedp)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
 
-            # 4. Iron Sequestration (Mild reduction via HEDP)
             if effective['Fe'] > 0:
                 k_fe = 1.0 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
 
+        elif product_name == "Kem Watreat R 4001":
+            # Dual-Phosphonate Blend (ATMP 3.75% + HEDP 6.6%)
+            # Caustic Lye (8.64%) neutralizes pH; phosphonates drive kinetic suppression
+            active_atmp = dose_ppm * 0.0375
+            active_hedp = dose_ppm * 0.066
+            total_active_phos = active_atmp + active_hedp
+            
+            # 1. Extreme CaCO3 Control (Primary function of synergistic phosphonates)
+            if effective['LSI'] > 0:
+                k_lsi = 2.5 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * total_active_phos)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
+                
+            if effective['SDSI'] > 0:
+                k_sdsi = 2.5 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active_phos)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+
+            # 2. Strong CaSO4 Control (Threshold inhibition via ATMP/HEDP)
+            if effective['CaSO4'] > 0:
+                k_caso4 = 1.8 / (effective['CaSO4'] ** 0.5)
+                eta_caso4 = 1.0 - math.exp(-k_caso4 * total_active_phos)
+                effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
+
+            # 3. Moderate Barium/Strontium Control
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    k_heavy_sulf = 1.0 / (effective[sulf] ** 0.5)
+                    eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * total_active_phos)
+                    effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+
+            # 4. Excellent Iron Sequestration (Driven primarily by HEDP)
+            if effective['Fe'] > 0:
+                k_fe = 1.5 / (effective['Fe'] ** 0.5)
+                eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
+                effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
+                
             # Silica, Silicates, and CaF2 remain strictly unaffected
             
         return effective
@@ -443,7 +468,6 @@ class UtilityProjectionEngine:
                 
                 df_performance = pd.DataFrame(performance_data)
                 
-                # Plotly Express Implementation
                 fig = px.line(
                     df_performance,
                     x="Dose (ppm)",
@@ -455,7 +479,6 @@ class UtilityProjectionEngine:
                     }
                 )
                 
-                # Custom layout for clear visibility
                 fig.update_layout(
                     title=f"Scaling Suppression Projection: {selected_product}",
                     hovermode="x unified",
@@ -464,7 +487,6 @@ class UtilityProjectionEngine:
                     margin=dict(l=20, r=20, t=50, b=20)
                 )
                 
-                # Add Safe Zone baseline
                 fig.add_hline(y=0, line_dash="dash", line_color="green", annotation_text="Safe Zone")
 
                 st.plotly_chart(fig, use_container_width=True)
