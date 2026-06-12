@@ -401,7 +401,7 @@ class UtilityProjectionEngine:
         treated_conc_ph = treated_ph + math.log10(cf)
         
         with tab_results:
-            st.subheader("Raw Thermodynamic Saturation (Untreated)")
+            st.subheader("System Concentration & Thermodynamic Saturation")
             
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
             treated_feed_data = self.calculate_scaling_indices(treated_ph, feed_temp, treated_feed_ions)
@@ -411,6 +411,22 @@ class UtilityProjectionEngine:
             
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
+                st.write("**Ion Concentrations (ppm)**")
+                ion_keys = ['Ca', 'Mg', 'Na', 'HCO3', 'Cl', 'SO4', 'Ba', 'Sr', 'F', 'SiO2', 'Fe', 'Al']
+                
+                ion_data = {
+                    "Ion Species (ppm)": ion_keys,
+                    "Raw Feed": [f"{feed_ions.get(k, 0):.2f}" for k in ion_keys],
+                    "Treated Feed": [f"{treated_feed_ions.get(k, 0):.2f}" for k in ion_keys],
+                    "Permeate": [f"{perm_ions.get(k, 0):.2f}" for k in ion_keys],
+                    "Raw Concentrate": [f"{raw_conc_ions.get(k, 0):.2f}" for k in ion_keys],
+                    "Treated Concentrate": [f"{treated_conc_ions.get(k, 0):.2f}" for k in ion_keys]
+                }
+                
+                df_ions = pd.DataFrame(ion_data)
+                st.dataframe(df_ions, use_container_width=True, hide_index=True)
+                
+                st.write("---")
                 st.write("**Thermodynamic Indicators & Ionic Strength**")
                 
                 ind_data = {
@@ -426,7 +442,6 @@ class UtilityProjectionEngine:
                 st.dataframe(df_indicators, use_container_width=True, hide_index=True)
                 
                 st.write("---")
-                
                 st.write("**Slightly Soluble Salts (Saturation Index: IAP / Ksp)**")
                 salt_keys = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
                 
