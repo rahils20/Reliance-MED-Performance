@@ -118,9 +118,15 @@ class UtilityProjectionEngine:
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
-            si_CaSiO3 = max(0.0, (ions.get('Ca', 0) * ions.get('SiO2', 0)) / 2500.0)
-            si_MgSiO3 = max(0.0, (ions.get('Mg', 0) * ions.get('SiO2', 0)) / 1800.0)
-            si_FeSiO3 = max(0.0, (ions.get('Fe', 0) * ions.get('SiO2', 0)) / 8.0)
+            # Evaluate metal silicates strictly if pH > 8.0
+            if pH > 8.0:
+                si_CaSiO3 = max(0.0, (ions.get('Ca', 0) * ions.get('SiO2', 0)) / 2500.0)
+                si_MgSiO3 = max(0.0, (ions.get('Mg', 0) * ions.get('SiO2', 0)) / 1800.0)
+                si_FeSiO3 = max(0.0, (ions.get('Fe', 0) * ions.get('SiO2', 0)) / 8.0)
+            else:
+                si_CaSiO3 = 0.0
+                si_MgSiO3 = 0.0
+                si_FeSiO3 = 0.0
 
             return {
                 "Ionic_Strength": round(I, 4),
@@ -146,6 +152,7 @@ class UtilityProjectionEngine:
     def calculate_effective_scaling(self, raw_data, product_name, dose_ppm):
         effective = raw_data.copy()
         
+        # Original Tab 3 Logic Reverted
         if product_name == "Kem Watreat R 824":
             active_dose = dose_ppm * 0.40
             
@@ -264,7 +271,6 @@ class UtilityProjectionEngine:
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
 
         elif product_name == "Kem Watreat R 170":
-            # PBTC 0.54% + DETMPA 13.5% + Homopolymer 6%
             active_pbtc = dose_ppm * 0.0054
             active_detmpa = dose_ppm * 0.135
             active_poly = dose_ppm * 0.06
@@ -297,7 +303,6 @@ class UtilityProjectionEngine:
                 eta_fe = 1.0 - math.exp(-k_fe * active_detmpa)
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
                 
-            # Starvation Mechanism for Silica / Metal-Silicates via DETMPA Sequestration
             for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
                 if effective[silica] > 0:
                     k_si = 2.5 / (effective[silica] ** 0.5)
@@ -307,7 +312,7 @@ class UtilityProjectionEngine:
         return effective
 
     def render_engine(self):
-        st.title("RO Projection Engine - V3 (Kinetic Update)")
+        st.title("RO Projection Engine")
         
         tab_inputs, tab_results, tab_report = st.tabs([
             "1. Inputs", "2. Results", "3. Projection Report"
@@ -406,46 +411,15 @@ class UtilityProjectionEngine:
             
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
+                target_keys = ["pH", "Ionic_Strength", "LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe", "Al"]
+                
                 report_data = {
-                    "Saturation Index (SI)": [
-                        "pH", "Ionic Strength", "LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", 
-                        "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Iron", "Aluminium"
-                    ],
-                    
-                    "Raw Feed": [
-                        f"{feed_ph:.2f}", f"{feed_data['Ionic_Strength']:.4f}", f"{feed_data['LSI']:.3f}", f"{feed_data['SDSI']:.3f}", 
-                        f"{feed_data['CaCO3']:.3f}", f"{feed_data['CaSO4']:.3f}", f"{feed_data['BaSO4']:.3f}", f"{feed_data['SrSO4']:.3f}", 
-                        f"{feed_data['CaF2']:.3f}", f"{feed_data['Si(OH)4']:.3f}", f"{feed_data['SiO2']:.3f}", f"{feed_data['CaSiO3']:.3f}", 
-                        f"{feed_data['MgSiO3']:.3f}", f"{feed_data['FeSiO3']:.3f}", f"{feed_data['Fe']:.3f}", f"{feed_data['Al']:.3f}"
-                    ],
-                    
-                    "Treated Feed": [
-                        f"{treated_ph:.2f}", f"{treated_feed_data['Ionic_Strength']:.4f}", f"{treated_feed_data['LSI']:.3f}", f"{treated_feed_data['SDSI']:.3f}", 
-                        f"{treated_feed_data['CaCO3']:.3f}", f"{treated_feed_data['CaSO4']:.3f}", f"{treated_feed_data['BaSO4']:.3f}", f"{treated_feed_data['SrSO4']:.3f}", 
-                        f"{treated_feed_data['CaF2']:.3f}", f"{treated_feed_data['Si(OH)4']:.3f}", f"{treated_feed_data['SiO2']:.3f}", f"{treated_feed_data['CaSiO3']:.3f}", 
-                        f"{treated_feed_data['MgSiO3']:.3f}", f"{treated_feed_data['FeSiO3']:.3f}", f"{treated_feed_data['Fe']:.3f}", f"{treated_feed_data['Al']:.3f}"
-                    ],
-                    
-                    "Permeate": [
-                        f"{perm_ph:.2f}", f"{perm_data['Ionic_Strength']:.4f}", f"{perm_data['LSI']:.3f}", f"{perm_data['SDSI']:.3f}", 
-                        f"{perm_data['CaCO3']:.3f}", f"{perm_data['CaSO4']:.3f}", f"{perm_data['BaSO4']:.3f}", f"{perm_data['SrSO4']:.3f}", 
-                        f"{perm_data['CaF2']:.3f}", f"{perm_data['Si(OH)4']:.3f}", f"{perm_data['SiO2']:.3f}", f"{perm_data['CaSiO3']:.3f}", 
-                        f"{perm_data['MgSiO3']:.3f}", f"{perm_data['FeSiO3']:.3f}", f"{perm_data['Fe']:.3f}", f"{perm_data['Al']:.3f}"
-                    ],
-                    
-                    "Raw Concentrate": [
-                        f"{raw_conc_ph:.2f}", f"{raw_conc_data['Ionic_Strength']:.4f}", f"{raw_conc_data['LSI']:.3f}", f"{raw_conc_data['SDSI']:.3f}", 
-                        f"{raw_conc_data['CaCO3']:.3f}", f"{raw_conc_data['CaSO4']:.3f}", f"{raw_conc_data['BaSO4']:.3f}", f"{raw_conc_data['SrSO4']:.3f}", 
-                        f"{raw_conc_data['CaF2']:.3f}", f"{raw_conc_data['Si(OH)4']:.3f}", f"{raw_conc_data['SiO2']:.3f}", f"{raw_conc_data['CaSiO3']:.3f}", 
-                        f"{raw_conc_data['MgSiO3']:.3f}", f"{raw_conc_data['FeSiO3']:.3f}", f"{raw_conc_data['Fe']:.3f}", f"{raw_conc_data['Al']:.3f}"
-                    ],
-                    
-                    "Treated Concentrate": [
-                        f"{treated_conc_ph:.2f}", f"{treated_conc_data['Ionic_Strength']:.4f}", f"{treated_conc_data['LSI']:.3f}", f"{treated_conc_data['SDSI']:.3f}", 
-                        f"{treated_conc_data['CaCO3']:.3f}", f"{treated_conc_data['CaSO4']:.3f}", f"{treated_conc_data['BaSO4']:.3f}", f"{treated_conc_data['SrSO4']:.3f}", 
-                        f"{treated_conc_data['CaF2']:.3f}", f"{treated_conc_data['Si(OH)4']:.3f}", f"{treated_conc_data['SiO2']:.3f}", f"{treated_conc_data['CaSiO3']:.3f}", 
-                        f"{treated_conc_data['MgSiO3']:.3f}", f"{treated_conc_data['FeSiO3']:.3f}", f"{treated_conc_data['Fe']:.3f}", f"{treated_conc_data['Al']:.3f}"
-                    ]
+                    "Saturation Index (SI)": target_keys,
+                    "Raw Feed": [f"{feed_data.get(k, (feed_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{feed_ph:.2f}" for k in target_keys],
+                    "Treated Feed": [f"{treated_feed_data.get(k, (treated_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{treated_ph:.2f}" for k in target_keys],
+                    "Permeate": [f"{perm_data.get(k, (perm_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{perm_ph:.2f}" for k in target_keys],
+                    "Raw Concentrate": [f"{raw_conc_data.get(k, (raw_conc_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{raw_conc_ph:.2f}" for k in target_keys],
+                    "Treated Concentrate": [f"{treated_conc_data.get(k, (treated_conc_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{treated_conc_ph:.2f}" for k in target_keys]
                 }
                 
                 df_report = pd.DataFrame(report_data)
@@ -455,6 +429,9 @@ class UtilityProjectionEngine:
                 col_m1, col_m2 = st.columns(2)
                 col_m1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
                 col_m2.metric(label="Mineral Passage", value=f"{round(passage_rate * 100, 2)}%")
+                
+                if treated_conc_ph <= 8.0:
+                    st.info("ℹ️ **Note:** Metal silicates ($CaSiO_3$, $MgSiO_3$, $FeSiO_3$) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
                 
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
@@ -467,7 +444,7 @@ class UtilityProjectionEngine:
             with col1:
                 selected_product = st.selectbox(
                     "Select Antiscalant Formulation", 
-                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 428 I", "Kem Watreat R 4001", "Kem Watreat R 170", "Kem Watreat R 6863", "Kem Watreat R 6196"]
+                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 428 I", "Kem Watreat R 4001", "Kem Watreat R 170"]
                 )
             with col2:
                 manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=5.0)
@@ -478,23 +455,16 @@ class UtilityProjectionEngine:
                 dose_range = [x * 0.5 for x in range(0, 21)] 
                 performance_data = []
                 
+                # Use slightly soluble salts keys for the graph as requested previously
+                graph_keys = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
+                
                 for d in dose_range:
                     eff_data = self.calculate_effective_scaling(treated_conc_data, selected_product, d)
-                    performance_data.append({
-                        "Dose (ppm)": d,
-                        "LSI": eff_data['LSI'],
-                        "SDSI": eff_data['SDSI'],
-                        "CaCO3": eff_data['CaCO3'],
-                        "CaSO4": eff_data['CaSO4'],
-                        "BaSO4": eff_data['BaSO4'],
-                        "SrSO4": eff_data['SrSO4'],
-                        "CaF2": eff_data['CaF2'],
-                        "Si(OH)4": eff_data['Si(OH)4'],
-                        "SiO2 (Silica)": eff_data['SiO2'],
-                        "CaSiO3": eff_data['CaSiO3'],
-                        "MgSiO3": eff_data['MgSiO3'],
-                        "FeSiO3": eff_data['FeSiO3']
-                    })
+                    row_data = {"Dose (ppm)": d}
+                    for k in graph_keys:
+                        if k in eff_data:
+                            row_data[k] = eff_data[k]
+                    performance_data.append(row_data)
                 
                 df_performance = pd.DataFrame(performance_data)
                 
