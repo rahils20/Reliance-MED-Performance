@@ -152,7 +152,7 @@ class UtilityProjectionEngine:
     def calculate_effective_scaling(self, raw_data, product_name, dose_ppm):
         effective = raw_data.copy()
         
-        # Original Tab 3 Logic Reverted
+        # Original Tab 3 Logic Maintained
         if product_name == "Kem Watreat R 824":
             active_dose = dose_ppm * 0.40
             
@@ -411,19 +411,36 @@ class UtilityProjectionEngine:
             
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
-                target_keys = ["pH", "Ionic_Strength", "LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe", "Al"]
+                st.write("**Thermodynamic Indicators & Ionic Strength**")
                 
-                report_data = {
-                    "Saturation Index (SI)": target_keys,
-                    "Raw Feed": [f"{feed_data.get(k, (feed_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{feed_ph:.2f}" for k in target_keys],
-                    "Treated Feed": [f"{treated_feed_data.get(k, (treated_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{treated_ph:.2f}" for k in target_keys],
-                    "Permeate": [f"{perm_data.get(k, (perm_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{perm_ph:.2f}" for k in target_keys],
-                    "Raw Concentrate": [f"{raw_conc_data.get(k, (raw_conc_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{raw_conc_ph:.2f}" for k in target_keys],
-                    "Treated Concentrate": [f"{treated_conc_data.get(k, (treated_conc_ph if k == 'pH' else 0)):.3f}" if k != "pH" else f"{treated_conc_ph:.2f}" for k in target_keys]
+                ind_data = {
+                    "Parameter": ["LSI (True Value)", "SDSI (True Value)", "Ionic Strength"],
+                    "Raw Feed": [f"{feed_data['LSI']:.3f}", f"{feed_data['SDSI']:.3f}", f"{feed_data['Ionic_Strength']:.4f}"],
+                    "Treated Feed": [f"{treated_feed_data['LSI']:.3f}", f"{treated_feed_data['SDSI']:.3f}", f"{treated_feed_data['Ionic_Strength']:.4f}"],
+                    "Permeate": [f"{perm_data['LSI']:.3f}", f"{perm_data['SDSI']:.3f}", f"{perm_data['Ionic_Strength']:.4f}"],
+                    "Raw Concentrate": [f"{raw_conc_data['LSI']:.3f}", f"{raw_conc_data['SDSI']:.3f}", f"{raw_conc_data['Ionic_Strength']:.4f}"],
+                    "Treated Concentrate": [f"{treated_conc_data['LSI']:.3f}", f"{treated_conc_data['SDSI']:.3f}", f"{treated_conc_data['Ionic_Strength']:.4f}"]
                 }
                 
-                df_report = pd.DataFrame(report_data)
-                st.dataframe(df_report, use_container_width=True, hide_index=True)
+                df_indicators = pd.DataFrame(ind_data)
+                st.dataframe(df_indicators, use_container_width=True, hide_index=True)
+                
+                st.write("---")
+                
+                st.write("**Slightly Soluble Salts (Saturation Index: IAP / Ksp)**")
+                salt_keys = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
+                
+                salt_data = {
+                    "Salt Species": salt_keys,
+                    "Raw Feed": [f"{feed_data[k]:.3f}" for k in salt_keys],
+                    "Treated Feed": [f"{treated_feed_data[k]:.3f}" for k in salt_keys],
+                    "Permeate": [f"{perm_data[k]:.3f}" for k in salt_keys],
+                    "Raw Concentrate": [f"{raw_conc_data[k]:.3f}" for k in salt_keys],
+                    "Treated Concentrate": [f"{treated_conc_data[k]:.3f}" for k in salt_keys]
+                }
+                
+                df_salts = pd.DataFrame(salt_data)
+                st.dataframe(df_salts, use_container_width=True, hide_index=True)
 
                 st.write("---")
                 col_m1, col_m2 = st.columns(2)
@@ -455,7 +472,6 @@ class UtilityProjectionEngine:
                 dose_range = [x * 0.5 for x in range(0, 21)] 
                 performance_data = []
                 
-                # Use slightly soluble salts keys for the graph as requested previously
                 graph_keys = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
                 
                 for d in dose_range:
