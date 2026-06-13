@@ -34,15 +34,17 @@ class UtilityProjectionEngine:
             pK2 = (2902.39 / T_K) - 6.498 + (0.02379 * T_K)
             pKs = 171.9065 + (0.077993 * T_K) - (2839.319 / T_K) - (71.595 * math.log10(T_K))
 
+            # Updated with full ion list to ensure accurate Ionic Strength calculation
             ion_properties = {
                 'Ca': {'mw': 40.08, 'z': 2}, 'Mg': {'mw': 24.31, 'z': 2},
                 'Na': {'mw': 22.99, 'z': 1}, 'K':  {'mw': 39.10, 'z': 1},
-                'Ba': {'mw': 137.33, 'z': 2}, 'Sr': {'mw': 87.62, 'z': 2},
-                'HCO3': {'mw': 61.02, 'z': 1}, 'Cl': {'mw': 35.45, 'z': 1},
-                'SO4': {'mw': 96.06, 'z': 2}, 'F':  {'mw': 19.00, 'z': 1},
-                'NO3': {'mw': 62.00, 'z': 1}, 'PO4': {'mw': 94.97, 'z': 3},
-                'SiO2': {'mw': 60.08, 'z': 0}, 'Fe': {'mw': 55.84, 'z': 2}, 
-                'Al': {'mw': 26.98, 'z': 3}
+                'NH4': {'mw': 18.04, 'z': 1}, 'Ba': {'mw': 137.33, 'z': 2}, 
+                'Sr': {'mw': 87.62, 'z': 2}, 'Fe': {'mw': 55.84, 'z': 2}, 
+                'Al': {'mw': 26.98, 'z': 3}, 'HCO3': {'mw': 61.02, 'z': 1}, 
+                'Cl': {'mw': 35.45, 'z': 1}, 'SO4': {'mw': 96.06, 'z': 2}, 
+                'F':  {'mw': 19.00, 'z': 1}, 'NO3': {'mw': 62.00, 'z': 1}, 
+                'PO4': {'mw': 94.97, 'z': 3}, 'CO3': {'mw': 60.01, 'z': 2},
+                'SiO2': {'mw': 60.08, 'z': 0}, 'CO2': {'mw': 44.01, 'z': 0}
             }
             
             molarity = {}
@@ -118,7 +120,6 @@ class UtilityProjectionEngine:
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
-            # Evaluate metal silicates strictly if pH > 8.0
             if pH > 8.0:
                 si_CaSiO3 = max(0.0, (ions.get('Ca', 0) * ions.get('SiO2', 0)) / 2500.0)
                 si_MgSiO3 = max(0.0, (ions.get('Mg', 0) * ions.get('SiO2', 0)) / 1800.0)
@@ -152,7 +153,6 @@ class UtilityProjectionEngine:
     def calculate_effective_scaling(self, raw_data, product_name, dose_ppm):
         effective = raw_data.copy()
         
-        # Original Tab 3 Logic Maintained
         if product_name == "Kem Watreat R 824":
             active_dose = dose_ppm * 0.40
             
@@ -321,10 +321,11 @@ class UtilityProjectionEngine:
         with tab_inputs:
             st.subheader("System & Water Parameters")
             
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns([1.2, 1, 1])
+            
             with col1:
                 st.write("**Operational Parameters**")
-                feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=30.0)
+                feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=25.0)
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
                 salt_rejection = st.slider("Membrane Salt Rejection (%)", min_value=90.0, max_value=99.8, value=99.0, step=0.1)
                 
@@ -339,26 +340,90 @@ class UtilityProjectionEngine:
                     treated_ph = feed_ph
                     
                 acid_dose_container = st.empty()
-                
                 perm_ph = st.number_input("Permeate pH (RO Water)", min_value=1.0, max_value=14.0, value=6.0)
                 
+            feed_ions = {}
             with col2:
-                st.write("**Feed Water Ions (ppm / mg/L)**")
-                feed_ions = {
-                    'Ca': st.number_input("Calcium (Ca2+)", min_value=0.0, value=150.0),
-                    'Mg': st.number_input("Magnesium (Mg2+)", min_value=0.0, value=50.0),
-                    'Na': st.number_input("Sodium (Na+)", min_value=0.0, value=300.0),
-                    'HCO3': st.number_input("Bicarbonate (HCO3-)", min_value=0.0, value=250.0),
-                    'Cl': st.number_input("Chloride (Cl-)", min_value=0.0, value=400.0),
-                    'SO4': st.number_input("Sulfate (SO4 2-)", min_value=0.0, value=200.0),
-                    'Ba': st.number_input("Barium (Ba2+)", min_value=0.0, value=0.05),
-                    'Sr': st.number_input("Strontium (Sr2+)", min_value=0.0, value=1.2),
-                    'F': st.number_input("Fluoride (F-)", min_value=0.0, value=0.5),
-                    'SiO2': st.number_input("Silica (SiO2)", min_value=0.0, value=15.0),
-                    'Fe': st.number_input("Iron (Fe)", min_value=0.0, value=0.02),
-                    'Al': st.number_input("Aluminium (Al)", min_value=0.0, value=0.01)
-                }
+                st.write("**Cations (mg/L)**")
+                feed_ions['Ca'] = st.number_input("Calcium (Ca++)", min_value=0.0, value=150.0)
+                feed_ions['Mg'] = st.number_input("Magnesium (Mg++)", min_value=0.0, value=50.0)
+                feed_ions['Na'] = st.number_input("Sodium (Na+)", min_value=0.0, value=300.0)
+                feed_ions['K'] = st.number_input("Potassium (K+)", min_value=0.0, value=10.0)
+                feed_ions['NH4'] = st.number_input("Ammonium (NH4+)", min_value=0.0, value=0.0)
+                feed_ions['Ba'] = st.number_input("Barium (Ba++)", min_value=0.0, value=0.05)
+                feed_ions['Sr'] = st.number_input("Strontium (Sr++)", min_value=0.0, value=1.2)
+                feed_ions['Fe'] = st.number_input("Iron (Fe2+/3+)", min_value=0.0, value=0.02)
+                feed_ions['Al'] = st.number_input("Aluminium (Al+++)", min_value=0.0, value=0.01)
 
+            with col3:
+                st.write("**Anions & Neutrals (mg/L)**")
+                feed_ions['HCO3'] = st.number_input("Bicarbonate (HCO3-)", min_value=0.0, value=250.0)
+                feed_ions['Cl'] = st.number_input("Chloride (Cl-)", min_value=0.0, value=400.0)
+                feed_ions['SO4'] = st.number_input("Sulfate (SO4--)", min_value=0.0, value=200.0)
+                feed_ions['F'] = st.number_input("Fluoride (F-)", min_value=0.0, value=0.5)
+                feed_ions['NO3'] = st.number_input("Nitrate (NO3-)", min_value=0.0, value=5.0)
+                feed_ions['PO4'] = st.number_input("Phosphate (PO4---)", min_value=0.0, value=0.0)
+                feed_ions['CO3'] = st.number_input("Carbonate (CO3--)", min_value=0.0, value=0.0)
+                feed_ions['SiO2'] = st.number_input("Silica (SiO2)", min_value=0.0, value=15.0)
+                feed_ions['CO2'] = st.number_input("Carbon Dioxide (CO2)", min_value=0.0, value=5.0)
+
+            # Equivalency Weights for meq/L calculations
+            eq_wt = {
+                'Ca': 20.04, 'Mg': 12.15, 'Na': 22.99, 'K': 39.10, 'NH4': 18.04, 
+                'Ba': 68.67, 'Sr': 43.81, 'Fe': 27.92, 'Al': 8.99,
+                'HCO3': 61.02, 'Cl': 35.45, 'SO4': 48.03, 'F': 19.00, 
+                'NO3': 62.00, 'PO4': 31.66, 'CO3': 30.01
+            }
+            
+            cat_keys = ['Ca', 'Mg', 'Na', 'K', 'NH4', 'Ba', 'Sr', 'Fe', 'Al']
+            an_keys = ['HCO3', 'Cl', 'SO4', 'F', 'NO3', 'PO4', 'CO3']
+            
+            cat_meq = sum(feed_ions[k] / eq_wt[k] for k in cat_keys)
+            an_meq = sum(feed_ions[k] / eq_wt[k] for k in an_keys)
+            
+            if cat_meq + an_meq > 0:
+                error_pct = ((cat_meq - an_meq) / (cat_meq + an_meq)) * 100
+            else:
+                error_pct = 0.0
+                
+            calc_tds = sum(feed_ions.values())
+            
+            st.write("---")
+            st.subheader("Water Profile Verification")
+            
+            v_col1, v_col2, v_col3, v_col4 = st.columns(4)
+            v_col1.metric("Cations (meq/L)", round(cat_meq, 3))
+            v_col2.metric("Anions (meq/L)", round(an_meq, 3))
+            
+            if abs(error_pct) <= 5.0:
+                v_col3.success(f"Balance Error: {round(error_pct, 2)}% (OK)")
+            else:
+                v_col3.error(f"Balance Error: {round(error_pct, 2)}% (Check Imbalance)")
+                
+            v_col4.metric("Calculated TDS (mg/L)", round(calc_tds, 2))
+            
+            st.write("**Balance & Scale Adjustments**")
+            bal_col1, bal_col2 = st.columns(2)
+            with bal_col1:
+                auto_balance = st.checkbox("⚖️ Auto-Balance Ions (Na/Cl Method)", value=(abs(error_pct) > 5.0))
+            with bal_col2:
+                target_tds = st.number_input("Override Target TDS (mg/L)", min_value=0.0, value=float(round(calc_tds, 2)))
+                scale_tds = st.checkbox("📈 Scale all ions proportionally to match Target TDS", value=False)
+                
+            # Apply background mathematical adjustments based on toggles
+            if auto_balance and abs(error_pct) > 0.01:
+                if cat_meq > an_meq:
+                    feed_ions['Cl'] += (cat_meq - an_meq) * eq_wt['Cl']
+                else:
+                    feed_ions['Na'] += (an_meq - cat_meq) * eq_wt['Na']
+                    
+            if scale_tds and target_tds > 0 and calc_tds > 0:
+                new_calc_tds = sum(feed_ions.values())
+                multiplier = target_tds / new_calc_tds
+                for k in feed_ions:
+                    feed_ions[k] *= multiplier
+
+        # Proceed with mathematical routing using the adjusted feed_ions array
         cf = 1 / (1 - (recovery / 100))
         passage_rate = 1 - (salt_rejection / 100)
         
@@ -412,7 +477,7 @@ class UtilityProjectionEngine:
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
                 st.write("**Ion Concentrations (ppm)**")
-                ion_keys = ['Ca', 'Mg', 'Na', 'HCO3', 'Cl', 'SO4', 'Ba', 'Sr', 'F', 'SiO2', 'Fe', 'Al']
+                ion_keys = ['Ca', 'Mg', 'Na', 'K', 'NH4', 'Ba', 'Sr', 'Fe', 'Al', 'HCO3', 'Cl', 'SO4', 'F', 'NO3', 'PO4', 'CO3', 'SiO2', 'CO2']
                 
                 ion_data = {
                     "Ion Species (ppm)": ion_keys,
