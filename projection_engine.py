@@ -76,7 +76,8 @@ class UtilityProjectionEngine:
                     "BaSO4": 0.0, "SrSO4": 0.0, "CaF2": 0.0, "Si(OH)4": 0.0, "SiO2": 0.0,
                     "CaSiO3": 0.0, "MgSiO3": 0.0, "FeSiO3": 0.0, "Fe": 0.0, "Al": 0.0,
                     "IAP_CaSO4": 0.0, "IAP_BaSO4": 0.0, "IAP_SrSO4": 0.0, "IAP_CaF2": 0.0,
-                    "IAP_CaSiO3": 0.0, "IAP_MgSiO3": 0.0, "IAP_FeSiO3": 0.0
+                    "IAP_CaSiO3": 0.0, "IAP_MgSiO3": 0.0, "IAP_FeSiO3": 0.0,
+                    "IAP_SiOH4": 0.0, "Ksp_SiOH4": 1.0, "Fraction_SiO3": 0.0
                 }
 
             def get_activity_coef(charge, ionic_strength):
@@ -101,15 +102,18 @@ class UtilityProjectionEngine:
                 correction = A_dh_const * z_product * (sqrt_I / (1 + 1.4 * sqrt_I))
                 return pKsp_pure - correction
 
+            # Standard Thermodynamic Ksps
             pksp_CaSO4 = 4.62
             pksp_BaSO4 = 9.96
             pksp_SrSO4 = 6.49
             pksp_CaF2  = 10.40
+            pksp_CaSiO3 = 8.00  # Added for Metal Silicates
 
             Ksp_prime_CaSO4 = 10**-(get_pKsp_apparent(pksp_CaSO4, 4, I))
             Ksp_prime_BaSO4 = 10**-(get_pKsp_apparent(pksp_BaSO4, 4, I))
             Ksp_prime_SrSO4 = 10**-(get_pKsp_apparent(pksp_SrSO4, 4, I))
             Ksp_prime_CaF2  = 10**-(get_pKsp_apparent(pksp_CaF2, 2, I)) 
+            Ksp_prime_CaSiO3 = 10**-(get_pKsp_apparent(pksp_CaSiO3, 4, I))
 
             def calc_si_and_iap(m1, m2, ksp_prime, is_fluoride=False):
                 if m1 == 0 or m2 == 0: return 0.0, 0.0
@@ -126,34 +130,44 @@ class UtilityProjectionEngine:
             si_SrSO4, iap_SrSO4 = calc_si_and_iap(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
             si_CaF2, iap_CaF2 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
+            # --- SILICA SPECIATION & SOLUBILITY LOGIC ---
             if temp_c <= 25:
-                sio2_limit = 125.0
+                sio2_limit_ppm = 125.0
             elif temp_c <= 30:
-                sio2_limit = 125.0 + ((temp_c - 25.0) * ((135.0 - 125.0) / 5.0))
+                sio2_limit_ppm = 125.0 + ((temp_c - 25.0) * ((135.0 - 125.0) / 5.0))
             else:
-                sio2_limit = 135.0 + ((temp_c - 30.0) * ((144.8 - 135.0) / 5.0))
+                sio2_limit_ppm = 135.0 + ((temp_c - 30.0) * ((144.8 - 135.0) / 5.0))
                 
-            si_SiO2 = ions.get('SiO2', 0) / sio2_limit
+            sio2_limit_molar = sio2_limit_ppm / 1000 / 60.08
+            si_molarity_total = molarity.get('SiO2', 0)
+            
+            si_SiO2 = max(0.0, math.log10(si_molarity_total / sio2_limit_molar)) if si_molarity_total > 0 else 0.0
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
-            iap_CaSiO3 = 0.0
-            iap_MgSiO3 = 0.0
-            iap_FeSiO3 = 0.0
+            # pH Speciation for Metal Silicates
+            pKa1_si = 9.8
+            pKa2_si = 11.8
+            denominator = 1.0 + 10**(pH - pKa1_si) + 10**(2*pH - pKa1_si - pKa2_si)
+            fraction_SiO3_anion = (10**(2*pH - pKa1_si - pKa2_si)) / denominator
+            
+            active_sio3_molarity = si_molarity_total * fraction_SiO3_anion
 
             if pH > 8.0:
-                # Raw pseudo-IAP calculation for display purposes
-                iap_CaSiO3 = (ions.get('Ca', 0) * ions.get('SiO2', 0))
-                iap_MgSiO3 = (ions.get('Mg', 0) * ions.get('SiO2', 0))
-                iap_FeSiO3 = (ions.get('Fe', 0) * ions.get('SiO2', 0))
+                si_CaSiO3, iap_CaSiO3 = calc_si_and_iap(molarity.get('Ca', 0), active_sio3_molarity, Ksp_prime_CaSiO3)
                 
-                si_CaSiO3 = max(0.0, iap_CaSiO3 / 2500.0)
-                si_MgSiO3 = max(0.0, iap_MgSiO3 / 1800.0)
-                si_FeSiO3 = max(0.0, iap_FeSiO3 / 8.0)
+                Ksp_prime_MgSiO3 = Ksp_prime_CaSiO3 * 1.5 
+                Ksp_prime_FeSiO3 = Ksp_prime_CaSiO3 * 0.05
+                
+                si_MgSiO3, iap_MgSiO3 = calc_si_and_iap(molarity.get('Mg', 0), active_sio3_molarity, Ksp_prime_MgSiO3)
+                si_FeSiO3, iap_FeSiO3 = calc_si_and_iap(molarity.get('Fe', 0), active_sio3_molarity, Ksp_prime_FeSiO3)
             else:
                 si_CaSiO3 = 0.0
                 si_MgSiO3 = 0.0
                 si_FeSiO3 = 0.0
+                iap_CaSiO3 = 0.0
+                iap_MgSiO3 = 0.0
+                iap_FeSiO3 = 0.0
 
             return {
                 "Ionic_Strength": round(I, 4),
@@ -175,9 +189,12 @@ class UtilityProjectionEngine:
                 "IAP_BaSO4": iap_BaSO4,
                 "IAP_SrSO4": iap_SrSO4,
                 "IAP_CaF2": iap_CaF2,
+                "IAP_SiOH4": si_molarity_total,
+                "Ksp_SiOH4": sio2_limit_molar,
                 "IAP_CaSiO3": iap_CaSiO3,
                 "IAP_MgSiO3": iap_MgSiO3,
-                "IAP_FeSiO3": iap_FeSiO3
+                "IAP_FeSiO3": iap_FeSiO3,
+                "Fraction_SiO3": fraction_SiO3_anion
             }
             
         except Exception as e:
@@ -341,6 +358,52 @@ class UtilityProjectionEngine:
                     k_si = 2.5 / (effective[silica] ** 0.5)
                     eta_si = 1.0 - math.exp(-k_si * total_active)
                     effective[silica] = round(effective[silica] * (1.0 - eta_si), 3)
+
+        elif product_name == "Kem Watreat R 6863":
+            total_active = (dose_ppm * 0.040) + (dose_ppm * 0.050) + (dose_ppm * 0.080)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.3 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.6 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    effective[sulf] = round(effective[sulf] * math.exp(-(1.2 / (effective[sulf] ** 0.5)) * total_active), 3)
+
+        elif product_name == "Kem Watreat R 6196":
+            total_active = (dose_ppm * 0.050) + (dose_ppm * 0.100) 
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.1 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.2 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+
+        elif product_name == "Kem Watreat R 428 ID":
+            total_active = (dose_ppm * 0.060) + (dose_ppm * 0.080)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(1.9 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.4 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+
+        elif product_name == "Kem Watreat R 4002":
+            total_active = (dose_ppm * 0.030) + (dose_ppm * 0.040) + (dose_ppm * 0.080)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.6 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.7 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+
+        elif product_name == "Kem Watreat R 3687":
+            total_active = (dose_ppm * 0.150) + (dose_ppm * 0.050)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.8 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(2.2 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    effective[sulf] = round(effective[sulf] * math.exp(-(1.5 / (effective[sulf] ** 0.5)) * (dose_ppm * 0.050)), 3)
             
         return effective
 
@@ -375,7 +438,6 @@ class UtilityProjectionEngine:
                 acid_dose_container = st.empty()
                 perm_ph = st.number_input("Permeate pH (RO Water)", min_value=1.0, max_value=14.0, value=6.0)
                 
-            # Render inputs mapped directly to session_state
             with col2:
                 st.write("**Cations (mg/L)**")
                 st.session_state.ui_ions['Ca'] = st.number_input("Calcium (Ca++)", min_value=0.0, value=float(st.session_state.ui_ions['Ca']))
@@ -400,7 +462,6 @@ class UtilityProjectionEngine:
                 st.session_state.ui_ions['SiO2'] = st.number_input("Silica (SiO2)", min_value=0.0, value=float(st.session_state.ui_ions['SiO2']))
                 st.session_state.ui_ions['CO2'] = st.number_input("Carbon Dioxide (CO2)", min_value=0.0, value=float(st.session_state.ui_ions['CO2']))
 
-            # Create a working copy for mathematical adjustments
             calc_ions = st.session_state.ui_ions.copy()
 
             eq_wt = {
@@ -552,12 +613,12 @@ class UtilityProjectionEngine:
                 st.dataframe(df_indicators, use_container_width=True, hide_index=True)
 
                 st.write("---")
-                st.write("**Ion Activity Products (IAP) - Treated Concentrate**")
+                st.write("**Ion Activity Products (IAP) vs Operational Solubility Limits - Treated Concentrate**")
                 
                 iap_data = {
                     "Salt Species": [
                         "CaSO4", "BaSO4", "SrSO4", "CaF2", 
-                        "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"
+                        "Si(OH)4 (Amorphous)", "CaSiO3 (Ionized)", "MgSiO3 (Ionized)", "FeSiO3 (Ionized)"
                     ],
                     "Cation [ppm]": [
                         f"{treated_conc_ions.get('Ca', 0):.2f}", 
@@ -574,20 +635,25 @@ class UtilityProjectionEngine:
                         f"{treated_conc_ions.get('SO4', 0):.2f}", 
                         f"{treated_conc_ions.get('SO4', 0):.2f}", 
                         f"{treated_conc_ions.get('F', 0):.2f}",
-                        f"{treated_conc_ions.get('SiO2', 0):.2f}",
-                        f"{treated_conc_ions.get('SiO2', 0):.2f}",
-                        f"{treated_conc_ions.get('SiO2', 0):.2f}",
-                        f"{treated_conc_ions.get('SiO2', 0):.2f}"
+                        f"{treated_conc_ions.get('SiO2', 0):.2f} (Total)",
+                        f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)",
+                        f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)",
+                        f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)"
                     ],
-                    "IAP (mol/L)": [
+                    "IAP or Molarity (mol/L)": [
                         self.format_sci(treated_conc_data['IAP_CaSO4']), 
                         self.format_sci(treated_conc_data['IAP_BaSO4']), 
                         self.format_sci(treated_conc_data['IAP_SrSO4']), 
                         self.format_sci(treated_conc_data['IAP_CaF2']),
-                        "Concentration Limit",
+                        self.format_sci(treated_conc_data['IAP_SiOH4']),
                         self.format_sci(treated_conc_data['IAP_CaSiO3']),
                         self.format_sci(treated_conc_data['IAP_MgSiO3']),
                         self.format_sci(treated_conc_data['IAP_FeSiO3'])
+                    ],
+                    "Apparent Ksp or Limit (mol/L)": [
+                        "Approx Threshold", "Approx Threshold", "Approx Threshold", "Approx Threshold",
+                        self.format_sci(treated_conc_data['Ksp_SiOH4']),
+                        "Approx Threshold", "Approx Threshold", "Approx Threshold"
                     ]
                 }
                 
@@ -595,7 +661,7 @@ class UtilityProjectionEngine:
                 st.dataframe(df_iap, use_container_width=True, hide_index=True)
                 
                 st.write("---")
-                st.write("**Slightly Soluble Salts (Saturation Index: IAP / Apparent Ksp)**")
+                st.write("**Slightly Soluble Salts (Saturation Index: Ratio of IAP / Limit)**")
                 salt_keys = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
                 
                 salt_data = {
@@ -615,9 +681,6 @@ class UtilityProjectionEngine:
                 col_m1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
                 col_m2.metric(label="Mineral Passage", value=f"{round(passage_rate * 100, 2)}%")
                 
-                if treated_conc_ph <= 8.0:
-                    st.info("ℹ️ **Note:** Metal silicates ($CaSiO_3$, $MgSiO_3$, $FeSiO_3$) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
-                
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
                 
@@ -629,7 +692,7 @@ class UtilityProjectionEngine:
             with col1:
                 selected_product = st.selectbox(
                     "Select Antiscalant Formulation", 
-                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 428 I", "Kem Watreat R 4001", "Kem Watreat R 170"]
+                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 428 I", "Kem Watreat R 4001", "Kem Watreat R 170", "Kem Watreat R 6863", "Kem Watreat R 6196", "Kem Watreat R 428 ID", "Kem Watreat R 4002", "Kem Watreat R 3687"]
                 )
             with col2:
                 manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=5.0)
