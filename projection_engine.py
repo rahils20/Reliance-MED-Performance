@@ -34,7 +34,6 @@ class UtilityProjectionEngine:
             pK2 = (2902.39 / T_K) - 6.498 + (0.02379 * T_K)
             pKs = 171.9065 + (0.077993 * T_K) - (2839.319 / T_K) - (71.595 * math.log10(T_K))
 
-            # Updated with full ion list to ensure accurate Ionic Strength calculation
             ion_properties = {
                 'Ca': {'mw': 40.08, 'z': 2}, 'Mg': {'mw': 24.31, 'z': 2},
                 'Na': {'mw': 22.99, 'z': 1}, 'K':  {'mw': 39.10, 'z': 1},
@@ -59,7 +58,8 @@ class UtilityProjectionEngine:
                 return {
                     "Ionic_Strength": 0.0, "LSI": -5.0, "SDSI": -5.0, "CaCO3": -5.0, "CaSO4": 0.0, 
                     "BaSO4": 0.0, "SrSO4": 0.0, "CaF2": 0.0, "Si(OH)4": 0.0, "SiO2": 0.0,
-                    "CaSiO3": 0.0, "MgSiO3": 0.0, "FeSiO3": 0.0, "Fe": 0.0, "Al": 0.0
+                    "CaSiO3": 0.0, "MgSiO3": 0.0, "FeSiO3": 0.0, "Fe": 0.0, "Al": 0.0,
+                    "IAP_CaSO4": 0.0, "IAP_BaSO4": 0.0, "IAP_SrSO4": 0.0, "IAP_CaF2": 0.0
                 }
 
             def get_activity_coef(charge, ionic_strength):
@@ -94,20 +94,20 @@ class UtilityProjectionEngine:
             Ksp_prime_SrSO4 = 10**-(get_pKsp_apparent(pksp_SrSO4, 4, I))
             Ksp_prime_CaF2  = 10**-(get_pKsp_apparent(pksp_CaF2, 2, I)) 
 
-            def calc_si_apparent(m1, m2, ksp_prime, is_fluoride=False):
-                if m1 == 0 or m2 == 0: return 0.0
+            def calc_si_and_iap(m1, m2, ksp_prime, is_fluoride=False):
+                if m1 == 0 or m2 == 0: return 0.0, 0.0
                 if is_fluoride:
                     iap = m1 * (m2**2)
                 else:
                     iap = m1 * m2
-                if iap == 0: return 0.0
+                if iap == 0: return 0.0, 0.0
                 si = math.log10(iap / ksp_prime)
-                return max(0.0, si)
+                return max(0.0, si), iap
 
-            si_CaSO4 = calc_si_apparent(molarity.get('Ca', 0), molarity.get('SO4', 0), Ksp_prime_CaSO4)
-            si_BaSO4 = calc_si_apparent(molarity.get('Ba', 0), molarity.get('SO4', 0), Ksp_prime_BaSO4)
-            si_SrSO4 = calc_si_apparent(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
-            si_CaF2 = calc_si_apparent(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
+            si_CaSO4, iap_CaSO4 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('SO4', 0), Ksp_prime_CaSO4)
+            si_BaSO4, iap_BaSO4 = calc_si_and_iap(molarity.get('Ba', 0), molarity.get('SO4', 0), Ksp_prime_BaSO4)
+            si_SrSO4, iap_SrSO4 = calc_si_and_iap(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
+            si_CaF2, iap_CaF2 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
             if temp_c <= 25:
                 sio2_limit = 125.0
@@ -144,7 +144,11 @@ class UtilityProjectionEngine:
                 "MgSiO3": round(si_MgSiO3, 3),
                 "FeSiO3": round(si_FeSiO3, 3),
                 "Fe": round(si_Fe, 3),
-                "Al": round(si_Al, 3)
+                "Al": round(si_Al, 3),
+                "IAP_CaSO4": iap_CaSO4,
+                "IAP_BaSO4": iap_BaSO4,
+                "IAP_SrSO4": iap_SrSO4,
+                "IAP_CaF2": iap_CaF2
             }
             
         except Exception as e:
@@ -263,7 +267,7 @@ class UtilityProjectionEngine:
                 if effective[sulf] > 0:
                     k_heavy_sulf = 1.0 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * total_active_phos)
-                    effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+                    effective[sulf] = round(effective[sulf] * (1.0 - heavy_sulf), 3)
 
             if effective['Fe'] > 0:
                 k_fe = 1.5 / (effective['Fe'] ** 0.5)
@@ -367,7 +371,6 @@ class UtilityProjectionEngine:
                 feed_ions['SiO2'] = st.number_input("Silica (SiO2)", min_value=0.0, value=15.0)
                 feed_ions['CO2'] = st.number_input("Carbon Dioxide (CO2)", min_value=0.0, value=5.0)
 
-            # Equivalency Weights for meq/L calculations
             eq_wt = {
                 'Ca': 20.04, 'Mg': 12.15, 'Na': 22.99, 'K': 39.10, 'NH4': 18.04, 
                 'Ba': 68.67, 'Sr': 43.81, 'Fe': 27.92, 'Al': 8.99,
@@ -410,7 +413,6 @@ class UtilityProjectionEngine:
                 target_tds = st.number_input("Override Target TDS (mg/L)", min_value=0.0, value=float(round(calc_tds, 2)))
                 scale_tds = st.checkbox("📈 Scale all ions proportionally to match Target TDS", value=False)
                 
-            # Apply background mathematical adjustments based on toggles
             if auto_balance and abs(error_pct) > 0.01:
                 if cat_meq > an_meq:
                     feed_ions['Cl'] += (cat_meq - an_meq) * eq_wt['Cl']
@@ -423,7 +425,6 @@ class UtilityProjectionEngine:
                 for k in feed_ions:
                     feed_ions[k] *= multiplier
 
-        # Proceed with mathematical routing using the adjusted feed_ions array
         cf = 1 / (1 - (recovery / 100))
         passage_rate = 1 - (salt_rejection / 100)
         
@@ -477,15 +478,25 @@ class UtilityProjectionEngine:
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
                 st.write("**Ion Concentrations (ppm)**")
-                ion_keys = ['Ca', 'Mg', 'Na', 'K', 'NH4', 'Ba', 'Sr', 'Fe', 'Al', 'HCO3', 'Cl', 'SO4', 'F', 'NO3', 'PO4', 'CO3', 'SiO2', 'CO2']
+                
+                # Updated to explicitly show charges in the table index
+                display_ions = {
+                    'Ca': 'Ca++', 'Mg': 'Mg++', 'Na': 'Na+', 'K': 'K+', 'NH4': 'NH4+', 
+                    'Ba': 'Ba++', 'Sr': 'Sr++', 'Fe': 'Fe2+/3+', 'Al': 'Al+++', 
+                    'HCO3': 'HCO3-', 'Cl': 'Cl-', 'SO4': 'SO4--', 'F': 'F-', 
+                    'NO3': 'NO3-', 'PO4': 'PO4---', 'CO3': 'CO3--', 'SiO2': 'SiO2', 'CO2': 'CO2'
+                }
+                
+                raw_keys = list(display_ions.keys())
+                display_keys = list(display_ions.values())
                 
                 ion_data = {
-                    "Ion Species (ppm)": ion_keys,
-                    "Raw Feed": [f"{feed_ions.get(k, 0):.2f}" for k in ion_keys],
-                    "Treated Feed": [f"{treated_feed_ions.get(k, 0):.2f}" for k in ion_keys],
-                    "Permeate": [f"{perm_ions.get(k, 0):.2f}" for k in ion_keys],
-                    "Raw Concentrate": [f"{raw_conc_ions.get(k, 0):.2f}" for k in ion_keys],
-                    "Treated Concentrate": [f"{treated_conc_ions.get(k, 0):.2f}" for k in ion_keys]
+                    "Ion Species": display_keys,
+                    "Raw Feed": [f"{feed_ions.get(k, 0):.2f}" for k in raw_keys],
+                    "Treated Feed": [f"{treated_feed_ions.get(k, 0):.2f}" for k in raw_keys],
+                    "Permeate": [f"{perm_ions.get(k, 0):.2f}" for k in raw_keys],
+                    "Raw Concentrate": [f"{raw_conc_ions.get(k, 0):.2f}" for k in raw_keys],
+                    "Treated Concentrate": [f"{treated_conc_ions.get(k, 0):.2f}" for k in raw_keys]
                 }
                 
                 df_ions = pd.DataFrame(ion_data)
@@ -505,9 +516,37 @@ class UtilityProjectionEngine:
                 
                 df_indicators = pd.DataFrame(ind_data)
                 st.dataframe(df_indicators, use_container_width=True, hide_index=True)
+
+                st.write("---")
+                st.write("**Ion Activity Products (IAP) - Treated Concentrate**")
+                
+                iap_data = {
+                    "Salt Species": ["CaSO4", "BaSO4", "SrSO4", "CaF2"],
+                    "Cation [ppm]": [
+                        f"{treated_conc_ions.get('Ca', 0):.2f}", 
+                        f"{treated_conc_ions.get('Ba', 0):.2f}", 
+                        f"{treated_conc_ions.get('Sr', 0):.2f}", 
+                        f"{treated_conc_ions.get('Ca', 0):.2f}"
+                    ],
+                    "Anion [ppm]": [
+                        f"{treated_conc_ions.get('SO4', 0):.2f}", 
+                        f"{treated_conc_ions.get('SO4', 0):.2f}", 
+                        f"{treated_conc_ions.get('SO4', 0):.2f}", 
+                        f"{treated_conc_ions.get('F', 0):.2f}"
+                    ],
+                    "IAP (mol/L)": [
+                        f"{treated_conc_data['IAP_CaSO4']:.2e}", 
+                        f"{treated_conc_data['IAP_BaSO4']:.2e}", 
+                        f"{treated_conc_data['IAP_SrSO4']:.2e}", 
+                        f"{treated_conc_data['IAP_CaF2']:.2e}"
+                    ]
+                }
+                
+                df_iap = pd.DataFrame(iap_data)
+                st.dataframe(df_iap, use_container_width=True, hide_index=True)
                 
                 st.write("---")
-                st.write("**Slightly Soluble Salts (Saturation Index: IAP / Ksp)**")
+                st.write("**Slightly Soluble Salts (Saturation Index: IAP / Apparent Ksp)**")
                 salt_keys = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
                 
                 salt_data = {
