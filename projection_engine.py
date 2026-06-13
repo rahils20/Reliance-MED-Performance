@@ -7,7 +7,6 @@ st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
     def __init__(self):
-        # Initialize default ions in session state to allow UI updates
         if 'ui_ions' not in st.session_state:
             st.session_state.ui_ions = {
                 'Ca': 150.0, 'Mg': 50.0, 'Na': 300.0, 'K': 10.0, 'NH4': 0.0, 
@@ -17,13 +16,10 @@ class UtilityProjectionEngine:
             }
 
     def format_sci(self, val):
-        """Formats numbers from e notation to standard x 10^x"""
-        if val == 0:
-            return "0.00"
+        if val == 0: return "0.00"
         s = f"{val:.2e}"
         base, exp = s.split('e')
-        exp_val = int(exp)
-        return f"{base} x 10^{exp_val}"
+        return f"{base} x 10^{int(exp)}"
 
     def calculate_acid_chemistry(self, raw_ph, target_ph, raw_hco3, temp_c):
         if target_ph >= raw_ph or raw_hco3 <= 0:
@@ -31,22 +27,17 @@ class UtilityProjectionEngine:
             
         T_K = temp_c + 273.15
         pKa1 = (3404.71 / T_K) + 0.032786 * T_K - 14.8435
-        
         total_co2 = raw_hco3 * (1.0 + 10**(pKa1 - raw_ph))
-        
         target_hco3 = total_co2 / (1.0 + 10**(pKa1 - target_ph))
         hco3_destroyed = max(0.0, raw_hco3 - target_hco3)
-        
         acid_dose_ppm = hco3_destroyed * (98.08 / 122.02)
         so4_added = hco3_destroyed * (96.06 / 122.02)
-        
         return target_hco3, so4_added, acid_dose_ppm
 
     def calculate_scaling_indices(self, pH, temp_c, ions):
         try:
             T_K = temp_c + 273.15  
             A_dh = 0.4918 + 0.0007 * temp_c  
-            
             pK2 = (2902.39 / T_K) - 6.498 + (0.02379 * T_K)
             pKs = 171.9065 + (0.077993 * T_K) - (2839.319 / T_K) - (71.595 * math.log10(T_K))
 
@@ -77,7 +68,9 @@ class UtilityProjectionEngine:
                     "CaSiO3": 0.0, "MgSiO3": 0.0, "FeSiO3": 0.0, "Fe": 0.0, "Al": 0.0,
                     "IAP_CaSO4": 0.0, "IAP_BaSO4": 0.0, "IAP_SrSO4": 0.0, "IAP_CaF2": 0.0,
                     "IAP_CaSiO3": 0.0, "IAP_MgSiO3": 0.0, "IAP_FeSiO3": 0.0,
-                    "IAP_SiOH4": 0.0, "Ksp_SiOH4": 1.0, "Fraction_SiO3": 0.0
+                    "IAP_SiOH4": 0.0, "Ksp_SiOH4": 1.0, "Fraction_SiO3": 0.0,
+                    "Ratio_CaSO4": 0.0, "Ratio_BaSO4": 0.0, "Ratio_SrSO4": 0.0, "Ratio_CaF2": 0.0,
+                    "Ratio_SiOH4": 0.0, "Ratio_CaSiO3": 0.0, "Ratio_MgSiO3": 0.0, "Ratio_FeSiO3": 0.0
                 }
 
             def get_activity_coef(charge, ionic_strength):
@@ -102,12 +95,11 @@ class UtilityProjectionEngine:
                 correction = A_dh_const * z_product * (sqrt_I / (1 + 1.4 * sqrt_I))
                 return pKsp_pure - correction
 
-            # Standard Thermodynamic Ksps
             pksp_CaSO4 = 4.62
             pksp_BaSO4 = 9.96
             pksp_SrSO4 = 6.49
             pksp_CaF2  = 10.40
-            pksp_CaSiO3 = 8.00  # Added for Metal Silicates
+            pksp_CaSiO3 = 8.00 
 
             Ksp_prime_CaSO4 = 10**-(get_pKsp_apparent(pksp_CaSO4, 4, I))
             Ksp_prime_BaSO4 = 10**-(get_pKsp_apparent(pksp_BaSO4, 4, I))
@@ -116,21 +108,17 @@ class UtilityProjectionEngine:
             Ksp_prime_CaSiO3 = 10**-(get_pKsp_apparent(pksp_CaSiO3, 4, I))
 
             def calc_si_and_iap(m1, m2, ksp_prime, is_fluoride=False):
-                if m1 == 0 or m2 == 0: return 0.0, 0.0
-                if is_fluoride:
-                    iap = m1 * (m2**2)
-                else:
-                    iap = m1 * m2
-                if iap == 0: return 0.0, 0.0
-                si = math.log10(iap / ksp_prime)
-                return max(0.0, si), iap
+                if m1 == 0 or m2 == 0: return 0.0, 0.0, 0.0
+                iap = (m1 * (m2**2)) if is_fluoride else (m1 * m2)
+                ratio = iap / ksp_prime if ksp_prime > 0 else 0.0
+                si = math.log10(ratio) if ratio > 1.0 else 0.0 # Log-SI used internally for Tab 3 decay math
+                return max(0.0, si), iap, ratio
 
-            si_CaSO4, iap_CaSO4 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('SO4', 0), Ksp_prime_CaSO4)
-            si_BaSO4, iap_BaSO4 = calc_si_and_iap(molarity.get('Ba', 0), molarity.get('SO4', 0), Ksp_prime_BaSO4)
-            si_SrSO4, iap_SrSO4 = calc_si_and_iap(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
-            si_CaF2, iap_CaF2 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
+            si_CaSO4, iap_CaSO4, ratio_CaSO4 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('SO4', 0), Ksp_prime_CaSO4)
+            si_BaSO4, iap_BaSO4, ratio_BaSO4 = calc_si_and_iap(molarity.get('Ba', 0), molarity.get('SO4', 0), Ksp_prime_BaSO4)
+            si_SrSO4, iap_SrSO4, ratio_SrSO4 = calc_si_and_iap(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
+            si_CaF2, iap_CaF2, ratio_CaF2 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
-            # --- SILICA SPECIATION & SOLUBILITY LOGIC ---
             if temp_c <= 25:
                 sio2_limit_ppm = 125.0
             elif temp_c <= 30:
@@ -141,11 +129,12 @@ class UtilityProjectionEngine:
             sio2_limit_molar = sio2_limit_ppm / 1000 / 60.08
             si_molarity_total = molarity.get('SiO2', 0)
             
-            si_SiO2 = max(0.0, math.log10(si_molarity_total / sio2_limit_molar)) if si_molarity_total > 0 else 0.0
+            ratio_SiOH4 = si_molarity_total / sio2_limit_molar if sio2_limit_molar > 0 else 0.0
+            si_SiO2 = max(0.0, math.log10(ratio_SiOH4)) if ratio_SiOH4 > 1.0 else 0.0
+            
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
-            # pH Speciation for Metal Silicates
             pKa1_si = 9.8
             pKa2_si = 11.8
             denominator = 1.0 + 10**(pH - pKa1_si) + 10**(2*pH - pKa1_si - pKa2_si)
@@ -154,20 +143,17 @@ class UtilityProjectionEngine:
             active_sio3_molarity = si_molarity_total * fraction_SiO3_anion
 
             if pH > 8.0:
-                si_CaSiO3, iap_CaSiO3 = calc_si_and_iap(molarity.get('Ca', 0), active_sio3_molarity, Ksp_prime_CaSiO3)
+                si_CaSiO3, iap_CaSiO3, ratio_CaSiO3 = calc_si_and_iap(molarity.get('Ca', 0), active_sio3_molarity, Ksp_prime_CaSiO3)
                 
                 Ksp_prime_MgSiO3 = Ksp_prime_CaSiO3 * 1.5 
                 Ksp_prime_FeSiO3 = Ksp_prime_CaSiO3 * 0.05
                 
-                si_MgSiO3, iap_MgSiO3 = calc_si_and_iap(molarity.get('Mg', 0), active_sio3_molarity, Ksp_prime_MgSiO3)
-                si_FeSiO3, iap_FeSiO3 = calc_si_and_iap(molarity.get('Fe', 0), active_sio3_molarity, Ksp_prime_FeSiO3)
+                si_MgSiO3, iap_MgSiO3, ratio_MgSiO3 = calc_si_and_iap(molarity.get('Mg', 0), active_sio3_molarity, Ksp_prime_MgSiO3)
+                si_FeSiO3, iap_FeSiO3, ratio_FeSiO3 = calc_si_and_iap(molarity.get('Fe', 0), active_sio3_molarity, Ksp_prime_FeSiO3)
             else:
-                si_CaSiO3 = 0.0
-                si_MgSiO3 = 0.0
-                si_FeSiO3 = 0.0
-                iap_CaSiO3 = 0.0
-                iap_MgSiO3 = 0.0
-                iap_FeSiO3 = 0.0
+                si_CaSiO3, iap_CaSiO3, ratio_CaSiO3 = 0.0, 0.0, 0.0
+                si_MgSiO3, iap_MgSiO3, ratio_MgSiO3 = 0.0, 0.0, 0.0
+                si_FeSiO3, iap_FeSiO3, ratio_FeSiO3 = 0.0, 0.0, 0.0
 
             return {
                 "Ionic_Strength": round(I, 4),
@@ -194,7 +180,15 @@ class UtilityProjectionEngine:
                 "IAP_CaSiO3": iap_CaSiO3,
                 "IAP_MgSiO3": iap_MgSiO3,
                 "IAP_FeSiO3": iap_FeSiO3,
-                "Fraction_SiO3": fraction_SiO3_anion
+                "Fraction_SiO3": fraction_SiO3_anion,
+                "Ratio_CaSO4": ratio_CaSO4,
+                "Ratio_BaSO4": ratio_BaSO4,
+                "Ratio_SrSO4": ratio_SrSO4,
+                "Ratio_CaF2": ratio_CaF2,
+                "Ratio_SiOH4": ratio_SiOH4,
+                "Ratio_CaSiO3": ratio_CaSiO3,
+                "Ratio_MgSiO3": ratio_MgSiO3,
+                "Ratio_FeSiO3": ratio_FeSiO3
             }
             
         except Exception as e:
@@ -205,53 +199,44 @@ class UtilityProjectionEngine:
         
         if product_name == "Kem Watreat R 824":
             active_dose = dose_ppm * 0.40
-            
             if effective['LSI'] > 0:
                 k_lsi = 1.6 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
                 effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
                 effective['CaCO3'] = effective['LSI']
-                
             if effective['SDSI'] > 0:
                 k_sdsi = 1.6 / (effective['SDSI'] ** 0.5)
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
-            
             if effective['CaSO4'] > 0:
                 reduction = min((active_dose / 3.2) * 0.20, 0.20)
                 effective['CaSO4'] = round(max(0.0, effective['CaSO4'] - reduction), 3)
 
         elif product_name == "Kem Watreat R 246":
             active_dose = dose_ppm * 0.30
-            
             if effective['LSI'] > 0:
                 k_lsi = 1.0 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
                 effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
                 effective['CaCO3'] = effective['LSI']
-                
             if effective['SDSI'] > 0:
                 k_sdsi = 1.0 / (effective['SDSI'] ** 0.5)
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
-            
             for sulfate in ['CaSO4', 'BaSO4', 'SrSO4']:
                 if effective[sulfate] > 0:
                     k_sulf = 1.2 / (effective[sulfate] ** 0.5)
                     eta_sulf = 1.0 - math.exp(-k_sulf * active_dose)
                     effective[sulfate] = round(effective[sulfate] * (1.0 - eta_sulf), 3)
-            
             for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
                 if effective[silica] > 0:
                     k_si = 1.5 / (effective[silica] ** 0.5)
                     eta_si = 1.0 - math.exp(-k_si * active_dose)
                     effective[silica] = round(effective[silica] * (1.0 - eta_si), 3)
-            
             if effective['Fe'] > 0:
                 k_fe = 1.8 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_dose)
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
-                
             if effective['CaF2'] > 0:
                 reduction = min((active_dose / 3.0) * 0.15, 0.15)
                 effective['CaF2'] = round(max(0.0, effective['CaF2'] - reduction), 3)
@@ -260,29 +245,24 @@ class UtilityProjectionEngine:
             active_polymer = dose_ppm * 0.10
             active_hedp = dose_ppm * 0.077
             total_active = active_polymer + active_hedp
-            
             if effective['LSI'] > 0:
                 k_lsi = 2.0 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * total_active)
                 effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
                 effective['CaCO3'] = effective['LSI']
-                
             if effective['SDSI'] > 0:
                 k_sdsi = 2.0 / (effective['SDSI'] ** 0.5)
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
-
             if effective['CaSO4'] > 0:
                 k_caso4 = 1.5 / (effective['CaSO4'] ** 0.5)
                 eta_caso4 = 1.0 - math.exp(-k_caso4 * total_active)
                 effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
-
             for sulf in ['BaSO4', 'SrSO4']:
                 if effective[sulf] > 0:
                     k_heavy_sulf = 0.8 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_hedp)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
-
             if effective['Fe'] > 0:
                 k_fe = 1.0 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
@@ -292,29 +272,24 @@ class UtilityProjectionEngine:
             active_atmp = dose_ppm * 0.0375
             active_hedp = dose_ppm * 0.066
             total_active_phos = active_atmp + active_hedp
-            
             if effective['LSI'] > 0:
                 k_lsi = 2.5 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * total_active_phos)
                 effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
                 effective['CaCO3'] = effective['LSI']
-                
             if effective['SDSI'] > 0:
                 k_sdsi = 2.5 / (effective['SDSI'] ** 0.5)
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active_phos)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
-
             if effective['CaSO4'] > 0:
                 k_caso4 = 1.8 / (effective['CaSO4'] ** 0.5)
                 eta_caso4 = 1.0 - math.exp(-k_caso4 * total_active_phos)
                 effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
-
             for sulf in ['BaSO4', 'SrSO4']:
                 if effective[sulf] > 0:
                     k_heavy_sulf = 1.0 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * total_active_phos)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
-
             if effective['Fe'] > 0:
                 k_fe = 1.5 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
@@ -325,34 +300,28 @@ class UtilityProjectionEngine:
             active_detmpa = dose_ppm * 0.135
             active_poly = dose_ppm * 0.06
             total_active = active_pbtc + active_detmpa + active_poly
-            
             if effective['LSI'] > 0:
                 k_lsi = 2.2 / (effective['LSI'] ** 0.5)
                 eta_lsi = 1.0 - math.exp(-k_lsi * total_active)
                 effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
                 effective['CaCO3'] = effective['LSI']
-                
             if effective['SDSI'] > 0:
                 k_sdsi = 2.2 / (effective['SDSI'] ** 0.5)
                 eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active)
                 effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
-
             if effective['CaSO4'] > 0:
                 k_caso4 = 2.0 / (effective['CaSO4'] ** 0.5)
                 eta_caso4 = 1.0 - math.exp(-k_caso4 * active_detmpa)
                 effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
-
             for sulf in ['BaSO4', 'SrSO4']:
                 if effective[sulf] > 0:
                     k_heavy_sulf = 1.8 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_detmpa)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
-
             if effective['Fe'] > 0:
                 k_fe = 1.6 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_detmpa)
                 effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
-                
             for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
                 if effective[silica] > 0:
                     k_si = 2.5 / (effective[silica] ** 0.5)
@@ -562,6 +531,14 @@ class UtilityProjectionEngine:
         
         raw_conc_ph = feed_ph + math.log10(cf)
         treated_conc_ph = treated_ph + math.log10(cf)
+
+        # Tab 1 Addition: Hydraulic Performance Moved Here
+        with tab_inputs:
+            st.write("---")
+            st.write("**System Hydraulic Performance**")
+            col_m1, col_m2 = st.columns(2)
+            col_m1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
+            col_m2.metric(label="Mineral Passage", value=f"{round(passage_rate * 100, 2)}%")
         
         with tab_results:
             st.subheader("System Concentration & Thermodynamic Saturation")
@@ -662,24 +639,54 @@ class UtilityProjectionEngine:
                 
                 st.write("---")
                 st.write("**Slightly Soluble Salts (Saturation Index: Ratio of IAP / Limit)**")
-                salt_keys = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
+                
+                salt_keys_display = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
+                salt_keys_internal = ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4", "Ratio_CaSiO3", "Ratio_MgSiO3", "Ratio_FeSiO3"]
                 
                 salt_data = {
-                    "Salt Species": salt_keys,
-                    "Raw Feed": [f"{feed_data[k]:.3f}" for k in salt_keys],
-                    "Treated Feed": [f"{treated_feed_data[k]:.3f}" for k in salt_keys],
-                    "Permeate": [f"{perm_data[k]:.3f}" for k in salt_keys],
-                    "Raw Concentrate": [f"{raw_conc_data[k]:.3f}" for k in salt_keys],
-                    "Treated Concentrate": [f"{treated_conc_data[k]:.3f}" for k in salt_keys]
+                    "Salt Species": salt_keys_display,
+                    "Raw Feed": [f"{feed_data[k]:.3f}" for k in salt_keys_internal],
+                    "Treated Feed": [f"{treated_feed_data[k]:.3f}" for k in salt_keys_internal],
+                    "Permeate": [f"{perm_data[k]:.3f}" for k in salt_keys_internal],
+                    "Raw Concentrate": [f"{raw_conc_data[k]:.3f}" for k in salt_keys_internal],
+                    "Treated Concentrate": [f"{treated_conc_data[k]:.3f}" for k in salt_keys_internal]
                 }
                 
                 df_salts = pd.DataFrame(salt_data)
                 st.dataframe(df_salts, use_container_width=True, hide_index=True)
-
+                
+                if treated_conc_ph <= 8.0:
+                    st.info("ℹ️ **Note:** Metal silicates ($CaSiO_3$, $MgSiO_3$, $FeSiO_3$) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
+                
+                # Tab 2 Addition: Scaling Intensity Possibility
                 st.write("---")
-                col_m1, col_m2 = st.columns(2)
-                col_m1.metric(label="Concentration Factor (CF)", value=f"{round(cf, 2)}x")
-                col_m2.metric(label="Mineral Passage", value=f"{round(passage_rate * 100, 2)}%")
+                st.write("**Scaling Risk & Intensity Possibility (Treated Concentrate)**")
+                
+                intensity_data = []
+                
+                for k in ["LSI", "SDSI"]:
+                    val = treated_conc_data[k]
+                    intensity = max(0.0, val * 100.0)
+                    intensity_data.append({
+                        "Salt / Index": k,
+                        "Data Value": f"{val:.3f}",
+                        "Desired Value": "0.0",
+                        "Scaling Intensity Possibility": f"{intensity:.1f}%"
+                    })
+                    
+                for idx, k in enumerate(["CaSO4", "BaSO4", "SrSO4", "CaF2", "SiOH4", "CaSiO3", "MgSiO3", "FeSiO3"]):
+                    display_name = salt_keys_display[idx]
+                    val = treated_conc_data[salt_keys_internal[idx]]
+                    intensity = max(0.0, (val - 1.0) * 100.0)
+                    intensity_data.append({
+                        "Salt / Index": display_name,
+                        "Data Value": f"{val:.3f}",
+                        "Desired Value": "1.0",
+                        "Scaling Intensity Possibility": f"{intensity:.1f}%"
+                    })
+                    
+                df_intensity = pd.DataFrame(intensity_data)
+                st.dataframe(df_intensity, use_container_width=True, hide_index=True)
                 
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
