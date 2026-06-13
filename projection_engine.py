@@ -43,6 +43,9 @@ class UtilityProjectionEngine:
             "smbs":        {"LSI": 0.0,  "SDSI": 0.0,  "CaCO3": 0.0,  "CaSO4": 0.0,  "BaSO4": 0.0,  "SrSO4": 0.0,  "CaF2": 0.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0}
         }
 
+        if product_name not in formulations:
+            return effective
+
     def format_sci(self, val):
         """Formats numbers to standard scientific notation using Unicode superscripts"""
         if val == 0: return "0.00"
