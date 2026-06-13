@@ -764,6 +764,9 @@ class UtilityProjectionEngine:
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
 
+        # ==========================================
+        # TAB 3: PROJECT X KINETIC GRID
+        # ==========================================
         with tab_project_x:
             st.subheader("Project X: Formulation Kinetic Efficiency Grid")
             st.info("Explore the absolute kinetic efficiency of each product based on its proprietary active raw material blend. This matrix models theoretical inhibition efficiency (%) at escalating saturation intensities.")
@@ -808,10 +811,25 @@ class UtilityProjectionEngine:
             df_grid = pd.DataFrame(grid_data)
             df_grid.set_index("Raw Saturation Index (SI)", inplace=True)
 
-            # Apply conditional heat mapping natively in Streamlit
-            styled_grid = df_grid.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100).format("{:.1f}%")
+            # Map colors based on percentage to bypass Matplotlib background_gradient completely
+            def color_cells(val):
+                if isinstance(val, str):
+                    return ''
+                if val >= 80:
+                    return 'background-color: #2ecc71; color: black'
+                elif val >= 50:
+                    return 'background-color: #f1c40f; color: black'
+                else:
+                    return 'background-color: #e74c3c; color: white'
+
+            # Use .map or .applymap safely depending on pandas version
+            try:
+                styled_grid = df_grid.style.map(color_cells).format("{:.1f}%")
+            except AttributeError:
+                styled_grid = df_grid.style.applymap(color_cells).format("{:.1f}%")
+
             st.dataframe(styled_grid, use_container_width=True, height=600)
-                
+
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
             st.info("Review product performance below to track chemical suppression trends. Double-click an item in the legend to isolate it.")
