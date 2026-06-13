@@ -17,13 +17,19 @@ class UtilityProjectionEngine:
             }
 
     def format_sci(self, val):
-        """Formats numbers from e notation to standard x 10^x"""
-        if val == 0:
-            return "0.00"
+        """Formats numbers to standard scientific notation using Unicode superscripts"""
+        if val == 0: return "0.00"
         s = f"{val:.2e}"
         base, exp = s.split('e')
         exp_val = int(exp)
-        return f"{base} x 10^{exp_val}"
+        
+        # Map for Unicode superscripts
+        super_map = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+                     '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻'}
+                     
+        exp_str = str(exp_val)
+        super_exp = "".join(super_map.get(c, c) for c in exp_str)
+        return f"{base} × 10{super_exp}"
 
     def calculate_acid_chemistry(self, raw_ph, target_ph, raw_hco3, temp_c):
         if target_ph >= raw_ph or raw_hco3 <= 0:
@@ -601,6 +607,7 @@ class UtilityProjectionEngine:
 
                 st.write("---")
                 st.write("**Ion Activity Products (IAP) vs Operational Solubility Limits - Treated Concentrate**")
+                st.info("ℹ️ **Note:** The *Operational Limits* shown below represent the Apparent Solubility Products (Ksp), mathematically adjusted for the higher salinity (Ionic Strength) inside the RO Concentrate stream.")
                 
                 iap_data = {
                     "Salt Species": [
@@ -627,7 +634,7 @@ class UtilityProjectionEngine:
                         f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)",
                         f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)"
                     ],
-                    "IAP or Molarity (mol/L)": [
+                    "Active Concentration (IAP / Molarity)": [
                         self.format_sci(treated_conc_data['IAP_CaSO4']), 
                         self.format_sci(treated_conc_data['IAP_BaSO4']), 
                         self.format_sci(treated_conc_data['IAP_SrSO4']), 
@@ -637,7 +644,7 @@ class UtilityProjectionEngine:
                         self.format_sci(treated_conc_data['IAP_MgSiO3']),
                         self.format_sci(treated_conc_data['IAP_FeSiO3'])
                     ],
-                    "Apparent Ksp or Limit (mol/L)": [
+                    "Operational Limit (Apparent Ksp)": [
                         "Approx Threshold", "Approx Threshold", "Approx Threshold", "Approx Threshold",
                         self.format_sci(treated_conc_data['Ksp_SiOH4']),
                         "Approx Threshold", "Approx Threshold", "Approx Threshold"
@@ -669,7 +676,7 @@ class UtilityProjectionEngine:
                     st.info("ℹ️ **Note:** Metal silicates ($CaSiO_3$, $MgSiO_3$, $FeSiO_3$) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
                 
                 st.write("---")
-                st.write("**Scaling Risk & Intensity Possibility (Treated Concentrate)**")
+                st.write("**Scaling Risk & Potential (Treated Concentrate)**")
                 
                 intensity_data = []
                 
@@ -680,9 +687,9 @@ class UtilityProjectionEngine:
                     intensity_data.append({
                         "Salt / Index": k,
                         "Data Value": f"{val:.3f}",
-                        "Desired Value": "0.0",
+                        "Desired Limit": "0.0",
                         "Intensity_Num": intensity,
-                        "Scaling Intensity Possibility": f"{intensity:.1f}%"
+                        "Scaling Potential (%)": f"{intensity:.1f}%"
                     })
                     
                 # Math for Salts (Desired Ratio = 1.0)
@@ -693,33 +700,37 @@ class UtilityProjectionEngine:
                     intensity_data.append({
                         "Salt / Index": display_name,
                         "Data Value": f"{val:.3f}",
-                        "Desired Value": "1.0",
+                        "Desired Limit": "1.0",
                         "Intensity_Num": intensity,
-                        "Scaling Intensity Possibility": f"{intensity:.1f}%"
+                        "Scaling Potential (%)": f"{intensity:.1f}%"
                     })
                     
                 df_intensity = pd.DataFrame(intensity_data)
-                # Drop the raw numeric column from the visible table for clean display
                 st.dataframe(df_intensity.drop(columns=["Intensity_Num"]), use_container_width=True, hide_index=True)
                 
-                # NEW GRAPH: Baseline Scaling Intensity Possibility
+                # Upgraded Plotly Chart Styling
                 fig_intensity = px.bar(
                     df_intensity,
                     x="Salt / Index",
                     y="Intensity_Num",
-                    title="Baseline Scaling Intensity Possibility Before Antiscalant (%)",
-                    labels={"Intensity_Num": "Scaling Possibility (%)", "Salt / Index": "Mineral Species"},
+                    title="Baseline Scaling Potential Before Antiscalant Addition (%)",
+                    labels={"Intensity_Num": "Scaling Potential (%)", "Salt / Index": ""},
                     color="Intensity_Num",
-                    color_continuous_scale=["#28a745", "#ffc107", "#dc3545"] # Green -> Yellow -> Red
+                    color_continuous_scale=["#2ecc71", "#f1c40f", "#e74c3c"]
                 )
                 
                 fig_intensity.update_layout(
-                    height=500,
-                    margin=dict(l=20, r=20, t=50, b=20)
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(family="Arial, sans-serif", size=14, color="#333"),
+                    coloraxis_showscale=False,
+                    margin=dict(l=40, r=40, t=60, b=40),
+                    title_font=dict(size=20, color="#111")
                 )
                 
-                # Add the safe zone line at 0%
-                fig_intensity.add_hline(y=0, line_dash="dash", line_color="green", annotation_text="Safe Zone (0%)")
+                fig_intensity.update_yaxes(showgrid=True, gridcolor="#e0e0e0", zeroline=True, zerolinecolor="#999")
+                fig_intensity.update_traces(marker_line_width=0, opacity=0.9, texttemplate='%{y:.1f}%', textposition='outside')
+                fig_intensity.add_hline(y=0, line_width=2, line_dash="dash", line_color="#2ecc71", annotation_text="Safe Zone (0%)", annotation_position="top right")
                 
                 st.plotly_chart(fig_intensity, use_container_width=True)
                 
