@@ -7,7 +7,23 @@ st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
     def __init__(self):
-        pass
+        # Initialize default ions in session state to allow UI updates
+        if 'ui_ions' not in st.session_state:
+            st.session_state.ui_ions = {
+                'Ca': 150.0, 'Mg': 50.0, 'Na': 300.0, 'K': 10.0, 'NH4': 0.0, 
+                'Ba': 0.05, 'Sr': 1.2, 'Fe': 0.02, 'Al': 0.01,
+                'HCO3': 250.0, 'Cl': 400.0, 'SO4': 200.0, 'F': 0.5, 
+                'NO3': 5.0, 'PO4': 0.0, 'CO3': 0.0, 'SiO2': 15.0, 'CO2': 5.0
+            }
+
+    def format_sci(self, val):
+        """Formats numbers from e notation to standard x 10^x"""
+        if val == 0:
+            return "0.00"
+        s = f"{val:.2e}"
+        base, exp = s.split('e')
+        exp_val = int(exp)
+        return f"{base} x 10^{exp_val}"
 
     def calculate_acid_chemistry(self, raw_ph, target_ph, raw_hco3, temp_c):
         if target_ph >= raw_ph or raw_hco3 <= 0:
@@ -59,7 +75,8 @@ class UtilityProjectionEngine:
                     "Ionic_Strength": 0.0, "LSI": -5.0, "SDSI": -5.0, "CaCO3": -5.0, "CaSO4": 0.0, 
                     "BaSO4": 0.0, "SrSO4": 0.0, "CaF2": 0.0, "Si(OH)4": 0.0, "SiO2": 0.0,
                     "CaSiO3": 0.0, "MgSiO3": 0.0, "FeSiO3": 0.0, "Fe": 0.0, "Al": 0.0,
-                    "IAP_CaSO4": 0.0, "IAP_BaSO4": 0.0, "IAP_SrSO4": 0.0, "IAP_CaF2": 0.0
+                    "IAP_CaSO4": 0.0, "IAP_BaSO4": 0.0, "IAP_SrSO4": 0.0, "IAP_CaF2": 0.0,
+                    "IAP_CaSiO3": 0.0, "IAP_MgSiO3": 0.0, "IAP_FeSiO3": 0.0
                 }
 
             def get_activity_coef(charge, ionic_strength):
@@ -120,10 +137,19 @@ class UtilityProjectionEngine:
             si_Fe = ions.get('Fe', 0) / 0.05
             si_Al = ions.get('Al', 0) / 0.05
 
+            iap_CaSiO3 = 0.0
+            iap_MgSiO3 = 0.0
+            iap_FeSiO3 = 0.0
+
             if pH > 8.0:
-                si_CaSiO3 = max(0.0, (ions.get('Ca', 0) * ions.get('SiO2', 0)) / 2500.0)
-                si_MgSiO3 = max(0.0, (ions.get('Mg', 0) * ions.get('SiO2', 0)) / 1800.0)
-                si_FeSiO3 = max(0.0, (ions.get('Fe', 0) * ions.get('SiO2', 0)) / 8.0)
+                # Raw pseudo-IAP calculation for display purposes
+                iap_CaSiO3 = (ions.get('Ca', 0) * ions.get('SiO2', 0))
+                iap_MgSiO3 = (ions.get('Mg', 0) * ions.get('SiO2', 0))
+                iap_FeSiO3 = (ions.get('Fe', 0) * ions.get('SiO2', 0))
+                
+                si_CaSiO3 = max(0.0, iap_CaSiO3 / 2500.0)
+                si_MgSiO3 = max(0.0, iap_MgSiO3 / 1800.0)
+                si_FeSiO3 = max(0.0, iap_FeSiO3 / 8.0)
             else:
                 si_CaSiO3 = 0.0
                 si_MgSiO3 = 0.0
@@ -148,7 +174,10 @@ class UtilityProjectionEngine:
                 "IAP_CaSO4": iap_CaSO4,
                 "IAP_BaSO4": iap_BaSO4,
                 "IAP_SrSO4": iap_SrSO4,
-                "IAP_CaF2": iap_CaF2
+                "IAP_CaF2": iap_CaF2,
+                "IAP_CaSiO3": iap_CaSiO3,
+                "IAP_MgSiO3": iap_MgSiO3,
+                "IAP_FeSiO3": iap_FeSiO3
             }
             
         except Exception as e:
@@ -267,7 +296,7 @@ class UtilityProjectionEngine:
                 if effective[sulf] > 0:
                     k_heavy_sulf = 1.0 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * total_active_phos)
-                    effective[sulf] = round(effective[sulf] * (1.0 - heavy_sulf), 3)
+                    effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
 
             if effective['Fe'] > 0:
                 k_fe = 1.5 / (effective['Fe'] ** 0.5)
@@ -346,30 +375,33 @@ class UtilityProjectionEngine:
                 acid_dose_container = st.empty()
                 perm_ph = st.number_input("Permeate pH (RO Water)", min_value=1.0, max_value=14.0, value=6.0)
                 
-            feed_ions = {}
+            # Render inputs mapped directly to session_state
             with col2:
                 st.write("**Cations (mg/L)**")
-                feed_ions['Ca'] = st.number_input("Calcium (Ca++)", min_value=0.0, value=150.0)
-                feed_ions['Mg'] = st.number_input("Magnesium (Mg++)", min_value=0.0, value=50.0)
-                feed_ions['Na'] = st.number_input("Sodium (Na+)", min_value=0.0, value=300.0)
-                feed_ions['K'] = st.number_input("Potassium (K+)", min_value=0.0, value=10.0)
-                feed_ions['NH4'] = st.number_input("Ammonium (NH4+)", min_value=0.0, value=0.0)
-                feed_ions['Ba'] = st.number_input("Barium (Ba++)", min_value=0.0, value=0.05)
-                feed_ions['Sr'] = st.number_input("Strontium (Sr++)", min_value=0.0, value=1.2)
-                feed_ions['Fe'] = st.number_input("Iron (Fe2+/3+)", min_value=0.0, value=0.02)
-                feed_ions['Al'] = st.number_input("Aluminium (Al+++)", min_value=0.0, value=0.01)
+                st.session_state.ui_ions['Ca'] = st.number_input("Calcium (Ca++)", min_value=0.0, value=float(st.session_state.ui_ions['Ca']))
+                st.session_state.ui_ions['Mg'] = st.number_input("Magnesium (Mg++)", min_value=0.0, value=float(st.session_state.ui_ions['Mg']))
+                st.session_state.ui_ions['Na'] = st.number_input("Sodium (Na+)", min_value=0.0, value=float(st.session_state.ui_ions['Na']))
+                st.session_state.ui_ions['K'] = st.number_input("Potassium (K+)", min_value=0.0, value=float(st.session_state.ui_ions['K']))
+                st.session_state.ui_ions['NH4'] = st.number_input("Ammonium (NH4+)", min_value=0.0, value=float(st.session_state.ui_ions['NH4']))
+                st.session_state.ui_ions['Ba'] = st.number_input("Barium (Ba++)", min_value=0.0, value=float(st.session_state.ui_ions['Ba']), format="%.4f")
+                st.session_state.ui_ions['Sr'] = st.number_input("Strontium (Sr++)", min_value=0.0, value=float(st.session_state.ui_ions['Sr']), format="%.4f")
+                st.session_state.ui_ions['Fe'] = st.number_input("Iron (Fe2+/3+)", min_value=0.0, value=float(st.session_state.ui_ions['Fe']), format="%.4f")
+                st.session_state.ui_ions['Al'] = st.number_input("Aluminium (Al+++)", min_value=0.0, value=float(st.session_state.ui_ions['Al']), format="%.4f")
 
             with col3:
                 st.write("**Anions & Neutrals (mg/L)**")
-                feed_ions['HCO3'] = st.number_input("Bicarbonate (HCO3-)", min_value=0.0, value=250.0)
-                feed_ions['Cl'] = st.number_input("Chloride (Cl-)", min_value=0.0, value=400.0)
-                feed_ions['SO4'] = st.number_input("Sulfate (SO4--)", min_value=0.0, value=200.0)
-                feed_ions['F'] = st.number_input("Fluoride (F-)", min_value=0.0, value=0.5)
-                feed_ions['NO3'] = st.number_input("Nitrate (NO3-)", min_value=0.0, value=5.0)
-                feed_ions['PO4'] = st.number_input("Phosphate (PO4---)", min_value=0.0, value=0.0)
-                feed_ions['CO3'] = st.number_input("Carbonate (CO3--)", min_value=0.0, value=0.0)
-                feed_ions['SiO2'] = st.number_input("Silica (SiO2)", min_value=0.0, value=15.0)
-                feed_ions['CO2'] = st.number_input("Carbon Dioxide (CO2)", min_value=0.0, value=5.0)
+                st.session_state.ui_ions['HCO3'] = st.number_input("Bicarbonate (HCO3-)", min_value=0.0, value=float(st.session_state.ui_ions['HCO3']))
+                st.session_state.ui_ions['Cl'] = st.number_input("Chloride (Cl-)", min_value=0.0, value=float(st.session_state.ui_ions['Cl']))
+                st.session_state.ui_ions['SO4'] = st.number_input("Sulfate (SO4--)", min_value=0.0, value=float(st.session_state.ui_ions['SO4']))
+                st.session_state.ui_ions['F'] = st.number_input("Fluoride (F-)", min_value=0.0, value=float(st.session_state.ui_ions['F']), format="%.4f")
+                st.session_state.ui_ions['NO3'] = st.number_input("Nitrate (NO3-)", min_value=0.0, value=float(st.session_state.ui_ions['NO3']))
+                st.session_state.ui_ions['PO4'] = st.number_input("Phosphate (PO4---)", min_value=0.0, value=float(st.session_state.ui_ions['PO4']))
+                st.session_state.ui_ions['CO3'] = st.number_input("Carbonate (CO3--)", min_value=0.0, value=float(st.session_state.ui_ions['CO3']))
+                st.session_state.ui_ions['SiO2'] = st.number_input("Silica (SiO2)", min_value=0.0, value=float(st.session_state.ui_ions['SiO2']))
+                st.session_state.ui_ions['CO2'] = st.number_input("Carbon Dioxide (CO2)", min_value=0.0, value=float(st.session_state.ui_ions['CO2']))
+
+            # Create a working copy for mathematical adjustments
+            calc_ions = st.session_state.ui_ions.copy()
 
             eq_wt = {
                 'Ca': 20.04, 'Mg': 12.15, 'Na': 22.99, 'K': 39.10, 'NH4': 18.04, 
@@ -381,15 +413,15 @@ class UtilityProjectionEngine:
             cat_keys = ['Ca', 'Mg', 'Na', 'K', 'NH4', 'Ba', 'Sr', 'Fe', 'Al']
             an_keys = ['HCO3', 'Cl', 'SO4', 'F', 'NO3', 'PO4', 'CO3']
             
-            cat_meq = sum(feed_ions[k] / eq_wt[k] for k in cat_keys)
-            an_meq = sum(feed_ions[k] / eq_wt[k] for k in an_keys)
+            cat_meq = sum(calc_ions[k] / eq_wt[k] for k in cat_keys)
+            an_meq = sum(calc_ions[k] / eq_wt[k] for k in an_keys)
             
             if cat_meq + an_meq > 0:
                 error_pct = ((cat_meq - an_meq) / (cat_meq + an_meq)) * 100
             else:
                 error_pct = 0.0
                 
-            calc_tds = sum(feed_ions.values())
+            calc_tds = sum(calc_ions.values())
             
             st.write("---")
             st.subheader("Water Profile Verification")
@@ -408,37 +440,41 @@ class UtilityProjectionEngine:
             st.write("**Balance & Scale Adjustments**")
             bal_col1, bal_col2 = st.columns(2)
             with bal_col1:
-                auto_balance = st.checkbox("⚖️ Auto-Balance Ions (Na/Cl Method)", value=(abs(error_pct) > 5.0))
+                auto_balance = st.checkbox("⚖️ Calculate Na/Cl to Balance", value=(abs(error_pct) > 5.0))
             with bal_col2:
                 target_tds = st.number_input("Override Target TDS (mg/L)", min_value=0.0, value=float(round(calc_tds, 2)))
                 scale_tds = st.checkbox("📈 Scale all ions proportionally to match Target TDS", value=False)
                 
             if auto_balance and abs(error_pct) > 0.01:
                 if cat_meq > an_meq:
-                    feed_ions['Cl'] += (cat_meq - an_meq) * eq_wt['Cl']
+                    calc_ions['Cl'] += (cat_meq - an_meq) * eq_wt['Cl']
                 else:
-                    feed_ions['Na'] += (an_meq - cat_meq) * eq_wt['Na']
+                    calc_ions['Na'] += (an_meq - cat_meq) * eq_wt['Na']
                     
             if scale_tds and target_tds > 0 and calc_tds > 0:
-                new_calc_tds = sum(feed_ions.values())
+                new_calc_tds = sum(calc_ions.values())
                 multiplier = target_tds / new_calc_tds
-                for k in feed_ions:
-                    feed_ions[k] *= multiplier
+                for k in calc_ions:
+                    calc_ions[k] *= multiplier
+
+            if st.button("⚡ Apply Adjustments to Input Fields"):
+                st.session_state.ui_ions = calc_ions.copy()
+                st.rerun()
 
         cf = 1 / (1 - (recovery / 100))
         passage_rate = 1 - (salt_rejection / 100)
         
-        treated_feed_ions = feed_ions.copy()
+        treated_feed_ions = calc_ions.copy()
         acid_dose_ppm = 0.0
         
         if auto_acid:
             test_ph = feed_ph
             while test_ph > 4.0:
-                adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, test_ph, feed_ions.get('HCO3', 0), feed_temp)
+                adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, test_ph, calc_ions.get('HCO3', 0), feed_temp)
                 
-                test_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
+                test_conc_ions = {ion: val * cf for ion, val in calc_ions.items()}
                 test_conc_ions['HCO3'] = adj_hco3 * cf
-                test_conc_ions['SO4'] = (feed_ions.get('SO4', 0) + added_so4) * cf
+                test_conc_ions['SO4'] = (calc_ions.get('SO4', 0) + added_so4) * cf
                 
                 conc_ph = test_ph + math.log10(cf)
                 res = self.calculate_scaling_indices(conc_ph, feed_temp, test_conc_ions)
@@ -446,22 +482,22 @@ class UtilityProjectionEngine:
                 if res and res['LSI'] <= 2.5:
                     treated_ph = round(test_ph, 2)
                     treated_feed_ions['HCO3'] = adj_hco3
-                    treated_feed_ions['SO4'] = feed_ions.get('SO4', 0) + added_so4
+                    treated_feed_ions['SO4'] = calc_ions.get('SO4', 0) + added_so4
                     acid_dose_ppm = dose
                     break
                 test_ph -= 0.05
         else:
-            adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, treated_ph, feed_ions.get('HCO3', 0), feed_temp)
+            adj_hco3, added_so4, dose = self.calculate_acid_chemistry(feed_ph, treated_ph, calc_ions.get('HCO3', 0), feed_temp)
             treated_feed_ions['HCO3'] = adj_hco3
-            treated_feed_ions['SO4'] = feed_ions.get('SO4', 0) + added_so4
+            treated_feed_ions['SO4'] = calc_ions.get('SO4', 0) + added_so4
             acid_dose_ppm = dose
 
         if acid_dose_ppm > 0:
             acid_dose_container.success(f"**Required Acid Dose (100% H2SO4):** {round(acid_dose_ppm, 2)} ppm")
         
-        raw_conc_ions = {ion: val * cf for ion, val in feed_ions.items()}
+        raw_conc_ions = {ion: val * cf for ion, val in calc_ions.items()}
         treated_conc_ions = {ion: val * cf for ion, val in treated_feed_ions.items()}
-        perm_ions = {ion: val * passage_rate for ion, val in feed_ions.items()}
+        perm_ions = {ion: val * passage_rate for ion, val in calc_ions.items()}
         
         raw_conc_ph = feed_ph + math.log10(cf)
         treated_conc_ph = treated_ph + math.log10(cf)
@@ -469,7 +505,7 @@ class UtilityProjectionEngine:
         with tab_results:
             st.subheader("System Concentration & Thermodynamic Saturation")
             
-            feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, feed_ions)
+            feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, calc_ions)
             treated_feed_data = self.calculate_scaling_indices(treated_ph, feed_temp, treated_feed_ions)
             perm_data = self.calculate_scaling_indices(perm_ph, feed_temp, perm_ions) 
             raw_conc_data = self.calculate_scaling_indices(raw_conc_ph, feed_temp, raw_conc_ions)
@@ -478,8 +514,6 @@ class UtilityProjectionEngine:
             if feed_data and treated_feed_data and perm_data and raw_conc_data and treated_conc_data:
                 
                 st.write("**Ion Concentrations (ppm)**")
-                
-                # Updated to explicitly show charges in the table index
                 display_ions = {
                     'Ca': 'Ca++', 'Mg': 'Mg++', 'Na': 'Na+', 'K': 'K+', 'NH4': 'NH4+', 
                     'Ba': 'Ba++', 'Sr': 'Sr++', 'Fe': 'Fe2+/3+', 'Al': 'Al+++', 
@@ -492,7 +526,7 @@ class UtilityProjectionEngine:
                 
                 ion_data = {
                     "Ion Species": display_keys,
-                    "Raw Feed": [f"{feed_ions.get(k, 0):.2f}" for k in raw_keys],
+                    "Raw Feed": [f"{calc_ions.get(k, 0):.2f}" for k in raw_keys],
                     "Treated Feed": [f"{treated_feed_ions.get(k, 0):.2f}" for k in raw_keys],
                     "Permeate": [f"{perm_ions.get(k, 0):.2f}" for k in raw_keys],
                     "Raw Concentrate": [f"{raw_conc_ions.get(k, 0):.2f}" for k in raw_keys],
@@ -521,24 +555,39 @@ class UtilityProjectionEngine:
                 st.write("**Ion Activity Products (IAP) - Treated Concentrate**")
                 
                 iap_data = {
-                    "Salt Species": ["CaSO4", "BaSO4", "SrSO4", "CaF2"],
+                    "Salt Species": [
+                        "CaSO4", "BaSO4", "SrSO4", "CaF2", 
+                        "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"
+                    ],
                     "Cation [ppm]": [
                         f"{treated_conc_ions.get('Ca', 0):.2f}", 
                         f"{treated_conc_ions.get('Ba', 0):.2f}", 
                         f"{treated_conc_ions.get('Sr', 0):.2f}", 
-                        f"{treated_conc_ions.get('Ca', 0):.2f}"
+                        f"{treated_conc_ions.get('Ca', 0):.2f}",
+                        "N/A",
+                        f"{treated_conc_ions.get('Ca', 0):.2f}", 
+                        f"{treated_conc_ions.get('Mg', 0):.2f}", 
+                        f"{treated_conc_ions.get('Fe', 0):.2f}"
                     ],
                     "Anion [ppm]": [
                         f"{treated_conc_ions.get('SO4', 0):.2f}", 
                         f"{treated_conc_ions.get('SO4', 0):.2f}", 
                         f"{treated_conc_ions.get('SO4', 0):.2f}", 
-                        f"{treated_conc_ions.get('F', 0):.2f}"
+                        f"{treated_conc_ions.get('F', 0):.2f}",
+                        f"{treated_conc_ions.get('SiO2', 0):.2f}",
+                        f"{treated_conc_ions.get('SiO2', 0):.2f}",
+                        f"{treated_conc_ions.get('SiO2', 0):.2f}",
+                        f"{treated_conc_ions.get('SiO2', 0):.2f}"
                     ],
                     "IAP (mol/L)": [
-                        f"{treated_conc_data['IAP_CaSO4']:.2e}", 
-                        f"{treated_conc_data['IAP_BaSO4']:.2e}", 
-                        f"{treated_conc_data['IAP_SrSO4']:.2e}", 
-                        f"{treated_conc_data['IAP_CaF2']:.2e}"
+                        self.format_sci(treated_conc_data['IAP_CaSO4']), 
+                        self.format_sci(treated_conc_data['IAP_BaSO4']), 
+                        self.format_sci(treated_conc_data['IAP_SrSO4']), 
+                        self.format_sci(treated_conc_data['IAP_CaF2']),
+                        "Concentration Limit",
+                        self.format_sci(treated_conc_data['IAP_CaSiO3']),
+                        self.format_sci(treated_conc_data['IAP_MgSiO3']),
+                        self.format_sci(treated_conc_data['IAP_FeSiO3'])
                     ]
                 }
                 
