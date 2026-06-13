@@ -31,7 +31,7 @@ class UtilityProjectionEngine:
         }
 
         # 2. Recalibrated k-Factors (Threshold Inhibition vs. Steric Hindrance)
-        k_factors = {
+        self.k_factors = {
             "pbtc":        {"LSI": 85.0, "SDSI": 85.0, "CaCO3": 85.0, "CaSO4": 15.0, "BaSO4": 5.0,  "SrSO4": 5.0,  "CaF2": 2.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 5.0},
             "detmpa":      {"LSI": 40.0, "SDSI": 40.0, "CaCO3": 40.0, "CaSO4": 25.0, "BaSO4": 35.0, "SrSO4": 35.0, "CaF2": 5.0,  "Si(OH)4": 5.0,  "SiO2": 5.0,  "CaSiO3": 5.0,  "MgSiO3": 5.0,  "FeSiO3": 5.0,  "Fe": 20.0},
             "hedp":        {"LSI": 55.0, "SDSI": 55.0, "CaCO3": 55.0, "CaSO4": 20.0, "BaSO4": 10.0, "SrSO4": 10.0, "CaF2": 2.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 15.0},
@@ -42,9 +42,6 @@ class UtilityProjectionEngine:
             "pma":         {"LSI": 30.0, "SDSI": 30.0, "CaCO3": 30.0, "CaSO4": 28.0, "BaSO4": 15.0, "SrSO4": 15.0, "CaF2": 15.0, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 8.0},
             "smbs":        {"LSI": 0.0,  "SDSI": 0.0,  "CaCO3": 0.0,  "CaSO4": 0.0,  "BaSO4": 0.0,  "SrSO4": 0.0,  "CaF2": 0.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0}
         }
-
-        if product_name not in formulations:
-            return effective
 
     def format_sci(self, val):
         """Formats numbers to standard scientific notation using Unicode superscripts"""
@@ -781,51 +778,37 @@ class UtilityProjectionEngine:
                 px_dose = st.slider("Active Product Dose (ppm)", 1.0, 10.0, 5.0, 0.5, key="px_dose")
 
             formulation = self.formulations[px_product]
-            
-            # Map Table Columns to K-Factor Categories
-            cat_map = {
-                "LSI": "lsi", "SDSI": "sdsi", "CaSO4": "caso4", 
-                "BaSO4": "ba_sr", "SrSO4": "ba_sr", "CaF2": "caf2", 
-                "Si(OH)4": "silica", "CaSiO3": "silica", "MgSiO3": "silica", "FeSiO3": "silica"
-            }
+            target_salts = ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
 
-            # Pre-calculate the total sum of (active_ppm * k_factor) for this specific dose
             sum_kd = {}
-            for cat in set(cat_map.values()):
+            for salt in target_salts:
                 val = 0.0
                 for ing, pct in formulation.items():
                     active_ppm = px_dose * pct
-                    val += active_ppm * self.k_factors[ing][cat]
-                sum_kd[cat] = val
+                    # Safe get to completely prevent KeyError or AttributeError
+                    val += active_ppm * self.k_factors.get(ing, {}).get(salt, 0.0)
+                sum_kd[salt] = val
 
-            # Build the Dataframe (Rows = SI Levels from 0.5 to 5.0)
             si_range = [round(0.5 + i*0.1, 1) for i in range(46)]
             grid_data = []
             
             for raw_si in si_range:
                 row = {"Raw Saturation Index (SI)": f"{raw_si:.1f}"}
-                for col_name, cat in cat_map.items():
-                    kd = sum_kd[cat]
-                    # Inverse Square Root Decay Law
+                for salt in target_salts:
+                    kd = sum_kd[salt]
                     efficiency = (1.0 - math.exp(-kd / math.sqrt(raw_si))) * 100
-                    row[col_name] = efficiency
+                    row[salt] = efficiency
                 grid_data.append(row)
 
             df_grid = pd.DataFrame(grid_data)
             df_grid.set_index("Raw Saturation Index (SI)", inplace=True)
 
-            # Map colors based on percentage to bypass Matplotlib background_gradient completely
             def color_cells(val):
-                if isinstance(val, str):
-                    return ''
-                if val >= 80:
-                    return 'background-color: #2ecc71; color: black'
-                elif val >= 50:
-                    return 'background-color: #f1c40f; color: black'
-                else:
-                    return 'background-color: #e74c3c; color: white'
+                if isinstance(val, str): return ''
+                if val >= 80: return 'background-color: #2ecc71; color: black'
+                elif val >= 50: return 'background-color: #f1c40f; color: black'
+                else: return 'background-color: #e74c3c; color: white'
 
-            # Use .map or .applymap safely depending on pandas version
             try:
                 styled_grid = df_grid.style.map(color_cells).format("{:.1f}%")
             except AttributeError:
@@ -833,6 +816,9 @@ class UtilityProjectionEngine:
 
             st.dataframe(styled_grid, use_container_width=True, height=600)
 
+        # ==========================================
+        # TAB 4: PROJECTION REPORT (Original Logic Intact)
+        # ==========================================
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
             st.info("Review product performance below to track chemical suppression trends. Double-click an item in the legend to isolate it.")
