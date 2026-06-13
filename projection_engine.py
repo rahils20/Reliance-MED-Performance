@@ -30,18 +30,21 @@ class UtilityProjectionEngine:
             "Kem Watreat R 3687": {"hedp": 0.1375, "pma": 0.0326}
         }
 
-        # 2. Recalibrated k-Factors (Threshold Inhibition vs. Steric Hindrance)
+        # 2. Recalibrated k-Factors (Science-Backed Realities)
         self.k_factors = {
-            "pbtc":        {"LSI": 85.0, "SDSI": 85.0, "CaCO3": 85.0, "CaSO4": 15.0, "BaSO4": 5.0,  "SrSO4": 5.0,  "CaF2": 2.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 5.0},
-            "detmpa":      {"LSI": 40.0, "SDSI": 40.0, "CaCO3": 40.0, "CaSO4": 25.0, "BaSO4": 35.0, "SrSO4": 35.0, "CaF2": 5.0,  "Si(OH)4": 5.0,  "SiO2": 5.0,  "CaSiO3": 5.0,  "MgSiO3": 5.0,  "FeSiO3": 5.0,  "Fe": 20.0},
-            "hedp":        {"LSI": 55.0, "SDSI": 55.0, "CaCO3": 55.0, "CaSO4": 20.0, "BaSO4": 10.0, "SrSO4": 10.0, "CaF2": 2.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 15.0},
-            "atmp":        {"LSI": 65.0, "SDSI": 65.0, "CaCO3": 65.0, "CaSO4": 18.0, "BaSO4": 12.0, "SrSO4": 12.0, "CaF2": 5.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 15.0},
-            "homopolymer": {"LSI": 5.0,  "SDSI": 5.0,  "CaCO3": 5.0,  "CaSO4": 8.0,  "BaSO4": 2.0,  "SrSO4": 2.0,  "CaF2": 5.0,  "Si(OH)4": 2.0,  "SiO2": 2.0,  "CaSiO3": 2.0,  "MgSiO3": 2.0,  "FeSiO3": 2.0,  "Fe": 5.0},
-            "copolymer":   {"LSI": 3.0,  "SDSI": 3.0,  "CaCO3": 3.0,  "CaSO4": 18.0, "BaSO4": 25.0, "SrSO4": 25.0, "CaF2": 8.0,  "Si(OH)4": 10.0, "SiO2": 10.0, "CaSiO3": 10.0, "MgSiO3": 10.0, "FeSiO3": 10.0, "Fe": 12.0},
-            "terpolymer":  {"LSI": 1.0,  "SDSI": 1.0,  "CaCO3": 1.0,  "CaSO4": 12.0, "BaSO4": 20.0, "SrSO4": 20.0, "CaF2": 10.0, "Si(OH)4": 25.0, "SiO2": 25.0, "CaSiO3": 25.0, "MgSiO3": 25.0, "FeSiO3": 25.0, "Fe": 30.0},
-            "pma":         {"LSI": 30.0, "SDSI": 30.0, "CaCO3": 30.0, "CaSO4": 28.0, "BaSO4": 15.0, "SrSO4": 15.0, "CaF2": 15.0, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 8.0},
+            "pbtc":        {"LSI": 7.5,  "SDSI": 7.5,  "CaCO3": 7.5,  "CaSO4": 1.5,  "BaSO4": 0.5,  "SrSO4": 0.5,  "CaF2": 0.5,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.5},
+            "detmpa":      {"LSI": 4.0,  "SDSI": 4.0,  "CaCO3": 4.0,  "CaSO4": 3.5,  "BaSO4": 6.0,  "SrSO4": 6.0,  "CaF2": 1.5,  "Si(OH)4": 0.5,  "SiO2": 0.5,  "CaSiO3": 0.5,  "MgSiO3": 0.5,  "FeSiO3": 0.5,  "Fe": 3.0},
+            "hedp":        {"LSI": 5.5,  "SDSI": 5.5,  "CaCO3": 5.5,  "CaSO4": 2.5,  "BaSO4": 0.8,  "SrSO4": 0.8,  "CaF2": 0.5,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 2.5},
+            "atmp":        {"LSI": 6.0,  "SDSI": 6.0,  "CaCO3": 6.0,  "CaSO4": 2.0,  "BaSO4": 1.0,  "SrSO4": 1.0,  "CaF2": 1.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 1.0},
+            "homopolymer": {"LSI": 0.15, "SDSI": 0.15, "CaCO3": 0.15, "CaSO4": 2.5,  "BaSO4": 0.5,  "SrSO4": 0.5,  "CaF2": 1.0,  "Si(OH)4": 0.5,  "SiO2": 0.5,  "CaSiO3": 0.5,  "MgSiO3": 0.5,  "FeSiO3": 0.5,  "Fe": 1.0},
+            "copolymer":   {"LSI": 0.25, "SDSI": 0.25, "CaCO3": 0.25, "CaSO4": 3.0,  "BaSO4": 2.0,  "SrSO4": 2.0,  "CaF2": 1.5,  "Si(OH)4": 1.5,  "SiO2": 1.5,  "CaSiO3": 1.5,  "MgSiO3": 1.5,  "FeSiO3": 1.5,  "Fe": 2.5},
+            "terpolymer":  {"LSI": 0.35, "SDSI": 0.35, "CaCO3": 0.35, "CaSO4": 2.5,  "BaSO4": 2.5,  "SrSO4": 2.5,  "CaF2": 1.5,  "Si(OH)4": 3.5,  "SiO2": 3.5,  "CaSiO3": 3.5,  "MgSiO3": 3.5,  "FeSiO3": 3.5,  "Fe": 4.0},
+            "pma":         {"LSI": 5.0,  "SDSI": 5.0,  "CaCO3": 5.0,  "CaSO4": 4.5,  "BaSO4": 1.5,  "SrSO4": 1.5,  "CaF2": 2.0,  "Si(OH)4": 1.0,  "SiO2": 1.0,  "CaSiO3": 1.0,  "MgSiO3": 1.0,  "FeSiO3": 1.0,  "Fe": 1.0},
             "smbs":        {"LSI": 0.0,  "SDSI": 0.0,  "CaCO3": 0.0,  "CaSO4": 0.0,  "BaSO4": 0.0,  "SrSO4": 0.0,  "CaF2": 0.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0}
         }
+
+        if product_name not in formulations:
+            return effective
 
     def format_sci(self, val):
         """Formats numbers to standard scientific notation using Unicode superscripts"""
@@ -778,37 +781,51 @@ class UtilityProjectionEngine:
                 px_dose = st.slider("Active Product Dose (ppm)", 1.0, 10.0, 5.0, 0.5, key="px_dose")
 
             formulation = self.formulations[px_product]
-            target_salts = ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
+            
+            # Map Table Columns to K-Factor Categories
+            cat_map = {
+                "LSI": "LSI", "SDSI": "SDSI", "CaSO4": "CaSO4", 
+                "BaSO4": "BaSO4", "SrSO4": "SrSO4", "CaF2": "CaF2", 
+                "Si(OH)4": "Si(OH)4", "CaSiO3": "CaSiO3", "MgSiO3": "MgSiO3", "FeSiO3": "FeSiO3"
+            }
 
+            # Pre-calculate the total sum of (active_ppm * k_factor) for this specific dose
             sum_kd = {}
-            for salt in target_salts:
+            for col_name, cat in cat_map.items():
                 val = 0.0
                 for ing, pct in formulation.items():
                     active_ppm = px_dose * pct
-                    # Safe get to completely prevent KeyError or AttributeError
-                    val += active_ppm * self.k_factors.get(ing, {}).get(salt, 0.0)
-                sum_kd[salt] = val
+                    val += active_ppm * self.k_factors.get(ing, {}).get(cat, 0.0)
+                sum_kd[col_name] = val
 
+            # Build the Dataframe (Rows = SI Levels from 0.5 to 5.0)
             si_range = [round(0.5 + i*0.1, 1) for i in range(46)]
             grid_data = []
             
             for raw_si in si_range:
                 row = {"Raw Saturation Index (SI)": f"{raw_si:.1f}"}
-                for salt in target_salts:
-                    kd = sum_kd[salt]
+                for col_name in cat_map.keys():
+                    kd = sum_kd[col_name]
+                    # Inverse Square Root Decay Law
                     efficiency = (1.0 - math.exp(-kd / math.sqrt(raw_si))) * 100
-                    row[salt] = efficiency
+                    row[col_name] = efficiency
                 grid_data.append(row)
 
             df_grid = pd.DataFrame(grid_data)
             df_grid.set_index("Raw Saturation Index (SI)", inplace=True)
 
+            # Map colors based on percentage to bypass Matplotlib background_gradient completely
             def color_cells(val):
-                if isinstance(val, str): return ''
-                if val >= 80: return 'background-color: #2ecc71; color: black'
-                elif val >= 50: return 'background-color: #f1c40f; color: black'
-                else: return 'background-color: #e74c3c; color: white'
+                if isinstance(val, str):
+                    return ''
+                if val >= 80:
+                    return 'background-color: #2ecc71; color: black'
+                elif val >= 50:
+                    return 'background-color: #f1c40f; color: black'
+                else:
+                    return 'background-color: #e74c3c; color: white'
 
+            # Use .map or .applymap safely depending on pandas version
             try:
                 styled_grid = df_grid.style.map(color_cells).format("{:.1f}%")
             except AttributeError:
@@ -816,9 +833,6 @@ class UtilityProjectionEngine:
 
             st.dataframe(styled_grid, use_container_width=True, height=600)
 
-        # ==========================================
-        # TAB 4: PROJECTION REPORT (Original Logic Intact)
-        # ==========================================
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
             st.info("Review product performance below to track chemical suppression trends. Double-click an item in the legend to isolate it.")
