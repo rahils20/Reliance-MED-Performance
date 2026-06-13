@@ -30,17 +30,17 @@ class UtilityProjectionEngine:
             "Kem Watreat R 3687": {"hedp": 0.1375, "pma": 0.0326}
         }
 
-        # Project X Kinetic k-Factor Matrix
-        self.k_factors = {
-            "pbtc":        {"lsi": 4.5, "sdsi": 4.5, "caso4": 1.0, "ba_sr": 0.5, "silica": 0.0, "caf2": 0.0, "fe": 0.5},
-            "detmpa":      {"lsi": 2.0, "sdsi": 2.0, "caso4": 3.5, "ba_sr": 5.0, "silica": 2.5, "caf2": 0.0, "fe": 4.0},
-            "hedp":        {"lsi": 3.0, "sdsi": 3.0, "caso4": 2.5, "ba_sr": 1.5, "silica": 0.0, "caf2": 0.0, "fe": 2.0},
-            "atmp":        {"lsi": 3.5, "sdsi": 3.5, "caso4": 2.0, "ba_sr": 2.0, "silica": 0.0, "caf2": 1.0, "fe": 2.5},
-            "homopolymer": {"lsi": 2.5, "sdsi": 2.5, "caso4": 0.5, "ba_sr": 0.0, "silica": 0.0, "caf2": 1.0, "fe": 0.0},
-            "copolymer":   {"lsi": 2.0, "sdsi": 2.0, "caso4": 2.8, "ba_sr": 2.5, "silica": 1.5, "caf2": 1.0, "fe": 1.5},
-            "terpolymer":  {"lsi": 1.5, "sdsi": 1.5, "caso4": 3.0, "ba_sr": 2.0, "silica": 4.0, "caf2": 1.5, "fe": 3.0},
-            "pma":         {"lsi": 3.8, "sdsi": 3.8, "caso4": 3.5, "ba_sr": 2.0, "silica": 0.0, "caf2": 2.0, "fe": 1.0},
-            "smbs":        {"lsi": 0.0, "sdsi": 0.0, "caso4": 0.0, "ba_sr": 0.0, "silica": 0.0, "caf2": 0.0, "fe": 0.0}
+        # 2. Recalibrated k-Factors (Threshold Inhibition vs. Steric Hindrance)
+        k_factors = {
+            "pbtc":        {"LSI": 85.0, "SDSI": 85.0, "CaCO3": 85.0, "CaSO4": 15.0, "BaSO4": 5.0,  "SrSO4": 5.0,  "CaF2": 2.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 5.0},
+            "detmpa":      {"LSI": 40.0, "SDSI": 40.0, "CaCO3": 40.0, "CaSO4": 25.0, "BaSO4": 35.0, "SrSO4": 35.0, "CaF2": 5.0,  "Si(OH)4": 5.0,  "SiO2": 5.0,  "CaSiO3": 5.0,  "MgSiO3": 5.0,  "FeSiO3": 5.0,  "Fe": 20.0},
+            "hedp":        {"LSI": 55.0, "SDSI": 55.0, "CaCO3": 55.0, "CaSO4": 20.0, "BaSO4": 10.0, "SrSO4": 10.0, "CaF2": 2.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 15.0},
+            "atmp":        {"LSI": 65.0, "SDSI": 65.0, "CaCO3": 65.0, "CaSO4": 18.0, "BaSO4": 12.0, "SrSO4": 12.0, "CaF2": 5.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 15.0},
+            "homopolymer": {"LSI": 5.0,  "SDSI": 5.0,  "CaCO3": 5.0,  "CaSO4": 8.0,  "BaSO4": 2.0,  "SrSO4": 2.0,  "CaF2": 5.0,  "Si(OH)4": 2.0,  "SiO2": 2.0,  "CaSiO3": 2.0,  "MgSiO3": 2.0,  "FeSiO3": 2.0,  "Fe": 5.0},
+            "copolymer":   {"LSI": 3.0,  "SDSI": 3.0,  "CaCO3": 3.0,  "CaSO4": 18.0, "BaSO4": 25.0, "SrSO4": 25.0, "CaF2": 8.0,  "Si(OH)4": 10.0, "SiO2": 10.0, "CaSiO3": 10.0, "MgSiO3": 10.0, "FeSiO3": 10.0, "Fe": 12.0},
+            "terpolymer":  {"LSI": 1.0,  "SDSI": 1.0,  "CaCO3": 1.0,  "CaSO4": 12.0, "BaSO4": 20.0, "SrSO4": 20.0, "CaF2": 10.0, "Si(OH)4": 25.0, "SiO2": 25.0, "CaSiO3": 25.0, "MgSiO3": 25.0, "FeSiO3": 25.0, "Fe": 30.0},
+            "pma":         {"LSI": 30.0, "SDSI": 30.0, "CaCO3": 30.0, "CaSO4": 28.0, "BaSO4": 15.0, "SrSO4": 15.0, "CaF2": 15.0, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 8.0},
+            "smbs":        {"LSI": 0.0,  "SDSI": 0.0,  "CaCO3": 0.0,  "CaSO4": 0.0,  "BaSO4": 0.0,  "SrSO4": 0.0,  "CaF2": 0.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0}
         }
 
     def format_sci(self, val):
