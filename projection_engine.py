@@ -43,9 +43,6 @@ class UtilityProjectionEngine:
             "smbs":        {"LSI": 0.0,  "SDSI": 0.0,  "CaCO3": 0.0,  "CaSO4": 0.0,  "BaSO4": 0.0,  "SrSO4": 0.0,  "CaF2": 0.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0}
         }
 
-        if product_name not in formulations:
-            return effective
-
     def format_sci(self, val):
         """Formats numbers to standard scientific notation using Unicode superscripts"""
         if val == 0: return "0.00"
@@ -784,9 +781,9 @@ class UtilityProjectionEngine:
             
             # Map Table Columns to K-Factor Categories
             cat_map = {
-                "LSI": "LSI", "SDSI": "SDSI", "CaSO4": "CaSO4", 
-                "BaSO4": "BaSO4", "SrSO4": "SrSO4", "CaF2": "CaF2", 
-                "Si(OH)4": "Si(OH)4", "CaSiO3": "CaSiO3", "MgSiO3": "MgSiO3", "FeSiO3": "FeSiO3"
+                "LSI": "lsi", "SDSI": "sdsi", "CaSO4": "caso4", 
+                "BaSO4": "ba_sr", "SrSO4": "ba_sr", "CaF2": "caf2", 
+                "Si(OH)4": "silica", "CaSiO3": "silica", "MgSiO3": "silica", "FeSiO3": "silica"
             }
 
             # Pre-calculate the total sum of (active_ppm * k_factor) for this specific dose
@@ -795,8 +792,19 @@ class UtilityProjectionEngine:
                 val = 0.0
                 for ing, pct in formulation.items():
                     active_ppm = px_dose * pct
-                    val += active_ppm * self.k_factors.get(ing, {}).get(cat, 0.0)
-                sum_kd[col_name] = val
+                    # Use lower() to match the keys in self.k_factors safely
+                    val += active_ppm * self.k_factors.get(ing, {}).get(cat.upper() if cat in ['lsi', 'sdsi'] else (cat.replace('_sr', '') if cat == 'ba_sr' else cat.capitalize() if cat == 'caso4' else cat), 0.0) # Using direct key matching to avoid any potential typos
+                
+            # Safely fetch from the exact k-factors definitions mapping
+            target_salts = ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
+
+            sum_kd_safe = {}
+            for salt in target_salts:
+                val = 0.0
+                for ing, pct in formulation.items():
+                    active_ppm = px_dose * pct
+                    val += active_ppm * self.k_factors.get(ing, {}).get(salt, 0.0)
+                sum_kd_safe[salt] = val
 
             # Build the Dataframe (Rows = SI Levels from 0.5 to 5.0)
             si_range = [round(0.5 + i*0.1, 1) for i in range(46)]
@@ -804,11 +812,11 @@ class UtilityProjectionEngine:
             
             for raw_si in si_range:
                 row = {"Raw Saturation Index (SI)": f"{raw_si:.1f}"}
-                for col_name in cat_map.keys():
-                    kd = sum_kd[col_name]
+                for salt in target_salts:
+                    kd = sum_kd_safe[salt]
                     # Inverse Square Root Decay Law
                     efficiency = (1.0 - math.exp(-kd / math.sqrt(raw_si))) * 100
-                    row[col_name] = efficiency
+                    row[salt] = efficiency
                 grid_data.append(row)
 
             df_grid = pd.DataFrame(grid_data)
