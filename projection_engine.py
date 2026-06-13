@@ -786,16 +786,6 @@ class UtilityProjectionEngine:
                 "Si(OH)4": "silica", "CaSiO3": "silica", "MgSiO3": "silica", "FeSiO3": "silica"
             }
 
-            # Pre-calculate the total sum of (active_ppm * k_factor) for this specific dose
-            sum_kd = {}
-            for col_name, cat in cat_map.items():
-                val = 0.0
-                for ing, pct in formulation.items():
-                    active_ppm = px_dose * pct
-                    # Use lower() to match the keys in self.k_factors safely
-                    val += active_ppm * self.k_factors.get(ing, {}).get(cat.upper() if cat in ['lsi', 'sdsi'] else (cat.replace('_sr', '') if cat == 'ba_sr' else cat.capitalize() if cat == 'caso4' else cat), 0.0) # Using direct key matching to avoid any potential typos
-                
-            # Safely fetch from the exact k-factors definitions mapping
             target_salts = ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3", "FeSiO3"]
 
             sum_kd_safe = {}
