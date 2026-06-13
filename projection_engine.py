@@ -7,6 +7,7 @@ st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
     def __init__(self):
+        # Initialize default ions in session state to allow UI updates
         if 'ui_ions' not in st.session_state:
             st.session_state.ui_ions = {
                 'Ca': 150.0, 'Mg': 50.0, 'Na': 300.0, 'K': 10.0, 'NH4': 0.0, 
@@ -16,10 +17,13 @@ class UtilityProjectionEngine:
             }
 
     def format_sci(self, val):
-        if val == 0: return "0.00"
+        """Formats numbers from e notation to standard x 10^x"""
+        if val == 0:
+            return "0.00"
         s = f"{val:.2e}"
         base, exp = s.split('e')
-        return f"{base} x 10^{int(exp)}"
+        exp_val = int(exp)
+        return f"{base} x 10^{exp_val}"
 
     def calculate_acid_chemistry(self, raw_ph, target_ph, raw_hco3, temp_c):
         if target_ph >= raw_ph or raw_hco3 <= 0:
@@ -27,17 +31,22 @@ class UtilityProjectionEngine:
             
         T_K = temp_c + 273.15
         pKa1 = (3404.71 / T_K) + 0.032786 * T_K - 14.8435
+        
         total_co2 = raw_hco3 * (1.0 + 10**(pKa1 - raw_ph))
+        
         target_hco3 = total_co2 / (1.0 + 10**(pKa1 - target_ph))
         hco3_destroyed = max(0.0, raw_hco3 - target_hco3)
+        
         acid_dose_ppm = hco3_destroyed * (98.08 / 122.02)
         so4_added = hco3_destroyed * (96.06 / 122.02)
+        
         return target_hco3, so4_added, acid_dose_ppm
 
     def calculate_scaling_indices(self, pH, temp_c, ions):
         try:
             T_K = temp_c + 273.15  
             A_dh = 0.4918 + 0.0007 * temp_c  
+            
             pK2 = (2902.39 / T_K) - 6.498 + (0.02379 * T_K)
             pKs = 171.9065 + (0.077993 * T_K) - (2839.319 / T_K) - (71.595 * math.log10(T_K))
 
@@ -95,6 +104,7 @@ class UtilityProjectionEngine:
                 correction = A_dh_const * z_product * (sqrt_I / (1 + 1.4 * sqrt_I))
                 return pKsp_pure - correction
 
+            # Standard Thermodynamic Ksps
             pksp_CaSO4 = 4.62
             pksp_BaSO4 = 9.96
             pksp_SrSO4 = 6.49
@@ -111,7 +121,7 @@ class UtilityProjectionEngine:
                 if m1 == 0 or m2 == 0: return 0.0, 0.0, 0.0
                 iap = (m1 * (m2**2)) if is_fluoride else (m1 * m2)
                 ratio = iap / ksp_prime if ksp_prime > 0 else 0.0
-                si = math.log10(ratio) if ratio > 1.0 else 0.0 # Log-SI used internally for Tab 3 decay math
+                si = math.log10(ratio) if ratio > 1.0 else 0.0 
                 return max(0.0, si), iap, ratio
 
             si_CaSO4, iap_CaSO4, ratio_CaSO4 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('SO4', 0), Ksp_prime_CaSO4)
@@ -119,6 +129,7 @@ class UtilityProjectionEngine:
             si_SrSO4, iap_SrSO4, ratio_SrSO4 = calc_si_and_iap(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
             si_CaF2, iap_CaF2, ratio_CaF2 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
+            # --- SILICA SPECIATION & SOLUBILITY LOGIC ---
             if temp_c <= 25:
                 sio2_limit_ppm = 125.0
             elif temp_c <= 30:
@@ -532,7 +543,6 @@ class UtilityProjectionEngine:
         raw_conc_ph = feed_ph + math.log10(cf)
         treated_conc_ph = treated_ph + math.log10(cf)
 
-        # Tab 1 Addition: Hydraulic Performance Moved Here
         with tab_inputs:
             st.write("---")
             st.write("**System Hydraulic Performance**")
@@ -658,12 +668,12 @@ class UtilityProjectionEngine:
                 if treated_conc_ph <= 8.0:
                     st.info("ℹ️ **Note:** Metal silicates ($CaSiO_3$, $MgSiO_3$, $FeSiO_3$) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
                 
-                # Tab 2 Addition: Scaling Intensity Possibility
                 st.write("---")
                 st.write("**Scaling Risk & Intensity Possibility (Treated Concentrate)**")
                 
                 intensity_data = []
                 
+                # Math for LSI / SDSI (Desired = 0.0)
                 for k in ["LSI", "SDSI"]:
                     val = treated_conc_data[k]
                     intensity = max(0.0, val * 100.0)
@@ -671,9 +681,11 @@ class UtilityProjectionEngine:
                         "Salt / Index": k,
                         "Data Value": f"{val:.3f}",
                         "Desired Value": "0.0",
+                        "Intensity_Num": intensity,
                         "Scaling Intensity Possibility": f"{intensity:.1f}%"
                     })
                     
+                # Math for Salts (Desired Ratio = 1.0)
                 for idx, k in enumerate(["CaSO4", "BaSO4", "SrSO4", "CaF2", "SiOH4", "CaSiO3", "MgSiO3", "FeSiO3"]):
                     display_name = salt_keys_display[idx]
                     val = treated_conc_data[salt_keys_internal[idx]]
@@ -682,11 +694,34 @@ class UtilityProjectionEngine:
                         "Salt / Index": display_name,
                         "Data Value": f"{val:.3f}",
                         "Desired Value": "1.0",
+                        "Intensity_Num": intensity,
                         "Scaling Intensity Possibility": f"{intensity:.1f}%"
                     })
                     
                 df_intensity = pd.DataFrame(intensity_data)
-                st.dataframe(df_intensity, use_container_width=True, hide_index=True)
+                # Drop the raw numeric column from the visible table for clean display
+                st.dataframe(df_intensity.drop(columns=["Intensity_Num"]), use_container_width=True, hide_index=True)
+                
+                # NEW GRAPH: Baseline Scaling Intensity Possibility
+                fig_intensity = px.bar(
+                    df_intensity,
+                    x="Salt / Index",
+                    y="Intensity_Num",
+                    title="Baseline Scaling Intensity Possibility Before Antiscalant (%)",
+                    labels={"Intensity_Num": "Scaling Possibility (%)", "Salt / Index": "Mineral Species"},
+                    color="Intensity_Num",
+                    color_continuous_scale=["#28a745", "#ffc107", "#dc3545"] # Green -> Yellow -> Red
+                )
+                
+                fig_intensity.update_layout(
+                    height=500,
+                    margin=dict(l=20, r=20, t=50, b=20)
+                )
+                
+                # Add the safe zone line at 0%
+                fig_intensity.add_hline(y=0, line_dash="dash", line_color="green", annotation_text="Safe Zone (0%)")
+                
+                st.plotly_chart(fig_intensity, use_container_width=True)
                 
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
