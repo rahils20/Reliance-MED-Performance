@@ -15,6 +15,33 @@ class UtilityProjectionEngine:
                 'HCO3': 250.0, 'Cl': 400.0, 'SO4': 200.0, 'F': 0.5, 
                 'NO3': 5.0, 'PO4': 0.0, 'CO3': 0.0, 'SiO2': 15.0, 'CO2': 5.0
             }
+            
+        # Project X Formulation Database (Active Solids)
+        self.formulations = {
+            "Kem Watreat R 824": {"homopolymer": 0.40},
+            "Kem Watreat R 246": {"terpolymer": 0.30},
+            "Kem Watreat R 428 I": {"homopolymer": 0.10, "hedp": 0.077},
+            "Kem Watreat R 4001": {"atmp": 0.0375, "hedp": 0.066},
+            "Kem Watreat R 170": {"pbtc": 0.0054, "detmpa": 0.135, "homopolymer": 0.06},
+            "Kem Watreat R 6863": {"atmp": 0.1125, "hedp": 0.0275, "copolymer": 0.02},
+            "Kem Watreat R 6196": {"atmp": 0.1875, "smbs": 0.03, "homopolymer": 0.04},
+            "Kem Watreat R 428 ID": {"hedp": 0.04565, "homopolymer": 0.048},
+            "Kem Watreat R 4002": {"hedp": 0.066, "atmp": 0.0175},
+            "Kem Watreat R 3687": {"hedp": 0.1375, "pma": 0.0326}
+        }
+
+        # Project X Kinetic k-Factor Matrix
+        self.k_factors = {
+            "pbtc":        {"lsi": 4.5, "sdsi": 4.5, "caso4": 1.0, "ba_sr": 0.5, "silica": 0.0, "caf2": 0.0, "fe": 0.5},
+            "detmpa":      {"lsi": 2.0, "sdsi": 2.0, "caso4": 3.5, "ba_sr": 5.0, "silica": 2.5, "caf2": 0.0, "fe": 4.0},
+            "hedp":        {"lsi": 3.0, "sdsi": 3.0, "caso4": 2.5, "ba_sr": 1.5, "silica": 0.0, "caf2": 0.0, "fe": 2.0},
+            "atmp":        {"lsi": 3.5, "sdsi": 3.5, "caso4": 2.0, "ba_sr": 2.0, "silica": 0.0, "caf2": 1.0, "fe": 2.5},
+            "homopolymer": {"lsi": 2.5, "sdsi": 2.5, "caso4": 0.5, "ba_sr": 0.0, "silica": 0.0, "caf2": 1.0, "fe": 0.0},
+            "copolymer":   {"lsi": 2.0, "sdsi": 2.0, "caso4": 2.8, "ba_sr": 2.5, "silica": 1.5, "caf2": 1.0, "fe": 1.5},
+            "terpolymer":  {"lsi": 1.5, "sdsi": 1.5, "caso4": 3.0, "ba_sr": 2.0, "silica": 4.0, "caf2": 1.5, "fe": 3.0},
+            "pma":         {"lsi": 3.8, "sdsi": 3.8, "caso4": 3.5, "ba_sr": 2.0, "silica": 0.0, "caf2": 2.0, "fe": 1.0},
+            "smbs":        {"lsi": 0.0, "sdsi": 0.0, "caso4": 0.0, "ba_sr": 0.0, "silica": 0.0, "caf2": 0.0, "fe": 0.0}
+        }
 
     def format_sci(self, val):
         """Formats numbers to standard scientific notation using Unicode superscripts"""
@@ -396,8 +423,8 @@ class UtilityProjectionEngine:
     def render_engine(self):
         st.title("RO Projection Engine")
         
-        tab_inputs, tab_results, tab_report = st.tabs([
-            "1. Inputs", "2. Results", "3. Projection Report"
+        tab_inputs, tab_results, tab_project_x, tab_report = st.tabs([
+            "1. Inputs", "2. Results", "3. Project X Matrix", "4. Projection Report"
         ])
         
         with tab_inputs:
@@ -736,6 +763,54 @@ class UtilityProjectionEngine:
                 
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
+
+        with tab_project_x:
+            st.subheader("Project X: Formulation Kinetic Efficiency Grid")
+            st.info("Explore the absolute kinetic efficiency of each product based on its proprietary active raw material blend. This matrix models theoretical inhibition efficiency (%) at escalating saturation intensities.")
+
+            col_px1, col_px2 = st.columns(2)
+            with col_px1:
+                px_product = st.selectbox("Select Kem Watreat Formulation", list(self.formulations.keys()), key="px_prod")
+            with col_px2:
+                px_dose = st.slider("Active Product Dose (ppm)", 1.0, 10.0, 5.0, 0.5, key="px_dose")
+
+            formulation = self.formulations[px_product]
+            
+            # Map Table Columns to K-Factor Categories
+            cat_map = {
+                "LSI": "lsi", "SDSI": "sdsi", "CaSO4": "caso4", 
+                "BaSO4": "ba_sr", "SrSO4": "ba_sr", "CaF2": "caf2", 
+                "Si(OH)4": "silica", "CaSiO3": "silica", "MgSiO3": "silica", "FeSiO3": "silica"
+            }
+
+            # Pre-calculate the total sum of (active_ppm * k_factor) for this specific dose
+            sum_kd = {}
+            for cat in set(cat_map.values()):
+                val = 0.0
+                for ing, pct in formulation.items():
+                    active_ppm = px_dose * pct
+                    val += active_ppm * self.k_factors[ing][cat]
+                sum_kd[cat] = val
+
+            # Build the Dataframe (Rows = SI Levels from 0.5 to 5.0)
+            si_range = [round(0.5 + i*0.1, 1) for i in range(46)]
+            grid_data = []
+            
+            for raw_si in si_range:
+                row = {"Raw Saturation Index (SI)": f"{raw_si:.1f}"}
+                for col_name, cat in cat_map.items():
+                    kd = sum_kd[cat]
+                    # Inverse Square Root Decay Law
+                    efficiency = (1.0 - math.exp(-kd / math.sqrt(raw_si))) * 100
+                    row[col_name] = efficiency
+                grid_data.append(row)
+
+            df_grid = pd.DataFrame(grid_data)
+            df_grid.set_index("Raw Saturation Index (SI)", inplace=True)
+
+            # Apply conditional heat mapping natively in Streamlit
+            styled_grid = df_grid.style.background_gradient(cmap="RdYlGn", vmin=0, vmax=100).format("{:.1f}%")
+            st.dataframe(styled_grid, use_container_width=True, height=600)
                 
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
