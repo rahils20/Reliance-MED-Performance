@@ -769,6 +769,7 @@ class UtilityProjectionEngine:
         # ==========================================
         with tab_project_x:
             st.subheader("Project X: Formulation Kinetic Efficiency Grid")
+            st.warning("⚠️ **Theoretical Matrix Notice:** This grid displays isolated, absolute kinetic efficiency for a single foulant in a vacuum. Real-world RO water contains multiple competing salts that stretch chemical efficiency, and high LSI introduces Calcium Phosphonate precipitation limits. Those complex multi-salt interactions are fully calculated and accounted for in the final **Tab 4 Projection Report**.")
             st.info("Explore the absolute kinetic efficiency of each product based on its proprietary active raw material blend. This matrix models theoretical inhibition efficiency (%) at escalating saturation intensities.")
 
             col_px1, col_px2 = st.columns(2)
