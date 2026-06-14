@@ -16,6 +16,12 @@ class UtilityProjectionEngine:
                 'NO3': 5.0, 'PO4': 0.0, 'CO3': 0.0, 'SiO2': 15.0, 'CO2': 5.0
             }
             
+        # Initialize Engineering Selection State
+        if 'final_product' not in st.session_state:
+            st.session_state.final_product = None
+        if 'final_dose' not in st.session_state:
+            st.session_state.final_dose = 0.0
+            
         # Project X Formulation Database (Active Solids)
         self.formulations = {
             "Kem Watreat R 824": {"homopolymer": 0.40},
@@ -420,11 +426,58 @@ class UtilityProjectionEngine:
             
         return effective
 
+    def run_expert_simulation(self, effective):
+        successes = []
+        economic_sort_order = [
+            "Kem Watreat R 4001", "Kem Watreat R 4002", "Kem Watreat R 428 ID",
+            "Kem Watreat R 428 I", "Kem Watreat R 6196", "Kem Watreat R 824",
+            "Kem Watreat R 246", "Kem Watreat R 6863", "Kem Watreat R 170", "Kem Watreat R 3687"
+        ]
+
+        high_lsi_risk = effective.get('LSI', 0) > 2.5
+        active_secondary_salts = sum(1 for s in ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2"] if effective.get(s, 0) > 1.0)
+        multi_salt_stress = active_secondary_salts > 0
+        high_silica = effective.get('Ratio_SiOH4', 0) > 1.0
+
+        for prod in economic_sort_order:
+            recipe = self.formulations.get(prod, {})
+            has_polymer = any(p in recipe for p in ["homopolymer", "copolymer", "terpolymer", "pma"])
+            is_pure_phos = not has_polymer
+            is_pure_poly = all(p in ["homopolymer", "copolymer", "terpolymer", "pma", "smbs"] for p in recipe)
+
+            if is_pure_phos and high_lsi_risk:
+                continue
+            if is_pure_poly and multi_salt_stress and high_silica:
+                continue
+
+            # Simulate doses from 1.0 to 8.0 ppm
+            for dose in [x * 0.5 for x in range(2, 17)]:
+                sim_res = self.calculate_effective_scaling(effective, prod, dose)
+
+                lsi_safe = -0.3 <= sim_res.get('LSI', 0) <= 0.3
+                sdsi_safe = -0.3 <= sim_res.get('SDSI', 0) <= 0.3
+
+                salts_safe = True
+                # Log10(1.05) is ~0.021. Any resulting SI index <= 0.021 means the ratio is <= 1.05
+                for s_key in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
+                    if sim_res.get(s_key, 0) > 0.021:
+                        salts_safe = False
+                        break
+
+                if lsi_safe and sdsi_safe and salts_safe:
+                    successes.append({
+                        "Product": prod,
+                        "Required Dose (ppm)": dose,
+                        "Final LSI": sim_res.get('LSI', 0)
+                    })
+                    break 
+        return successes
+
     def render_engine(self):
         st.title("RO Projection Engine")
         
         tab_inputs, tab_results, tab_project_x, tab_report = st.tabs([
-            "1. Inputs", "2. Results", "3. Project X Matrix", "4. Projection Report"
+            "1. Inputs", "2. Results", "3. Project X Matrix & AI", "4. Projection Report"
         ])
         
         with tab_inputs:
@@ -707,7 +760,6 @@ class UtilityProjectionEngine:
                 
                 intensity_data = []
                 
-                # Math for LSI / SDSI (Desired = 0.0)
                 for k in ["LSI", "SDSI"]:
                     val = treated_conc_data[k]
                     intensity = max(0.0, val * 100.0)
@@ -719,7 +771,6 @@ class UtilityProjectionEngine:
                         "Scaling Potential (%)": f"{intensity:.1f}%"
                     })
                     
-                # Math for Salts (Desired Ratio = 1.0)
                 for idx, k in enumerate(["CaSO4", "BaSO4", "SrSO4", "CaF2", "SiOH4", "CaSiO3", "MgSiO3", "FeSiO3"]):
                     display_name = salt_keys_display[idx]
                     val = treated_conc_data[salt_keys_internal[idx]]
@@ -735,7 +786,6 @@ class UtilityProjectionEngine:
                 df_intensity = pd.DataFrame(intensity_data)
                 st.dataframe(df_intensity.drop(columns=["Intensity_Num"]), use_container_width=True, hide_index=True)
                 
-                # Upgraded Plotly Chart Styling
                 fig_intensity = px.bar(
                     df_intensity,
                     x="Salt / Index",
@@ -764,12 +814,9 @@ class UtilityProjectionEngine:
             else:
                 st.warning("Please ensure Calcium and Bicarbonate values are greater than zero.")
 
-        # ==========================================
-        # TAB 3: PROJECT X KINETIC GRID
-        # ==========================================
         with tab_project_x:
             st.subheader("Project X: Formulation Kinetic Efficiency Grid")
-            st.warning("⚠️ **Theoretical Matrix Notice:** This grid displays isolated, absolute kinetic efficiency for a single foulant in a vacuum. Real-world RO water contains multiple competing salts that stretch chemical efficiency, and high LSI introduces Calcium Phosphonate precipitation limits. Those complex multi-salt interactions are fully calculated and accounted for in the final **Tab 4 Projection Report**.")
+            st.warning("⚠️ **Theoretical Matrix Notice:** This grid displays isolated, absolute kinetic efficiency for a single foulant in a vacuum. Real-world RO water contains multiple competing salts that stretch chemical efficiency, and high LSI introduces Calcium Phosphonate precipitation limits. Those complex multi-salt interactions are fully calculated and accounted for in the Automated AI section below.")
             st.info("Explore the absolute kinetic efficiency of each product based on its proprietary active raw material blend. This matrix models theoretical inhibition efficiency (%) at escalating saturation intensities.")
 
             col_px1, col_px2 = st.columns(2)
@@ -780,7 +827,6 @@ class UtilityProjectionEngine:
 
             formulation = self.formulations[px_product]
             
-            # Map Table Columns to K-Factor Categories
             cat_map = {
                 "LSI": "lsi", "SDSI": "sdsi", "CaSO4": "caso4", 
                 "BaSO4": "ba_sr", "SrSO4": "ba_sr", "CaF2": "caf2", 
@@ -797,7 +843,6 @@ class UtilityProjectionEngine:
                     val += active_ppm * self.k_factors.get(ing, {}).get(salt, 0.0)
                 sum_kd_safe[salt] = val
 
-            # Build the Dataframe (Rows = SI Levels from 0.5 to 5.0)
             si_range = [round(0.5 + i*0.1, 1) for i in range(46)]
             grid_data = []
             
@@ -805,7 +850,6 @@ class UtilityProjectionEngine:
                 row = {"Raw Saturation Index (SI)": f"{raw_si:.1f}"}
                 for salt in target_salts:
                     kd = sum_kd_safe[salt]
-                    # Inverse Square Root Decay Law
                     efficiency = (1.0 - math.exp(-kd / math.sqrt(raw_si))) * 100
                     row[salt] = efficiency
                 grid_data.append(row)
@@ -813,7 +857,6 @@ class UtilityProjectionEngine:
             df_grid = pd.DataFrame(grid_data)
             df_grid.set_index("Raw Saturation Index (SI)", inplace=True)
 
-            # Map colors based on percentage to bypass Matplotlib background_gradient completely
             def color_cells(val):
                 if isinstance(val, str):
                     return ''
@@ -824,7 +867,6 @@ class UtilityProjectionEngine:
                 else:
                     return 'background-color: #e74c3c; color: white'
 
-            # Use .map or .applymap safely depending on pandas version
             try:
                 styled_grid = df_grid.style.map(color_cells).format("{:.1f}%")
             except AttributeError:
@@ -832,18 +874,79 @@ class UtilityProjectionEngine:
 
             st.dataframe(styled_grid, use_container_width=True, height=600)
 
+            st.markdown("---")
+            st.subheader("Automated AI Product Selection & Simulation")
+            
+            if 'treated_conc_data' in locals() and treated_conc_data:
+                successful_options = self.run_expert_simulation(treated_conc_data)
+                
+                if len(successful_options) > 0:
+                    st.success(f"Simulation Complete: Found {len(successful_options)} viable product(s) to maintain the Safe Zone.")
+                    df_options = pd.DataFrame(successful_options)
+                    st.dataframe(df_options, use_container_width=True, hide_index=True)
+                    
+                    st.write("---")
+                    st.write("**Finalize Engineering Selection**")
+                    col_sel1, col_sel2 = st.columns(2)
+                    with col_sel1:
+                        selected_product_ui = st.selectbox("Select Commercial Product", df_options["Product"].tolist())
+                    with col_sel2:
+                        default_dose = df_options.loc[df_options["Product"] == selected_product_ui, "Required Dose (ppm)"].values[0]
+                        selected_dose_ui = st.number_input("Finalize Dose (ppm)", min_value=1.0, max_value=10.0, value=float(default_dose), step=0.1)
+                        
+                    if st.button("Finalize and Generate Projection Report"):
+                        st.session_state.final_product = selected_product_ui
+                        st.session_state.final_dose = selected_dose_ui
+                        st.success("✅ Selection saved! Proceed to Tab 4 for the finalized projection.")
+                        
+                else:
+                    st.error("🚨 **Standard Catalog Limits Exceeded.** No standard product can safely maintain this water profile below 8.0 ppm. Custom formulation required.")
+                    unlock_code = st.text_input("Enter Admin Override Code for Custom Synthesis", type="password")
+                    
+                    if unlock_code == "KEMPRO2026":
+                        st.success("Admin Override Accepted.")
+                        st.write("### Recommended Custom Formulation")
+                        
+                        high_si = treated_conc_data.get('Ratio_SiOH4', 0) > 1.0
+                        high_ba = treated_conc_data.get('Ratio_BaSO4', 0) > 1.0 or treated_conc_data.get('Ratio_SrSO4', 0) > 1.0
+                        high_so4 = treated_conc_data.get('Ratio_CaSO4', 0) > 1.5
+                        
+                        custom_recipe = []
+                        if high_si: custom_recipe.append("20% Terpolymer (Silica Dispersant)")
+                        if high_ba: custom_recipe.append("15% DETMPA (Heavy Metal Chelator)")
+                        if high_so4: custom_recipe.append("10% PMA (Sulfate Modifier)")
+                        custom_recipe.append("10% HEDP (Threshold Base)")
+                        
+                        st.info(f"**Custom Synthesis Target:** {', '.join(custom_recipe)}")
+                        
+                        st.write("---")
+                        st.write("**Force Custom Selection**")
+                        selected_product_ui = st.text_input("Enter Custom Product Name", "Kem Watreat Custom Blend")
+                        selected_dose_ui = st.number_input("Override Dose (ppm)", value=6.0, step=0.5)
+                        if st.button("Force Generate Report"):
+                            st.session_state.final_product = "Kem Watreat R 428 I" 
+                            st.session_state.final_dose = selected_dose_ui
+                            st.success("✅ Custom Selection forced. Proceed to Tab 4.")
+
         with tab_report:
             st.subheader("Kinetic Performance & Dosage Projection")
             st.info("Review product performance below to track chemical suppression trends. Double-click an item in the legend to isolate it.")
             
+            prod_list = list(self.formulations.keys())
+            default_idx = 0
+            if st.session_state.get('final_product') in prod_list:
+                default_idx = prod_list.index(st.session_state.final_product)
+                
             col1, col2 = st.columns(2)
             with col1:
                 selected_product = st.selectbox(
                     "Select Antiscalant Formulation", 
-                    ["Kem Watreat R 824", "Kem Watreat R 246", "Kem Watreat R 428 I", "Kem Watreat R 4001", "Kem Watreat R 170", "Kem Watreat R 6863", "Kem Watreat R 6196", "Kem Watreat R 428 ID", "Kem Watreat R 4002", "Kem Watreat R 3687"]
+                    prod_list,
+                    index=default_idx
                 )
             with col2:
-                manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=5.0)
+                default_dose_val = st.session_state.get('final_dose') if st.session_state.get('final_dose') > 0 else 5.0
+                manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=float(default_dose_val))
 
             if 'treated_conc_data' in locals() and treated_conc_data:
                 st.write(f"### Performance Curve Matrix: {selected_product}")
@@ -883,6 +986,8 @@ class UtilityProjectionEngine:
                 )
                 
                 fig.add_hline(y=0, line_dash="dash", line_color="green", annotation_text="Safe Zone")
+                if st.session_state.get('final_dose', 0) > 0:
+                    fig.add_vline(x=manual_dose, line_dash="dash", line_color="red", annotation_text=f"Selected Dose ({manual_dose} ppm)")
 
                 st.plotly_chart(fig, use_container_width=True)
                 
