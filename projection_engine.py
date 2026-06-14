@@ -426,14 +426,17 @@ class UtilityProjectionEngine:
             
         return effective
 
+    # --- EXPERT SIMULATION ENGINE HELPER ---
     def run_expert_simulation(self, effective):
         successes = []
+        # Economic Sort Order (Standard/Cheapest to Specialized/Expensive)
         economic_sort_order = [
-            "Kem Watreat R 4001", "Kem Watreat R 4002", "Kem Watreat R 428 ID",
-            "Kem Watreat R 428 I", "Kem Watreat R 6196", "Kem Watreat R 824",
+            "Kem Watreat R 4001", "Kem Watreat R 4002", "Kem Watreat R 428 ID", 
+            "Kem Watreat R 428 I", "Kem Watreat R 6196", "Kem Watreat R 824", 
             "Kem Watreat R 246", "Kem Watreat R 6863", "Kem Watreat R 170", "Kem Watreat R 3687"
         ]
 
+        # Phase 1: Disqualification Triggers
         high_lsi_risk = effective.get('LSI', 0) > 2.5
         active_secondary_salts = sum(1 for s in ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2"] if effective.get(s, 0) > 1.0)
         multi_salt_stress = active_secondary_salts > 0
@@ -445,32 +448,43 @@ class UtilityProjectionEngine:
             is_pure_phos = not has_polymer
             is_pure_poly = all(p in ["homopolymer", "copolymer", "terpolymer", "pma", "smbs"] for p in recipe)
 
+            # Execution Blocks
             if is_pure_phos and high_lsi_risk:
-                continue
+                continue # Disqualified: Calcium Phosphonate Risk
             if is_pure_poly and multi_salt_stress and high_silica:
-                continue
+                continue # Disqualified: Terpolymer stretched too thin
 
-            # Simulate doses from 1.0 to 8.0 ppm
-            for dose in [x * 0.5 for x in range(2, 17)]:
+            # Phase 2: Simulation Loop (1.0 to 8.0 PPM)
+            for dose in [x * 0.5 for x in range(2, 17)]: 
                 sim_res = self.calculate_effective_scaling(effective, prod, dose)
-
+                
+                # Check Target Bounds
                 lsi_safe = -0.3 <= sim_res.get('LSI', 0) <= 0.3
                 sdsi_safe = -0.3 <= sim_res.get('SDSI', 0) <= 0.3
-
+                
+                # Convert active ppm salt data back to logical ratios to test safety margins
                 salts_safe = True
-                # Log10(1.05) is ~0.021. Any resulting SI index <= 0.021 means the ratio is <= 1.05
                 for s_key in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
-                    if sim_res.get(s_key, 0) > 0.021:
+                    si_val = sim_res.get(s_key, 0)
+                    
+                    # 1. Calcium Fluoride Bypass (Can safely run up to Ratio 10.0 with antiscalants)
+                    if s_key == "CaF2":
+                        if si_val > 1.0: # log10(10.0) = 1.0
+                            salts_safe = False
+                            break
+                    # 2. Standard Salt Safety Margin (Ratio 1.05 -> log10(1.05) ~= 0.021)
+                    elif si_val > 0.021:
                         salts_safe = False
                         break
 
                 if lsi_safe and sdsi_safe and salts_safe:
                     successes.append({
-                        "Product": prod,
-                        "Required Dose (ppm)": dose,
+                        "Product": prod, 
+                        "Required Dose (ppm)": dose, 
                         "Final LSI": sim_res.get('LSI', 0)
                     })
-                    break 
+                    break # Only save the lowest successful dose per product
+
         return successes
 
     def render_engine(self):
@@ -929,70 +943,142 @@ class UtilityProjectionEngine:
                             st.success("✅ Custom Selection forced. Proceed to Tab 4.")
 
         with tab_report:
-            st.subheader("Kinetic Performance & Dosage Projection")
-            st.info("Review product performance below to track chemical suppression trends. Double-click an item in the legend to isolate it.")
+            # HTML Hack for seamless PDF printing through browser dialog
+            st.markdown("""
+            <style>
+            @media print {
+              header, .st-emotion-cache-1avcm0n, .st-emotion-cache-1v0mbdj { display: none !important; }
+              .stTabs [data-baseweb="tab-list"] { display: none !important; }
+              body { background-color: white !important; }
+            }
+            </style>
+            <button onclick="window.print()" style="background-color:#4CAF50; border:none; color:white; padding:10px 20px; text-align:center; font-size:16px; margin:4px 2px; cursor:pointer; border-radius:8px; float:right;">🖨️ Save Report as PDF</button>
+            <div style="clear: both;"></div>
+            """, unsafe_allow_html=True)
             
-            prod_list = list(self.formulations.keys())
-            default_idx = 0
-            if st.session_state.get('final_product') in prod_list:
-                default_idx = prod_list.index(st.session_state.final_product)
+            st.subheader("Final Projection Report")
+            
+            if st.session_state.final_product is None:
+                st.warning("Please finalize a product selection in Tab 3 to view the Projection Report.")
+            else:
+                final_prod = st.session_state.final_product
+                final_dose = st.session_state.final_dose
                 
-            col1, col2 = st.columns(2)
-            with col1:
-                selected_product = st.selectbox(
-                    "Select Antiscalant Formulation", 
-                    prod_list,
-                    index=default_idx
-                )
-            with col2:
-                default_dose_val = st.session_state.get('final_dose') if st.session_state.get('final_dose') > 0 else 5.0
-                manual_dose = st.number_input("Target Dose (ppm) [For Final Report]", min_value=0.0, value=float(default_dose_val))
+                st.success(f"**Generating Final Report For:** {final_prod} at {final_dose} ppm")
+                
+                if 'treated_conc_data' in locals() and treated_conc_data:
+                    # 1. Comparative Grouped Bar Chart (Baseline vs Treated)
+                    st.write("### Scaling Potential Comparative Analysis")
+                    
+                    baseline_intensity = []
+                    treated_intensity = []
+                    
+                    eff_data_final = self.calculate_effective_scaling(treated_conc_data, final_prod, final_dose)
+                    
+                    # Compute intensities (excluding Iron)
+                    for k in ["LSI", "SDSI"]:
+                        base_val = treated_conc_data[k]
+                        treat_val = eff_data_final.get(k, base_val)
+                        
+                        baseline_intensity.append({
+                            "Salt / Index": k,
+                            "Intensity_Num": max(0.0, base_val * 100.0)
+                        })
+                        treated_intensity.append({
+                            "Salt / Index": k,
+                            "Intensity_Num": max(0.0, treat_val * 100.0)
+                        })
 
-            if 'treated_conc_data' in locals() and treated_conc_data:
-                st.write(f"### Performance Curve Matrix: {selected_product}")
-                
-                dose_range = [x * 0.5 for x in range(0, 21)] 
-                performance_data = []
-                
-                graph_keys = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
-                
-                for d in dose_range:
-                    eff_data = self.calculate_effective_scaling(treated_conc_data, selected_product, d)
-                    row_data = {"Dose (ppm)": d}
-                    for k in graph_keys:
-                        if k in eff_data:
-                            row_data[k] = eff_data[k]
-                    performance_data.append(row_data)
-                
-                df_performance = pd.DataFrame(performance_data)
-                
-                fig = px.line(
-                    df_performance,
-                    x="Dose (ppm)",
-                    y=[col for col in df_performance.columns if col != "Dose (ppm)"],
-                    labels={
-                        "value": "Effective Saturation Index (SI)",
-                        "variable": "Mineral Species",
-                        "Dose (ppm)": "Product Dose (ppm)"
-                    }
-                )
-                
-                fig.update_layout(
-                    title=f"Scaling Suppression Projection: {selected_product}",
-                    hovermode="x unified",
-                    legend_title_text="Mineral Indices",
-                    height=600,
-                    margin=dict(l=20, r=20, t=50, b=20)
-                )
-                
-                fig.add_hline(y=0, line_dash="dash", line_color="green", annotation_text="Safe Zone")
-                if st.session_state.get('final_dose', 0) > 0:
-                    fig.add_vline(x=manual_dose, line_dash="dash", line_color="red", annotation_text=f"Selected Dose ({manual_dose} ppm)")
+                    salt_keys_display = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
+                    salt_keys_internal = ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4", "Ratio_CaSiO3", "Ratio_MgSiO3"]
+                    
+                    for idx, k in enumerate(salt_keys_display):
+                        internal_k = salt_keys_internal[idx]
+                        base_val = treated_conc_data[internal_k]
+                        treat_val = eff_data_final.get(internal_k, base_val)
+                        
+                        baseline_intensity.append({
+                            "Salt / Index": k,
+                            "Intensity_Num": max(0.0, (base_val - 1.0) * 100.0)
+                        })
+                        treated_intensity.append({
+                            "Salt / Index": k,
+                            "Intensity_Num": max(0.0, (treat_val - 1.0) * 100.0)
+                        })
+                        
+                    df_baseline = pd.DataFrame(baseline_intensity)
+                    df_baseline["State"] = "Before Treatment"
+                    
+                    df_treated = pd.DataFrame(treated_intensity)
+                    df_treated["State"] = f"With {final_prod} ({final_dose} ppm)"
+                    
+                    df_combined = pd.concat([df_baseline, df_treated])
+                    
+                    fig_comp = px.bar(
+                        df_combined, x="Salt / Index", y="Intensity_Num", color="State", barmode="group",
+                        title=f"Scaling Intensity Before vs After Treatment (%)",
+                        labels={"Intensity_Num": "Scaling Potential (%)", "Salt / Index": ""},
+                        color_discrete_map={"Before Treatment": "#e74c3c", f"With {final_prod} ({final_dose} ppm)": "#3498db"}
+                    )
+                    
+                    fig_comp.update_layout(
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(family="Arial, sans-serif", size=14, color="#333"),
+                        margin=dict(l=40, r=40, t=60, b=40),
+                        legend_title_text="Treatment State"
+                    )
+                    fig_comp.update_yaxes(showgrid=True, gridcolor="#e0e0e0", zeroline=True, zerolinecolor="#999")
+                    fig_comp.add_hline(y=0, line_width=2, line_dash="dash", line_color="#2ecc71", annotation_text="Safe Zone (0%)", annotation_position="top right")
+                    
+                    st.plotly_chart(fig_comp, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # 2. Line Chart Performance Matrix
+                    st.write(f"### Extended Performance Curve Matrix: {final_prod}")
+                    dose_range = [x * 0.5 for x in range(0, 21)] 
+                    performance_data = []
+                    
+                    # Completely extracted Iron from graph keys
+                    graph_keys = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3"]
+                    
+                    for d in dose_range:
+                        eff_data = self.calculate_effective_scaling(treated_conc_data, final_prod, d)
+                        row_data = {"Dose (ppm)": d}
+                        for k in graph_keys:
+                            if k in eff_data:
+                                row_data[k] = eff_data[k]
+                        performance_data.append(row_data)
+                    
+                    df_performance = pd.DataFrame(performance_data)
+                    
+                    fig = px.line(
+                        df_performance,
+                        x="Dose (ppm)",
+                        y=[col for col in df_performance.columns if col != "Dose (ppm)"],
+                        labels={
+                            "value": "Effective Saturation Index (SI)",
+                            "variable": "Mineral Species",
+                            "Dose (ppm)": "Product Dose (ppm)"
+                        }
+                    )
+                    
+                    fig.update_layout(
+                        title=f"Scaling Suppression Projection: {final_prod}",
+                        hovermode="x unified",
+                        legend_title_text="Mineral Indices",
+                        height=600,
+                        margin=dict(l=20, r=20, t=50, b=20)
+                    )
+                    
+                    fig.add_hline(y=0, line_dash="dash", line_color="green", annotation_text="Safe Zone")
+                    # Highlight the finalized dose on the graph
+                    fig.add_vline(x=final_dose, line_dash="dash", line_color="red", annotation_text=f"Selected Dose ({final_dose} ppm)")
 
-                st.plotly_chart(fig, use_container_width=True)
-                
-                with st.expander("View Comprehensive Kinetic Matrix"):
-                    st.dataframe(df_performance, use_container_width=True, hide_index=True)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    with st.expander("View Comprehensive Kinetic Matrix"):
+                        st.dataframe(df_performance, use_container_width=True, hide_index=True)
 
 if __name__ == "__main__":
     app = UtilityProjectionEngine()
