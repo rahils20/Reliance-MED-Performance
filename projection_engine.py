@@ -312,6 +312,10 @@ class UtilityProjectionEngine:
                     k_heavy_sulf = 0.8 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_hedp)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+            if effective['CaF2'] > 0:
+                k_caf2 = 1.2 / (effective['CaF2'] ** 0.5)
+                eta_caf2 = 1.0 - math.exp(-k_caf2 * active_hedp)
+                effective['CaF2'] = round(effective['CaF2'] * (1.0 - eta_caf2), 3)
             if effective['Fe'] > 0:
                 k_fe = 1.0 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
@@ -339,6 +343,10 @@ class UtilityProjectionEngine:
                     k_heavy_sulf = 1.0 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * total_active_phos)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+            if effective['CaF2'] > 0:
+                k_caf2 = 1.2 / (effective['CaF2'] ** 0.5)
+                eta_caf2 = 1.0 - math.exp(-k_caf2 * total_active_phos)
+                effective['CaF2'] = round(effective['CaF2'] * (1.0 - eta_caf2), 3)
             if effective['Fe'] > 0:
                 k_fe = 1.5 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
@@ -367,6 +375,10 @@ class UtilityProjectionEngine:
                     k_heavy_sulf = 1.8 / (effective[sulf] ** 0.5)
                     eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_detmpa)
                     effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+            if effective['CaF2'] > 0:
+                k_caf2 = 1.5 / (effective['CaF2'] ** 0.5)
+                eta_caf2 = 1.0 - math.exp(-k_caf2 * active_detmpa)
+                effective['CaF2'] = round(effective['CaF2'] * (1.0 - eta_caf2), 3)
             if effective['Fe'] > 0:
                 k_fe = 1.6 / (effective['Fe'] ** 0.5)
                 eta_fe = 1.0 - math.exp(-k_fe * active_detmpa)
@@ -387,6 +399,8 @@ class UtilityProjectionEngine:
             for sulf in ['BaSO4', 'SrSO4']:
                 if effective[sulf] > 0:
                     effective[sulf] = round(effective[sulf] * math.exp(-(1.2 / (effective[sulf] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.2 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 6196":
             total_active = (dose_ppm * 0.050) + (dose_ppm * 0.100) 
@@ -395,6 +409,8 @@ class UtilityProjectionEngine:
                 effective['CaCO3'] = effective['LSI']
             if effective['CaSO4'] > 0:
                 effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.2 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.0 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 428 ID":
             total_active = (dose_ppm * 0.060) + (dose_ppm * 0.080)
@@ -403,6 +419,8 @@ class UtilityProjectionEngine:
                 effective['CaCO3'] = effective['LSI']
             if effective['CaSO4'] > 0:
                 effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.4 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.0 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 4002":
             total_active = (dose_ppm * 0.030) + (dose_ppm * 0.040) + (dose_ppm * 0.080)
@@ -411,6 +429,8 @@ class UtilityProjectionEngine:
                 effective['CaCO3'] = effective['LSI']
             if effective['CaSO4'] > 0:
                 effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.7 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.2 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 3687":
             total_active = (dose_ppm * 0.150) + (dose_ppm * 0.050)
@@ -422,6 +442,8 @@ class UtilityProjectionEngine:
             for sulf in ['BaSO4', 'SrSO4']:
                 if effective[sulf] > 0:
                     effective[sulf] = round(effective[sulf] * math.exp(-(1.5 / (effective[sulf] ** 0.5)) * (dose_ppm * 0.050)), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.0 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat Custom Blend":
             product_recipe = self.formulations.get(product_name, {})
@@ -959,6 +981,18 @@ class UtilityProjectionEngine:
                             st.rerun()
 
         with tab_report:
+            st.markdown("""
+            <style>
+            @media print {
+              header, .st-emotion-cache-1avcm0n, .st-emotion-cache-1v0mbdj { display: none !important; }
+              .stTabs [data-baseweb="tab-list"] { display: none !important; }
+              body { background-color: white !important; }
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
+            st.info("🖨️ **To save this report as a PDF:** Press **Ctrl + P** (Windows) or **Cmd + P** (Mac). The layout has been specially CSS-optimized to print cleanly without menus or sidebars.")
+            
             st.subheader("Final Projection Report")
             
             if st.session_state.final_product is None:
@@ -1129,7 +1163,63 @@ class UtilityProjectionEngine:
                     
                     st.markdown("---")
                     
-                    # 2. Line Chart Performance Matrix
+                    # 2. Precipitate Mass Comparative Chart
+                    st.write("### Scaling Mass Potential (Precipitate at Risk)")
+                    st.info("This graph evaluates the stoichiometry of the limiting reactants to determine the physical worst-case mass (ppm) that could precipitate. A salt may have a high scaling index, but a negligible precipitating mass.")
+                    
+                    mass_data = []
+                    
+                    def get_excess_mass(salt, b_ratio, t_ratio, ions, temp_c):
+                        max_mass = 0.0
+                        if salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
+                        elif salt == "BaSO4": max_mass = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
+                        elif salt == "SrSO4": max_mass = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
+                        elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, ions.get('F',0)/38.00) * 78.08
+                        elif salt == "Si(OH)4":
+                            limit = 125.0
+                            if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
+                            elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
+                            max_mass = max(0.0, ions.get('SiO2',0) - limit)
+                        
+                        base_mass = max_mass * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
+                        treat_mass = max_mass * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
+                        return base_mass, treat_mass
+
+                    for idx, k in enumerate(["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]):
+                        internal_k = ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4"][idx]
+                        b_ratio = treated_conc_data[internal_k]
+                        
+                        b_si = treated_conc_data.get(k, 0)
+                        t_si = eff_data_final.get(k, b_si)
+                        if t_si < b_si and t_si > 0:
+                            t_ratio = 10 ** t_si
+                        elif t_si <= 0:
+                            t_ratio = 1.0
+                        else:
+                            t_ratio = b_ratio
+                            
+                        b_mass, t_mass = get_excess_mass(k, b_ratio, t_ratio, treated_conc_ions, feed_temp)
+                        
+                        mass_data.append({"Salt": k, "Mass (ppm)": b_mass, "State": "Before Treatment"})
+                        mass_data.append({"Salt": k, "Mass (ppm)": t_mass, "State": f"With {final_prod} ({final_dose} ppm)"})
+                        
+                    df_mass = pd.DataFrame(mass_data)
+                    fig_mass = px.bar(
+                        df_mass, x="Salt", y="Mass (ppm)", color="State", barmode="group",
+                        title="Worst-Case Precipitate Mass at Risk (ppm)",
+                        color_discrete_map={"Before Treatment": "#e67e22", f"With {final_prod} ({final_dose} ppm)": "#27ae60"}
+                    )
+                    fig_mass.update_layout(
+                        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                        font=dict(family="Arial, sans-serif", size=14, color="#333"),
+                        margin=dict(l=40, r=40, t=60, b=40)
+                    )
+                    fig_mass.update_yaxes(showgrid=True, gridcolor="#e0e0e0")
+                    st.plotly_chart(fig_mass, use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    # 3. Line Chart Performance Matrix
                     st.write(f"### Extended Performance Curve Matrix: {final_prod}")
                     dose_range = [x * 0.5 for x in range(0, 21)] 
                     performance_data = []
