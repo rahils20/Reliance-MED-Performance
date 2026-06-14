@@ -425,7 +425,7 @@ class UtilityProjectionEngine:
 
         elif product_name == "Kem Watreat Custom Blend":
             product_recipe = self.formulations.get(product_name, {})
-            target_salts = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
+            target_salts = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3"]
             has_polymer = any(p in product_recipe for p in ["homopolymer", "copolymer", "terpolymer", "pma"])
             is_pure_polymer = all(p in ["homopolymer", "copolymer", "terpolymer", "pma", "smbs"] for p in product_recipe)
             for salt in target_salts:
@@ -440,7 +440,7 @@ class UtilityProjectionEngine:
                     if is_pure_polymer and salt in ["LSI", "SDSI", "CaCO3"]:
                         decay_multiplier = max(decay_multiplier, 0.40)
                     effective[salt] = round(raw_si * decay_multiplier, 3)
-
+            
         return effective
 
     # --- EXPERT SIMULATION ENGINE HELPER ---
