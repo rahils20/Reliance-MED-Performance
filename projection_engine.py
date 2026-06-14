@@ -30,17 +30,17 @@ class UtilityProjectionEngine:
             "Kem Watreat R 3687": {"hedp": 0.1375, "pma": 0.0326}
         }
 
-        # 2. Recalibrated k-Factors (Science-Backed Realities)
+        # 2. Recalibrated k-Factors (Scientifically Calibrated via Real-World Data)
         self.k_factors = {
-            "pbtc":        {"LSI": 7.5,  "SDSI": 7.5,  "CaCO3": 7.5,  "CaSO4": 1.5,  "BaSO4": 0.5,  "SrSO4": 0.5,  "CaF2": 0.5,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.5},
-            "detmpa":      {"LSI": 4.0,  "SDSI": 4.0,  "CaCO3": 4.0,  "CaSO4": 3.5,  "BaSO4": 6.0,  "SrSO4": 6.0,  "CaF2": 1.5,  "Si(OH)4": 0.5,  "SiO2": 0.5,  "CaSiO3": 0.5,  "MgSiO3": 0.5,  "FeSiO3": 0.5,  "Fe": 3.0},
-            "hedp":        {"LSI": 5.5,  "SDSI": 5.5,  "CaCO3": 5.5,  "CaSO4": 2.5,  "BaSO4": 0.8,  "SrSO4": 0.8,  "CaF2": 0.5,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 2.5},
-            "atmp":        {"LSI": 6.0,  "SDSI": 6.0,  "CaCO3": 6.0,  "CaSO4": 2.0,  "BaSO4": 1.0,  "SrSO4": 1.0,  "CaF2": 1.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 1.0},
-            "homopolymer": {"LSI": 0.15, "SDSI": 0.15, "CaCO3": 0.15, "CaSO4": 2.5,  "BaSO4": 0.5,  "SrSO4": 0.5,  "CaF2": 1.0,  "Si(OH)4": 0.5,  "SiO2": 0.5,  "CaSiO3": 0.5,  "MgSiO3": 0.5,  "FeSiO3": 0.5,  "Fe": 1.0},
-            "copolymer":   {"LSI": 0.25, "SDSI": 0.25, "CaCO3": 0.25, "CaSO4": 3.0,  "BaSO4": 2.0,  "SrSO4": 2.0,  "CaF2": 1.5,  "Si(OH)4": 1.5,  "SiO2": 1.5,  "CaSiO3": 1.5,  "MgSiO3": 1.5,  "FeSiO3": 1.5,  "Fe": 2.5},
-            "terpolymer":  {"LSI": 0.35, "SDSI": 0.35, "CaCO3": 0.35, "CaSO4": 2.5,  "BaSO4": 2.5,  "SrSO4": 2.5,  "CaF2": 1.5,  "Si(OH)4": 3.5,  "SiO2": 3.5,  "CaSiO3": 3.5,  "MgSiO3": 3.5,  "FeSiO3": 3.5,  "Fe": 4.0},
-            "pma":         {"LSI": 5.0,  "SDSI": 5.0,  "CaCO3": 5.0,  "CaSO4": 4.5,  "BaSO4": 1.5,  "SrSO4": 1.5,  "CaF2": 2.0,  "Si(OH)4": 1.0,  "SiO2": 1.0,  "CaSiO3": 1.0,  "MgSiO3": 1.0,  "FeSiO3": 1.0,  "Fe": 1.0},
-            "smbs":        {"LSI": 0.0,  "SDSI": 0.0,  "CaCO3": 0.0,  "CaSO4": 0.0,  "BaSO4": 0.0,  "SrSO4": 0.0,  "CaF2": 0.0,  "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0}
+            "pbtc":        {"LSI": 3.50, "SDSI": 3.50, "CaCO3": 3.50, "CaSO4": 1.50, "BaSO4": 0.50, "SrSO4": 0.50, "CaF2": 0.50, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
+            "detmpa":      {"LSI": 2.20, "SDSI": 2.20, "CaCO3": 2.20, "CaSO4": 3.00, "BaSO4": 4.50, "SrSO4": 4.50, "CaF2": 1.50, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
+            "hedp":        {"LSI": 2.65, "SDSI": 2.65, "CaCO3": 2.65, "CaSO4": 2.20, "BaSO4": 0.80, "SrSO4": 0.80, "CaF2": 1.50, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
+            "atmp":        {"LSI": 2.80, "SDSI": 2.80, "CaCO3": 2.80, "CaSO4": 1.80, "BaSO4": 1.00, "SrSO4": 1.00, "CaF2": 1.20, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
+            "homopolymer": {"LSI": 1.00, "SDSI": 1.00, "CaCO3": 1.00, "CaSO4": 1.50, "BaSO4": 0.50, "SrSO4": 0.50, "CaF2": 0.50, "Si(OH)4": 0.20, "SiO2": 0.20, "CaSiO3": 0.20, "MgSiO3": 0.20, "FeSiO3": 0.20, "Fe": 0.0},
+            "copolymer":   {"LSI": 1.40, "SDSI": 1.40, "CaCO3": 1.40, "CaSO4": 2.80, "BaSO4": 3.00, "SrSO4": 3.00, "CaF2": 1.80, "Si(OH)4": 1.50, "SiO2": 1.50, "CaSiO3": 1.50, "MgSiO3": 1.50, "FeSiO3": 1.50, "Fe": 0.0},
+            "terpolymer":  {"LSI": 1.88, "SDSI": 1.88, "CaCO3": 1.88, "CaSO4": 2.50, "BaSO4": 2.50, "SrSO4": 2.50, "CaF2": 2.00, "Si(OH)4": 3.50, "SiO2": 3.50, "CaSiO3": 3.50, "MgSiO3": 3.50, "FeSiO3": 3.50, "Fe": 0.0},
+            "pma":         {"LSI": 2.50, "SDSI": 2.50, "CaCO3": 2.50, "CaSO4": 3.50, "BaSO4": 1.50, "SrSO4": 1.50, "CaF2": 1.00, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
+            "smbs":        {"LSI": 0.00, "SDSI": 0.00, "CaCO3": 0.00, "CaSO4": 0.00, "BaSO4": 0.00, "SrSO4": 0.00, "CaF2": 0.00, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0}
         }
 
     def format_sci(self, val):
