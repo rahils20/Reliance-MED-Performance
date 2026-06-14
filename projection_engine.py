@@ -2,6 +2,8 @@ import streamlit as st
 import math
 import pandas as pd
 import plotly.express as px
+import base64
+from datetime import datetime
 
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
@@ -36,6 +38,10 @@ class UtilityProjectionEngine:
             "Kem Watreat R 3687": {"hedp": 0.1375, "pma": 0.0326}
         }
 
+        # Dynamically inject custom recipe if it exists in session state
+        if 'custom_recipe' in st.session_state:
+            self.formulations["Kem Watreat Custom Blend"] = st.session_state.custom_recipe
+
         # 2. Recalibrated k-Factors (Scientifically Calibrated via Real-World Data)
         self.k_factors = {
             "pbtc":        {"LSI": 3.50, "SDSI": 3.50, "CaCO3": 3.50, "CaSO4": 1.50, "BaSO4": 0.50, "SrSO4": 0.50, "CaF2": 0.50, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
@@ -50,16 +56,12 @@ class UtilityProjectionEngine:
         }
 
     def format_sci(self, val):
-        """Formats numbers to standard scientific notation using Unicode superscripts"""
         if val == 0: return "0.00"
         s = f"{val:.2e}"
         base, exp = s.split('e')
         exp_val = int(exp)
-        
-        # Map for Unicode superscripts
         super_map = {'0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
                      '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹', '-': '⁻'}
-                     
         exp_str = str(exp_val)
         super_exp = "".join(super_map.get(c, c) for c in exp_str)
         return f"{base} × 10{super_exp}"
@@ -70,12 +72,9 @@ class UtilityProjectionEngine:
             
         T_K = temp_c + 273.15
         pKa1 = (3404.71 / T_K) + 0.032786 * T_K - 14.8435
-        
         total_co2 = raw_hco3 * (1.0 + 10**(pKa1 - raw_ph))
-        
         target_hco3 = total_co2 / (1.0 + 10**(pKa1 - target_ph))
         hco3_destroyed = max(0.0, raw_hco3 - target_hco3)
-        
         acid_dose_ppm = hco3_destroyed * (98.08 / 122.02)
         so4_added = hco3_destroyed * (96.06 / 122.02)
         
@@ -423,20 +422,36 @@ class UtilityProjectionEngine:
             for sulf in ['BaSO4', 'SrSO4']:
                 if effective[sulf] > 0:
                     effective[sulf] = round(effective[sulf] * math.exp(-(1.5 / (effective[sulf] ** 0.5)) * (dose_ppm * 0.050)), 3)
-            
+
+        elif product_name == "Kem Watreat Custom Blend":
+            product_recipe = self.formulations.get(product_name, {})
+            target_salts = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
+            has_polymer = any(p in product_recipe for p in ["homopolymer", "copolymer", "terpolymer", "pma"])
+            is_pure_polymer = all(p in ["homopolymer", "copolymer", "terpolymer", "pma", "smbs"] for p in product_recipe)
+            for salt in target_salts:
+                if salt in effective and effective[salt] > 0:
+                    total_kd = 0.0
+                    for ingredient, active_pct in product_recipe.items():
+                        active_ppm = dose_ppm * active_pct
+                        base_k = self.k_factors.get(ingredient, {}).get(salt, 0.0)
+                        total_kd += active_ppm * base_k
+                    raw_si = effective[salt]
+                    decay_multiplier = math.exp(-total_kd / (raw_si ** 0.5))
+                    if is_pure_polymer and salt in ["LSI", "SDSI", "CaCO3"]:
+                        decay_multiplier = max(decay_multiplier, 0.40)
+                    effective[salt] = round(raw_si * decay_multiplier, 3)
+
         return effective
 
     # --- EXPERT SIMULATION ENGINE HELPER ---
     def run_expert_simulation(self, effective):
         successes = []
-        # Economic Sort Order (Standard/Cheapest to Specialized/Expensive)
         economic_sort_order = [
             "Kem Watreat R 4001", "Kem Watreat R 4002", "Kem Watreat R 428 ID", 
             "Kem Watreat R 428 I", "Kem Watreat R 6196", "Kem Watreat R 824", 
             "Kem Watreat R 246", "Kem Watreat R 6863", "Kem Watreat R 170", "Kem Watreat R 3687"
         ]
 
-        # Phase 1: Disqualification Triggers
         high_lsi_risk = effective.get('LSI', 0) > 2.5
         active_secondary_salts = sum(1 for s in ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2"] if effective.get(s, 0) > 1.0)
         multi_salt_stress = active_secondary_salts > 0
@@ -448,31 +463,24 @@ class UtilityProjectionEngine:
             is_pure_phos = not has_polymer
             is_pure_poly = all(p in ["homopolymer", "copolymer", "terpolymer", "pma", "smbs"] for p in recipe)
 
-            # Execution Blocks
             if is_pure_phos and high_lsi_risk:
-                continue # Disqualified: Calcium Phosphonate Risk
+                continue 
             if is_pure_poly and multi_salt_stress and high_silica:
-                continue # Disqualified: Terpolymer stretched too thin
+                continue 
 
-            # Phase 2: Simulation Loop (1.0 to 8.0 PPM)
             for dose in [x * 0.5 for x in range(2, 17)]: 
                 sim_res = self.calculate_effective_scaling(effective, prod, dose)
                 
-                # Check Target Bounds
                 lsi_safe = -0.3 <= sim_res.get('LSI', 0) <= 0.3
                 sdsi_safe = -0.3 <= sim_res.get('SDSI', 0) <= 0.3
                 
-                # Convert active ppm salt data back to logical ratios to test safety margins
                 salts_safe = True
                 for s_key in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
                     si_val = sim_res.get(s_key, 0)
-                    
-                    # 1. Calcium Fluoride Bypass (Can safely run up to Ratio 10.0 with antiscalants)
                     if s_key == "CaF2":
-                        if si_val > 1.0: # log10(10.0) = 1.0
+                        if si_val > 1.0: 
                             salts_safe = False
                             break
-                    # 2. Standard Salt Safety Margin (Ratio 1.05 -> log10(1.05) ~= 0.021)
                     elif si_val > 0.021:
                         salts_safe = False
                         break
@@ -483,7 +491,7 @@ class UtilityProjectionEngine:
                         "Required Dose (ppm)": dose, 
                         "Final LSI": sim_res.get('LSI', 0)
                     })
-                    break # Only save the lowest successful dose per product
+                    break 
 
         return successes
 
@@ -925,37 +933,31 @@ class UtilityProjectionEngine:
                         high_ba = treated_conc_data.get('Ratio_BaSO4', 0) > 1.0 or treated_conc_data.get('Ratio_SrSO4', 0) > 1.0
                         high_so4 = treated_conc_data.get('Ratio_CaSO4', 0) > 1.5
                         
-                        custom_recipe = []
-                        if high_si: custom_recipe.append("20% Terpolymer (Silica Dispersant)")
-                        if high_ba: custom_recipe.append("15% DETMPA (Heavy Metal Chelator)")
-                        if high_so4: custom_recipe.append("10% PMA (Sulfate Modifier)")
-                        custom_recipe.append("10% HEDP (Threshold Base)")
-                        
-                        st.info(f"**Custom Synthesis Target:** {', '.join(custom_recipe)}")
+                        st.write("**Define Custom Synthesis Percentages**")
+                        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+                        c_terp = col_c1.number_input("% Terpolymer", min_value=0.0, max_value=100.0, value=20.0 if high_si else 0.0)
+                        c_detmpa = col_c2.number_input("% DETMPA", min_value=0.0, max_value=100.0, value=15.0 if high_ba else 0.0)
+                        c_pma = col_c3.number_input("% PMA", min_value=0.0, max_value=100.0, value=10.0 if high_so4 else 0.0)
+                        c_hedp = col_c4.number_input("% HEDP", min_value=0.0, max_value=100.0, value=10.0)
                         
                         st.write("---")
                         st.write("**Force Custom Selection**")
-                        selected_product_ui = st.text_input("Enter Custom Product Name", "Kem Watreat Custom Blend")
                         selected_dose_ui = st.number_input("Override Dose (ppm)", value=6.0, step=0.5)
+                        
                         if st.button("Force Generate Report"):
-                            st.session_state.final_product = "Kem Watreat R 428 I" 
+                            custom_recipe = {}
+                            if c_terp > 0: custom_recipe['terpolymer'] = c_terp / 100.0
+                            if c_detmpa > 0: custom_recipe['detmpa'] = c_detmpa / 100.0
+                            if c_pma > 0: custom_recipe['pma'] = c_pma / 100.0
+                            if c_hedp > 0: custom_recipe['hedp'] = c_hedp / 100.0
+                            
+                            st.session_state.custom_recipe = custom_recipe
+                            st.session_state.final_product = "Kem Watreat Custom Blend" 
                             st.session_state.final_dose = selected_dose_ui
-                            st.success("✅ Custom Selection forced. Proceed to Tab 4.")
+                            st.success("✅ Custom Selection forced. Please refresh or click proceed to view Tab 4.")
+                            st.rerun()
 
         with tab_report:
-            # HTML Hack for seamless PDF printing through browser dialog
-            st.markdown("""
-            <style>
-            @media print {
-              header, .st-emotion-cache-1avcm0n, .st-emotion-cache-1v0mbdj { display: none !important; }
-              .stTabs [data-baseweb="tab-list"] { display: none !important; }
-              body { background-color: white !important; }
-            }
-            </style>
-            <button onclick="window.print()" style="background-color:#4CAF50; border:none; color:white; padding:10px 20px; text-align:center; font-size:16px; margin:4px 2px; cursor:pointer; border-radius:8px; float:right;">🖨️ Save Report as PDF</button>
-            <div style="clear: both;"></div>
-            """, unsafe_allow_html=True)
-            
             st.subheader("Final Projection Report")
             
             if st.session_state.final_product is None:
@@ -967,6 +969,74 @@ class UtilityProjectionEngine:
                 st.success(f"**Generating Final Report For:** {final_prod} at {final_dose} ppm")
                 
                 if 'treated_conc_data' in locals() and treated_conc_data:
+                    
+                    # PDF GENERATION LOGIC 
+                    try:
+                        from fpdf import FPDF
+                        
+                        pdf = FPDF()
+                        pdf.add_page()
+                        
+                        # Header
+                        pdf.set_font("Arial", 'B', 16)
+                        pdf.cell(0, 10, "KEM WATREAT - RO PROJECTION REPORT", ln=True, align="C")
+                        pdf.ln(5)
+                        
+                        # Basic Info
+                        pdf.set_font("Arial", size=12)
+                        pdf.cell(0, 10, f"Date Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
+                        pdf.cell(0, 10, f"Selected Product: {final_prod}", ln=True)
+                        pdf.cell(0, 10, f"Recommended Dose: {final_dose} ppm", ln=True)
+                        pdf.ln(10)
+                        
+                        # Data Extraction
+                        pdf.set_font("Arial", 'B', 14)
+                        pdf.cell(0, 10, "Thermodynamic Projection (Before vs After)", ln=True)
+                        pdf.set_font("Arial", size=12)
+                        
+                        eff_data_pdf = self.calculate_effective_scaling(treated_conc_data, final_prod, final_dose)
+                        
+                        # Indices Table Header
+                        pdf.set_font("Arial", 'B', 12)
+                        pdf.cell(60, 10, "Parameter", border=1)
+                        pdf.cell(65, 10, "Baseline (Raw)", border=1)
+                        pdf.cell(65, 10, f"Treated ({final_dose} ppm)", border=1, ln=True)
+                        
+                        # Populate Rows
+                        pdf.set_font("Arial", size=12)
+                        keys_to_print = ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
+                        
+                        for k in keys_to_print:
+                            base_val = treated_conc_data.get(f"Ratio_{k}", treated_conc_data.get(k, 0)) if k not in ["LSI", "SDSI"] else treated_conc_data.get(k, 0)
+                            treat_val = eff_data_pdf.get(k, base_val)
+                            
+                            # Format to 3 decimal places
+                            b_str = f"{base_val:.3f}"
+                            t_str = f"{treat_val:.3f}"
+                            
+                            pdf.cell(60, 10, k, border=1)
+                            pdf.cell(65, 10, b_str, border=1)
+                            pdf.cell(65, 10, t_str, border=1, ln=True)
+                            
+                        pdf.ln(10)
+                        pdf.set_font("Arial", 'I', 10)
+                        pdf.cell(0, 10, "Note: Values for Salts (CaSO4, etc.) represent the Ratio of IAP to Solubility Limit.", ln=True)
+                        
+                        # Export to bytes
+                        pdf_bytes = pdf.output(dest="S").encode("latin-1")
+                        
+                        st.download_button(
+                            label="📄 Download Professional PDF Report",
+                            data=pdf_bytes,
+                            file_name="Kem_Watreat_Projection.pdf",
+                            mime="application/pdf"
+                        )
+                        
+                    except ImportError:
+                        st.error("⚠️ **System Dependency Missing:** To enable Professional PDF downloads, you must add `fpdf` to your `requirements.txt` file.")
+                    
+                    st.markdown("---")
+                    
                     # 1. Comparative Grouped Bar Chart (Baseline vs Treated)
                     st.write("### Scaling Potential Comparative Analysis")
                     
