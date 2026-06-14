@@ -478,10 +478,11 @@ class UtilityProjectionEngine:
                 for s_key in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
                     si_val = sim_res.get(s_key, 0)
                     if s_key == "CaF2":
-                        if si_val > 1.0: 
+                        # Fluoride is extremely slow to scale. Allow up to 1.5 SI (Ratio ~31.6)
+                        if si_val > 1.5: 
                             salts_safe = False
                             break
-                    elif si_val > 0.021:
+                    elif si_val > 0.05: # Allow standard sulfates/silica up to 0.05 SI (Ratio ~1.12)
                         salts_safe = False
                         break
 
@@ -1007,12 +1008,26 @@ class UtilityProjectionEngine:
                         keys_to_print = ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
                         
                         for k in keys_to_print:
-                            base_val = treated_conc_data.get(f"Ratio_{k}", treated_conc_data.get(k, 0)) if k not in ["LSI", "SDSI"] else treated_conc_data.get(k, 0)
-                            treat_val = eff_data_pdf.get(k, base_val)
+                            if k in ["LSI", "SDSI"]:
+                                b_val = treated_conc_data.get(k, 0)
+                                t_val = eff_data_pdf.get(k, b_val)
+                            else:
+                                internal_key = f"Ratio_{k.replace('Si(OH)4', 'SiOH4')}"
+                                b_val = treated_conc_data.get(internal_key, 1.0)
+                                b_si = treated_conc_data.get(k, 0)
+                                t_si = eff_data_pdf.get(k, b_si)
+                                
+                                # Derive treated ratio mathematically from SI to ensure perfect visual mapping
+                                if t_si < b_si and t_si > 0:
+                                    t_val = 10 ** t_si
+                                elif t_si <= 0:
+                                    t_val = 1.0
+                                else:
+                                    t_val = b_val
                             
                             # Format to 3 decimal places
-                            b_str = f"{base_val:.3f}"
-                            t_str = f"{treat_val:.3f}"
+                            b_str = f"{b_val:.3f}"
+                            t_str = f"{t_val:.3f}"
                             
                             pdf.cell(60, 10, k, border=1)
                             pdf.cell(65, 10, b_str, border=1)
@@ -1045,7 +1060,7 @@ class UtilityProjectionEngine:
                     
                     eff_data_final = self.calculate_effective_scaling(treated_conc_data, final_prod, final_dose)
                     
-                    # Compute intensities (excluding Iron)
+                    # LSI / SDSI are true indices (target = 0.0)
                     for k in ["LSI", "SDSI"]:
                         base_val = treated_conc_data[k]
                         treat_val = eff_data_final.get(k, base_val)
@@ -1059,21 +1074,31 @@ class UtilityProjectionEngine:
                             "Intensity_Num": max(0.0, treat_val * 100.0)
                         })
 
+                    # Salts must be translated back from SI -> Ratio to display correctly
                     salt_keys_display = ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
                     salt_keys_internal = ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4", "Ratio_CaSiO3", "Ratio_MgSiO3"]
                     
                     for idx, k in enumerate(salt_keys_display):
                         internal_k = salt_keys_internal[idx]
-                        base_val = treated_conc_data[internal_k]
-                        treat_val = eff_data_final.get(internal_k, base_val)
+                        
+                        base_ratio = treated_conc_data[internal_k]
+                        base_si = treated_conc_data.get(k, 0)
+                        treat_si = eff_data_final.get(k, base_si)
+                        
+                        if treat_si < base_si and treat_si > 0:
+                            treat_ratio = 10 ** treat_si
+                        elif treat_si <= 0:
+                            treat_ratio = 1.0
+                        else:
+                            treat_ratio = base_ratio
                         
                         baseline_intensity.append({
                             "Salt / Index": k,
-                            "Intensity_Num": max(0.0, (base_val - 1.0) * 100.0)
+                            "Intensity_Num": max(0.0, (base_ratio - 1.0) * 100.0)
                         })
                         treated_intensity.append({
                             "Salt / Index": k,
-                            "Intensity_Num": max(0.0, (treat_val - 1.0) * 100.0)
+                            "Intensity_Num": max(0.0, (treat_ratio - 1.0) * 100.0)
                         })
                         
                     df_baseline = pd.DataFrame(baseline_intensity)
