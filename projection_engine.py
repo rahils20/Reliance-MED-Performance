@@ -9,7 +9,6 @@ st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
 class UtilityProjectionEngine:
     def __init__(self):
-        # Initialize default ions in session state to allow UI updates
         if 'ui_ions' not in st.session_state:
             st.session_state.ui_ions = {
                 'Ca': 150.0, 'Mg': 50.0, 'Na': 300.0, 'K': 10.0, 'NH4': 0.0, 
@@ -18,13 +17,11 @@ class UtilityProjectionEngine:
                 'NO3': 5.0, 'PO4': 0.0, 'CO3': 0.0, 'SiO2': 15.0, 'CO2': 5.0
             }
             
-        # Initialize Engineering Selection State
         if 'final_product' not in st.session_state:
             st.session_state.final_product = None
         if 'final_dose' not in st.session_state:
             st.session_state.final_dose = 0.0
             
-        # Project X Formulation Database (Active Solids)
         self.formulations = {
             "Kem Watreat R 824": {"homopolymer": 0.40},
             "Kem Watreat R 246": {"terpolymer": 0.30},
@@ -38,11 +35,9 @@ class UtilityProjectionEngine:
             "Kem Watreat R 3687": {"hedp": 0.1375, "pma": 0.0326}
         }
 
-        # Dynamically inject custom recipe if it exists in session state
         if 'custom_recipe' in st.session_state:
             self.formulations["Kem Watreat Custom Blend"] = st.session_state.custom_recipe
 
-        # 2. Recalibrated k-Factors (Scientifically Calibrated via Real-World Data)
         self.k_factors = {
             "pbtc":        {"LSI": 3.50, "SDSI": 3.50, "CaCO3": 3.50, "CaSO4": 1.50, "BaSO4": 0.50, "SrSO4": 0.50, "CaF2": 0.50, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
             "detmpa":      {"LSI": 2.20, "SDSI": 2.20, "CaCO3": 2.20, "CaSO4": 3.00, "BaSO4": 4.50, "SrSO4": 4.50, "CaF2": 1.50, "Si(OH)4": 0.0,  "SiO2": 0.0,  "CaSiO3": 0.0,  "MgSiO3": 0.0,  "FeSiO3": 0.0,  "Fe": 0.0},
@@ -75,7 +70,7 @@ class UtilityProjectionEngine:
         total_co2 = raw_hco3 * (1.0 + 10**(pKa1 - raw_ph))
         target_hco3 = total_co2 / (1.0 + 10**(pKa1 - target_ph))
         hco3_destroyed = max(0.0, raw_hco3 - target_hco3)
-        acid_dose_ppm = hco3_destroyed * (98.08 / 122.02)
+        acid_dose_ppm = (hco3_destroyed * (98.08 / 122.02)) / 0.98
         so4_added = hco3_destroyed * (96.06 / 122.02)
         
         return target_hco3, so4_added, acid_dose_ppm
@@ -142,7 +137,6 @@ class UtilityProjectionEngine:
                 correction = A_dh_const * z_product * (sqrt_I / (1 + 1.4 * sqrt_I))
                 return pKsp_pure - correction
 
-            # Standard Thermodynamic Ksps
             pksp_CaSO4 = 4.62
             pksp_BaSO4 = 9.96
             pksp_SrSO4 = 6.49
@@ -167,7 +161,6 @@ class UtilityProjectionEngine:
             si_SrSO4, iap_SrSO4, ratio_SrSO4 = calc_si_and_iap(molarity.get('Sr', 0), molarity.get('SO4', 0), Ksp_prime_SrSO4)
             si_CaF2, iap_CaF2, ratio_CaF2 = calc_si_and_iap(molarity.get('Ca', 0), molarity.get('F', 0), Ksp_prime_CaF2, is_fluoride=True)
             
-            # --- SILICA SPECIATION & SOLUBILITY LOGIC ---
             if temp_c <= 25:
                 sio2_limit_ppm = 125.0
             elif temp_c <= 30:
@@ -447,7 +440,7 @@ class UtilityProjectionEngine:
 
         elif product_name == "Kem Watreat Custom Blend":
             product_recipe = self.formulations.get(product_name, {})
-            target_salts = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3"]
+            target_salts = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
             has_polymer = any(p in product_recipe for p in ["homopolymer", "copolymer", "terpolymer", "pma"])
             is_pure_polymer = all(p in ["homopolymer", "copolymer", "terpolymer", "pma", "smbs"] for p in product_recipe)
             for salt in target_salts:
@@ -465,8 +458,7 @@ class UtilityProjectionEngine:
             
         return effective
 
-    # --- EXPERT SIMULATION ENGINE HELPER ---
-    def run_expert_simulation(self, effective):
+    def run_expert_simulation(self, effective, treated_conc_ions, feed_temp):
         successes = []
         economic_sort_order = [
             "Kem Watreat R 4001", "Kem Watreat R 4002", "Kem Watreat R 428 ID", 
@@ -478,6 +470,20 @@ class UtilityProjectionEngine:
         active_secondary_salts = sum(1 for s in ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2"] if effective.get(s, 0) > 1.0)
         multi_salt_stress = active_secondary_salts > 0
         high_silica = effective.get('Ratio_SiOH4', 0) > 1.0
+
+        def get_excess_mass(salt, b_ratio, ions, temp_c):
+            max_mass = 0.0
+            if salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
+            elif salt == "BaSO4": max_mass = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
+            elif salt == "SrSO4": max_mass = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
+            elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
+            elif salt == "Si(OH)4":
+                limit = 125.0
+                if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
+                elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
+                max_mass = max(0.0, ions.get('SiO2',0) - limit)
+            
+            return max_mass * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
 
         for prod in economic_sort_order:
             recipe = self.formulations.get(prod, {})
@@ -499,14 +505,16 @@ class UtilityProjectionEngine:
                 salts_safe = True
                 for s_key in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
                     si_val = sim_res.get(s_key, 0)
-                    if s_key == "CaF2":
-                        # Fluoride is extremely slow to scale. Allow up to 1.5 SI (Ratio ~31.6)
-                        if si_val > 1.5: 
+                    if si_val > 0.021:
+                        internal_k = f"Ratio_{s_key.replace('Si(OH)4', 'SiOH4')}"
+                        b_ratio = 10 ** si_val
+                        mass = get_excess_mass(s_key, b_ratio, treated_conc_ions, feed_temp)
+                        
+                        if mass > 0.5:
+                            if s_key == "CaF2" and si_val <= 1.5:
+                                continue
                             salts_safe = False
                             break
-                    elif si_val > 0.05: # Allow standard sulfates/silica up to 0.05 SI (Ratio ~1.12)
-                        salts_safe = False
-                        break
 
                 if lsi_safe and sdsi_safe and salts_safe:
                     successes.append({
@@ -522,7 +530,7 @@ class UtilityProjectionEngine:
         st.title("RO Projection Engine")
         
         tab_inputs, tab_results, tab_project_x, tab_report = st.tabs([
-            "1. Inputs", "2. Results", "3. Project X Matrix & AI", "4. Projection Report"
+            "1. System Configuration", "2. Thermodynamic Profiling", "3. AI Formulation Engine", "4. Engineering Projection Report"
         ])
         
         with tab_inputs:
@@ -539,7 +547,7 @@ class UtilityProjectionEngine:
                 st.write("**Chemical Pre-Treatment (pH & Acid)**")
                 feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
                 
-                auto_acid = st.checkbox("🪄 Auto-Optimize Acid Dosing (Target Concentrate LSI ≤ 2.5)", value=True)
+                auto_acid = st.checkbox("Auto-Optimize Acid Dosing (Target Concentrate LSI <= 2.5)", value=True)
                 
                 if not auto_acid:
                     treated_ph = st.number_input("Adjusted Feed pH (Manual Acid Dosing)", min_value=1.0, max_value=14.0, value=7.5)
@@ -612,10 +620,10 @@ class UtilityProjectionEngine:
             st.write("**Balance & Scale Adjustments**")
             bal_col1, bal_col2 = st.columns(2)
             with bal_col1:
-                auto_balance = st.checkbox("⚖️ Calculate Na/Cl to Balance", value=(abs(error_pct) > 5.0))
+                auto_balance = st.checkbox("Calculate Na/Cl to Balance", value=(abs(error_pct) > 5.0))
             with bal_col2:
                 target_tds = st.number_input("Override Target TDS (mg/L)", min_value=0.0, value=float(round(calc_tds, 2)))
-                scale_tds = st.checkbox("📈 Scale all ions proportionally to match Target TDS", value=False)
+                scale_tds = st.checkbox("Scale all ions proportionally to match Target TDS", value=False)
                 
             if auto_balance and abs(error_pct) > 0.01:
                 if cat_meq > an_meq:
@@ -629,7 +637,7 @@ class UtilityProjectionEngine:
                 for k in calc_ions:
                     calc_ions[k] *= multiplier
 
-            if st.button("⚡ Apply Adjustments to Input Fields"):
+            if st.button("Apply Adjustments to Input Fields"):
                 st.session_state.ui_ions = calc_ions.copy()
                 st.rerun()
 
@@ -665,7 +673,7 @@ class UtilityProjectionEngine:
             acid_dose_ppm = dose
 
         if acid_dose_ppm > 0:
-            acid_dose_container.success(f"**Required Acid Dose (100% H2SO4):** {round(acid_dose_ppm, 2)} ppm")
+            acid_dose_container.success(f"**Required Acid Dose (98% H2SO4):** {round(acid_dose_ppm, 2)} ppm")
         
         raw_conc_ions = {ion: val * cf for ion, val in calc_ions.items()}
         treated_conc_ions = {ion: val * cf for ion, val in treated_feed_ions.items()}
@@ -732,7 +740,7 @@ class UtilityProjectionEngine:
 
                 st.write("---")
                 st.write("**Ion Activity Products (IAP) vs Operational Solubility Limits - Treated Concentrate**")
-                st.info("ℹ️ **Note:** The *Operational Limits* shown below represent the Apparent Solubility Products (Ksp), mathematically adjusted for the higher salinity (Ionic Strength) inside the RO Concentrate stream.")
+                st.info("Note: The Operational Limits shown below represent the Apparent Solubility Products (Ksp), mathematically adjusted for the higher salinity (Ionic Strength) inside the RO Concentrate stream.")
                 
                 iap_data = {
                     "Salt Species": [
@@ -755,9 +763,9 @@ class UtilityProjectionEngine:
                         f"{treated_conc_ions.get('SO4', 0):.2f}", 
                         f"{treated_conc_ions.get('F', 0):.2f}",
                         f"{treated_conc_ions.get('SiO2', 0):.2f} (Total)",
-                        f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)",
-                        f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)",
-                        f"{(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3']):.4e} (Active)"
+                        f"{self.format_sci(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3'])} (Active)",
+                        f"{self.format_sci(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3'])} (Active)",
+                        f"{self.format_sci(treated_conc_ions.get('SiO2', 0) * treated_conc_data['Fraction_SiO3'])} (Active)"
                     ],
                     "Active Concentration (IAP / Molarity)": [
                         self.format_sci(treated_conc_data['IAP_CaSO4']), 
@@ -798,7 +806,7 @@ class UtilityProjectionEngine:
                 st.dataframe(df_salts, use_container_width=True, hide_index=True)
                 
                 if treated_conc_ph <= 8.0:
-                    st.info("ℹ️ **Note:** Metal silicates ($CaSiO_3$, $MgSiO_3$, $FeSiO_3$) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
+                    st.info("Note: Metal silicates (CaSiO3, MgSiO3, FeSiO3) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
                 
                 st.write("---")
                 st.write("**Scaling Risk & Potential (Treated Concentrate)**")
@@ -861,7 +869,7 @@ class UtilityProjectionEngine:
 
         with tab_project_x:
             st.subheader("Project X: Formulation Kinetic Efficiency Grid")
-            st.warning("⚠️ **Theoretical Matrix Notice:** This grid displays isolated, absolute kinetic efficiency for a single foulant in a vacuum. Real-world RO water contains multiple competing salts that stretch chemical efficiency, and high LSI introduces Calcium Phosphonate precipitation limits. Those complex multi-salt interactions are fully calculated and accounted for in the Automated AI section below.")
+            st.warning("Theoretical Matrix Notice: This grid displays isolated, absolute kinetic efficiency for a single foulant in a vacuum. Real-world RO water contains multiple competing salts that stretch chemical efficiency, and high LSI introduces Calcium Phosphonate precipitation limits. Those complex multi-salt interactions are fully calculated and accounted for in the Automated AI section below.")
             st.info("Explore the absolute kinetic efficiency of each product based on its proprietary active raw material blend. This matrix models theoretical inhibition efficiency (%) at escalating saturation intensities.")
 
             col_px1, col_px2 = st.columns(2)
@@ -923,7 +931,7 @@ class UtilityProjectionEngine:
             st.subheader("Automated AI Product Selection & Simulation")
             
             if 'treated_conc_data' in locals() and treated_conc_data:
-                successful_options = self.run_expert_simulation(treated_conc_data)
+                successful_options = self.run_expert_simulation(treated_conc_data, treated_conc_ions, feed_temp)
                 
                 if len(successful_options) > 0:
                     st.success(f"Simulation Complete: Found {len(successful_options)} viable product(s) to maintain the Safe Zone.")
@@ -942,10 +950,10 @@ class UtilityProjectionEngine:
                     if st.button("Finalize and Generate Projection Report"):
                         st.session_state.final_product = selected_product_ui
                         st.session_state.final_dose = selected_dose_ui
-                        st.success("✅ Selection saved! Proceed to Tab 4 for the finalized projection.")
+                        st.success("Selection saved! Proceed to Tab 4 for the finalized projection.")
                         
                 else:
-                    st.error("🚨 **Standard Catalog Limits Exceeded.** No standard product can safely maintain this water profile below 8.0 ppm. Custom formulation required.")
+                    st.error("Standard Catalog Limits Exceeded. No standard product can safely maintain this water profile below 8.0 ppm. Custom formulation required.")
                     unlock_code = st.text_input("Enter Admin Override Code for Custom Synthesis", type="password")
                     
                     if unlock_code == "KEMPRO2026":
@@ -977,7 +985,7 @@ class UtilityProjectionEngine:
                             st.session_state.custom_recipe = custom_recipe
                             st.session_state.final_product = "Kem Watreat Custom Blend" 
                             st.session_state.final_dose = selected_dose_ui
-                            st.success("✅ Custom Selection forced. Please refresh or click proceed to view Tab 4.")
+                            st.success("Custom Selection forced. Please refresh or click proceed to view Tab 4.")
                             st.rerun()
 
         with tab_report:
@@ -991,7 +999,7 @@ class UtilityProjectionEngine:
             </style>
             """, unsafe_allow_html=True)
             
-            st.info("🖨️ **To save this report as a PDF:** Press **Ctrl + P** (Windows) or **Cmd + P** (Mac). The layout has been specially CSS-optimized to print cleanly without menus or sidebars.")
+            st.info("To save this report as a PDF: Press Ctrl + P (Windows) or Cmd + P (Mac). The layout has been specially CSS-optimized to print cleanly without menus or sidebars.")
             
             st.subheader("Final Projection Report")
             
@@ -1075,14 +1083,14 @@ class UtilityProjectionEngine:
                         pdf_bytes = pdf.output(dest="S").encode("latin-1")
                         
                         st.download_button(
-                            label="📄 Download Professional PDF Report",
+                            label="Download Professional PDF Report",
                             data=pdf_bytes,
                             file_name="Kem_Watreat_Projection.pdf",
                             mime="application/pdf"
                         )
                         
                     except ImportError:
-                        st.error("⚠️ **System Dependency Missing:** To enable Professional PDF downloads, you must add `fpdf` to your `requirements.txt` file.")
+                        st.error("System Dependency Missing: To enable Professional PDF downloads, you must add `fpdf` to your `requirements.txt` file.")
                     
                     st.markdown("---")
                     
@@ -1174,7 +1182,7 @@ class UtilityProjectionEngine:
                         if salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
                         elif salt == "BaSO4": max_mass = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
                         elif salt == "SrSO4": max_mass = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
-                        elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, ions.get('F',0)/38.00) * 78.08
+                        elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
                         elif salt == "Si(OH)4":
                             limit = 125.0
                             if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
