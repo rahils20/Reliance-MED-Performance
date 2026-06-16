@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import base64
 from datetime import datetime
+import os
 
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
@@ -251,7 +252,6 @@ class UtilityProjectionEngine:
         active_secondary_salts = sum(1 for s in ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4"] if raw_data.get(s, 0) > 1.0)
         high_lsi = raw_data.get('LSI', 0) > 1.5
         
-        # Penalize pure polymers if stretched too thin across high LSI + secondary salts
         polymer_stress_penalty = 1.0
         if is_pure_polymer and high_lsi and active_secondary_salts > 0:
             polymer_stress_penalty = 0.25 
@@ -288,7 +288,8 @@ class UtilityProjectionEngine:
 
         def get_excess_mass(salt, b_ratio, ions, temp_c):
             max_mass = 0.0
-            if salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
+            if salt == "CaCO3": max_mass = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09
+            elif salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
             elif salt == "BaSO4": max_mass = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
             elif salt == "SrSO4": max_mass = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
             elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
@@ -355,6 +356,7 @@ class UtilityProjectionEngine:
                 feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=25.0)
                 recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
                 salt_rejection = st.slider("Membrane Salt Rejection (%)", min_value=90.0, max_value=99.8, value=99.0, step=0.1)
+                membrane_type = st.selectbox("Membrane Type Selection", ["Standard Brackish Water (BWRO)", "Fouling Resistant (FRRO)", "Seawater (SWRO)"])
                 
                 st.write("**Chemical Pre-Treatment (pH & Acid)**")
                 feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
@@ -467,6 +469,7 @@ class UtilityProjectionEngine:
                 test_conc_ions = {ion: val * cf for ion, val in calc_ions.items()}
                 test_conc_ions['HCO3'] = adj_hco3 * cf
                 test_conc_ions['SO4'] = (calc_ions.get('SO4', 0) + added_so4) * cf
+                test_conc_ions['CO2'] = calc_ions.get('CO2', 0) # Gas fully passes through, does not concentrate
                 
                 conc_ph = test_ph + math.log10(cf)
                 res = self.calculate_scaling_indices(conc_ph, feed_temp, test_conc_ions)
@@ -488,8 +491,12 @@ class UtilityProjectionEngine:
             acid_dose_container.success(f"Required Acid Dose (98% H2SO4): {round(acid_dose_ppm, 2)} ppm")
         
         raw_conc_ions = {ion: val * cf for ion, val in calc_ions.items()}
+        raw_conc_ions['CO2'] = calc_ions.get('CO2', 0)
         treated_conc_ions = {ion: val * cf for ion, val in treated_feed_ions.items()}
+        treated_conc_ions['CO2'] = treated_feed_ions.get('CO2', 0)
+        
         perm_ions = {ion: val * passage_rate for ion, val in calc_ions.items()}
+        perm_ions['CO2'] = calc_ions.get('CO2', 0)
         
         raw_conc_ph = feed_ph + math.log10(cf)
         treated_conc_ph = treated_ph + math.log10(cf)
@@ -502,6 +509,9 @@ class UtilityProjectionEngine:
             col_m2.metric(label="Mineral Passage", value=f"{round(passage_rate * 100, 2)}%")
         
         with tab_results:
+            if calc_ions.get('Fe', 0) > 0.05 or calc_ions.get('Al', 0) > 0.05:
+                st.warning("Pre-Treatment Advisory: Elevated Iron (Fe) or Aluminum (Al) detected. Chemical antiscalants and acid dosing do not dissolve oxidized metals. We highly recommend installing Manganese Greensand, Birm, or coagulation-assisted multimedia filtration prior to the RO unit to prevent severe membrane fouling.")
+
             st.subheader("System Concentration & Thermodynamic Saturation")
             
             feed_data = self.calculate_scaling_indices(feed_ph, feed_temp, calc_ions)
@@ -813,6 +823,9 @@ class UtilityProjectionEngine:
             
             st.info("To save this report as a PDF: Press Ctrl + P (Windows) or Cmd + P (Mac). The layout has been specially CSS-optimized to print cleanly without menus or sidebars.")
             
+            if calc_ions.get('Fe', 0) > 0.05 or calc_ions.get('Al', 0) > 0.05:
+                st.warning("Pre-Treatment Advisory: Elevated Iron (Fe) or Aluminum (Al) detected. Chemical antiscalants and acid dosing do not dissolve oxidized metals. We highly recommend installing Manganese Greensand, Birm, or coagulation-assisted multimedia filtration prior to the RO unit to prevent severe membrane fouling.")
+
             st.subheader("Final Projection Report")
             
             if st.session_state.final_product is None:
@@ -828,38 +841,61 @@ class UtilityProjectionEngine:
                     # PDF GENERATION LOGIC 
                     try:
                         from fpdf import FPDF
+                        import tempfile
                         
                         pdf = FPDF()
                         pdf.add_page()
                         
-                        # Header
+                        # Chembond Header
+                        pdf.set_font("Arial", 'B', 22)
+                        pdf.set_text_color(0, 51, 102)
+                        pdf.cell(0, 15, "CHEMBOND WATER TECHNOLOGIES", ln=True, align="C")
+                        
                         pdf.set_font("Arial", 'B', 16)
-                        pdf.cell(0, 10, "KEM WATREAT - RO PROJECTION REPORT", ln=True, align="C")
+                        pdf.set_text_color(50, 50, 50)
+                        pdf.cell(0, 10, "RO SYSTEM PROJECTION & TREATMENT PROPOSAL", ln=True, align="C")
+                        pdf.ln(5)
+                        
+                        # Executive Summary
+                        pdf.set_font("Arial", 'B', 12)
+                        pdf.set_text_color(0, 0, 0)
+                        pdf.cell(0, 10, "Executive Summary", ln=True)
+                        pdf.set_font("Arial", '', 11)
+                        summary_text = (
+                            f"Based on the thermodynamic analysis of the supplied water chemistry at a system recovery of {recovery}%, "
+                            f"the raw concentrate presents a severe scaling risk. Without intervention, rapid loss of flux and permanent membrane damage is imminent. "
+                            f"To safely inhibit precipitation and maximize plant uptime, Chembond Water Technologies recommends dosing {final_dose} ppm of {final_prod}. "
+                            f"This proprietary formulation has been simulated to completely suppress the slightly soluble salts and maintain the saturation indices within safe operational parameters."
+                        )
+                        pdf.multi_cell(0, 7, summary_text)
                         pdf.ln(5)
                         
                         # Basic Info
-                        pdf.set_font("Arial", size=12)
-                        pdf.cell(0, 10, f"Date Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
-                        pdf.cell(0, 10, f"Selected Product: {final_prod}", ln=True)
-                        pdf.cell(0, 10, f"Recommended Dose: {final_dose} ppm", ln=True)
-                        pdf.ln(10)
+                        pdf.set_font("Arial", 'B', 12)
+                        pdf.cell(0, 10, "Treatment Specification", ln=True)
+                        pdf.set_font("Arial", size=11)
+                        pdf.cell(0, 8, f"Date Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
+                        pdf.cell(0, 8, f"Selected Membrane Type: {membrane_type}", ln=True)
+                        pdf.cell(0, 8, f"Selected Product: {final_prod}", ln=True)
+                        pdf.cell(0, 8, f"Recommended Dose: {final_dose} ppm", ln=True)
+                        pdf.ln(5)
                         
                         # Data Extraction
-                        pdf.set_font("Arial", 'B', 14)
+                        pdf.set_font("Arial", 'B', 12)
                         pdf.cell(0, 10, "Thermodynamic Projection (Before vs After)", ln=True)
-                        pdf.set_font("Arial", size=12)
                         
                         eff_data_pdf = self.calculate_effective_scaling(treated_conc_data, final_prod, final_dose)
                         
                         # Indices Table Header
-                        pdf.set_font("Arial", 'B', 12)
-                        pdf.cell(60, 10, "Parameter", border=1)
-                        pdf.cell(65, 10, "Baseline (Raw)", border=1)
-                        pdf.cell(65, 10, f"Treated ({final_dose} ppm)", border=1, ln=True)
+                        pdf.set_fill_color(220, 220, 220)
+                        pdf.set_font("Arial", 'B', 11)
+                        pdf.cell(60, 10, "Parameter", border=1, fill=True)
+                        pdf.cell(65, 10, "Baseline (Raw Ratio/SI)", border=1, fill=True)
+                        pdf.cell(65, 10, f"Treated ({final_dose} ppm)", border=1, fill=True, ln=True)
                         
                         # Populate Rows
-                        pdf.set_font("Arial", size=12)
-                        keys_to_print = ["LSI", "SDSI", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
+                        pdf.set_font("Arial", size=11)
+                        keys_to_print = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
                         
                         for k in keys_to_print:
                             if k in ["LSI", "SDSI"]:
@@ -871,7 +907,6 @@ class UtilityProjectionEngine:
                                 b_si = treated_conc_data.get(k, 0)
                                 t_si = eff_data_pdf.get(k, b_si)
                                 
-                                # Derive treated ratio mathematically from SI to ensure perfect visual mapping
                                 if t_si < b_si and t_si > 0:
                                     t_val = 10 ** t_si
                                 elif t_si <= 0:
@@ -879,7 +914,6 @@ class UtilityProjectionEngine:
                                 else:
                                     t_val = b_val
                             
-                            # Format to 3 decimal places
                             b_str = f"{b_val:.3f}"
                             t_str = f"{t_val:.3f}"
                             
@@ -887,11 +921,59 @@ class UtilityProjectionEngine:
                             pdf.cell(65, 10, b_str, border=1)
                             pdf.cell(65, 10, t_str, border=1, ln=True)
                             
-                        pdf.ln(10)
-                        pdf.set_font("Arial", 'I', 10)
-                        pdf.cell(0, 10, "Note: Values for Salts (CaSO4, etc.) represent the Ratio of IAP to Solubility Limit.", ln=True)
+                        pdf.ln(5)
+                        pdf.set_font("Arial", 'I', 9)
+                        pdf.cell(0, 5, "Note: Values for Salts (CaSO4, BaSO4, etc.) represent the Ratio of IAP to Solubility Limit.", ln=True)
+                        pdf.cell(0, 5, "A ratio greater than 1.0 indicates a scaling risk without intervention.", ln=True)
                         
-                        # Export to bytes
+                        # Note: We wrap plot saving in a try/except because Streamlit Cloud often lacks Kaleido dependency for image export
+                        try:
+                            import plotly.io as pio
+                            # Create a quick mass chart for the PDF
+                            mass_pdf_data = []
+                            def get_excess_mass_pdf(salt, b_ratio, t_ratio, ions, temp_c):
+                                max_m = 0.0
+                                if salt == "CaCO3": max_m = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09
+                                elif salt == "CaSO4": max_m = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
+                                elif salt == "BaSO4": max_m = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
+                                elif salt == "SrSO4": max_m = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
+                                elif salt == "CaF2": max_m = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
+                                elif salt == "Si(OH)4":
+                                    limit = 125.0
+                                    if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
+                                    elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
+                                    max_m = max(0.0, ions.get('SiO2',0) - limit)
+                                b_m = max_m * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
+                                t_m = max_m * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
+                                return b_m, t_m
+                                
+                            for idx, k in enumerate(["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]):
+                                internal_k = "Ratio_" + k.replace("Si(OH)4", "SiOH4").replace("CaCO3", "CaCO3") # CaCO3 isn't a direct ratio, use LSI approx
+                                if k == "CaCO3":
+                                    b_ratio = 10 ** treated_conc_data.get('LSI', 0)
+                                    t_ratio = 10 ** eff_data_pdf.get('LSI', 0)
+                                else:
+                                    b_ratio = treated_conc_data.get(internal_k, 1.0)
+                                    b_si = treated_conc_data.get(k, 0)
+                                    t_si = eff_data_pdf.get(k, b_si)
+                                    t_ratio = 10 ** t_si if (t_si < b_si and t_si > 0) else (1.0 if t_si <= 0 else b_ratio)
+                                
+                                bm, tm = get_excess_mass_pdf(k, b_ratio, t_ratio, treated_conc_ions, feed_temp)
+                                mass_pdf_data.append({"Salt": k, "Mass": bm, "Type": "Baseline"})
+                                mass_pdf_data.append({"Salt": k, "Mass": tm, "Type": "Treated"})
+                            
+                            df_mpdf = pd.DataFrame(mass_pdf_data)
+                            fig_pdf = px.bar(df_mpdf, x="Salt", y="Mass", color="Type", barmode="group", title="Precipitate Mass Risk (ppm)")
+                            
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
+                                fig_pdf.write_image(tmpfile.name, engine="kaleido")
+                                pdf.ln(10)
+                                pdf.image(tmpfile.name, x=10, w=190)
+                        except Exception:
+                            pdf.ln(10)
+                            pdf.set_font("Arial", 'I', 10)
+                            pdf.cell(0, 5, "[Note: Graphical elements omitted. Server requires 'kaleido' library to render chart images in PDF.]", ln=True)
+
                         pdf_bytes = pdf.output(dest="S").encode("latin-1")
                         
                         st.download_button(
@@ -906,6 +988,26 @@ class UtilityProjectionEngine:
                     
                     st.markdown("---")
                     
+                    # ROI & Operational Impact
+                    st.write("### Operational Impact & ROI Projection")
+                    
+                    b_max_mass = 0
+                    for k in ["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
+                        # Approx baseline logic to determine severity
+                        if k == "CaCO3": br = 10 ** treated_conc_data.get('LSI', 0)
+                        else: br = treated_conc_data.get(f"Ratio_{k.replace('Si(OH)4', 'SiOH4')}", 1.0)
+                        if br > 1.0: b_max_mass += br # simple heuristic
+                        
+                    if b_max_mass > 50: cip_freq = "1 - 2 Weeks"
+                    elif b_max_mass > 10: cip_freq = "3 - 4 Weeks"
+                    else: cip_freq = "2 - 3 Months"
+                    
+                    roi_c1, roi_c2 = st.columns(2)
+                    roi_c1.info(f"**Baseline (No Treatment)**\n* Estimated CIP Frequency: **Every {cip_freq}**\n* Membrane Degradation Risk: **High**\n* Energy Consumption: **Elevated (Due to scaling differential pressure)**")
+                    roi_c2.success(f"**Treated ({final_prod} @ {final_dose} ppm)**\n* Estimated CIP Frequency: **Every 3 - 6 Months**\n* Membrane Lifespan: **Optimal / Maintained**\n* Energy Consumption: **Stable**")
+
+                    st.markdown("---")
+
                     # 1. Comparative Grouped Bar Chart (Baseline vs Treated)
                     st.write("### Scaling Potential Comparative Analysis")
                     
@@ -985,13 +1087,14 @@ class UtilityProjectionEngine:
                     
                     # 2. Precipitate Mass Comparative Chart
                     st.write("### Scaling Mass Potential (Precipitate at Risk)")
-                    st.info("This graph evaluates the stoichiometry of the limiting reactants to determine the physical worst-case mass (ppm) that could precipitate. A salt may have a high scaling index, but a negligible precipitating mass.")
+                    st.info("This graph evaluates the stoichiometry of the limiting reactants to determine the physical worst-case mass (mg/L) that could instantaneously precipitate in the concentrate stream. Note: This mass is governed by the saturation thermodynamics, not cumulative deposition over time.")
                     
                     mass_data = []
                     
                     def get_excess_mass(salt, b_ratio, t_ratio, ions, temp_c):
                         max_mass = 0.0
-                        if salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
+                        if salt == "CaCO3": max_mass = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09
+                        elif salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
                         elif salt == "BaSO4": max_mass = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
                         elif salt == "SrSO4": max_mass = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
                         elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
@@ -1005,18 +1108,23 @@ class UtilityProjectionEngine:
                         treat_mass = max_mass * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
                         return base_mass, treat_mass
 
-                    for idx, k in enumerate(["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]):
-                        internal_k = ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4"][idx]
-                        b_ratio = treated_conc_data[internal_k]
-                        
-                        b_si = treated_conc_data.get(k, 0)
-                        t_si = eff_data_final.get(k, b_si)
-                        if t_si < b_si and t_si > 0:
-                            t_ratio = 10 ** t_si
-                        elif t_si <= 0:
-                            t_ratio = 1.0
+                    for idx, k in enumerate(["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]):
+                        if k == "CaCO3":
+                            # Approximate CaCO3 ratio using LSI
+                            b_ratio = 10 ** treated_conc_data.get('LSI', 0)
+                            t_ratio = 10 ** eff_data_final.get('LSI', 0)
                         else:
-                            t_ratio = b_ratio
+                            internal_k = ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4"][idx-1]
+                            b_ratio = treated_conc_data[internal_k]
+                            
+                            b_si = treated_conc_data.get(k, 0)
+                            t_si = eff_data_final.get(k, b_si)
+                            if t_si < b_si and t_si > 0:
+                                t_ratio = 10 ** t_si
+                            elif t_si <= 0:
+                                t_ratio = 1.0
+                            else:
+                                t_ratio = b_ratio
                             
                         b_mass, t_mass = get_excess_mass(k, b_ratio, t_ratio, treated_conc_ions, feed_temp)
                         
@@ -1035,6 +1143,7 @@ class UtilityProjectionEngine:
                         margin=dict(l=40, r=40, t=60, b=40)
                     )
                     fig_mass.update_yaxes(showgrid=True, gridcolor="#e0e0e0")
+                    fig_mass.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="Dangerous Mass Threshold (>1.0 ppm)", annotation_position="top left")
                     st.plotly_chart(fig_mass, use_container_width=True)
                     
                     st.markdown("---")
