@@ -286,20 +286,27 @@ class UtilityProjectionEngine:
 
         high_lsi_risk = effective.get('LSI', 0) > 2.5
 
-        def get_excess_mass(salt, b_ratio, ions, temp_c):
+        def get_excess_mass(salt, b_ratio, ions, temp_c, b_si, t_si):
             max_mass = 0.0
-            if salt == "CaCO3": max_mass = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09
+            if salt == "CaCO3": max_mass = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09 * 0.05
             elif salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
             elif salt == "BaSO4": max_mass = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
             elif salt == "SrSO4": max_mass = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
-            elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
+            elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/19.00)/2) * 78.08
             elif salt == "Si(OH)4":
                 limit = 125.0
                 if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
                 elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
                 max_mass = max(0.0, ions.get('SiO2',0) - limit)
             
-            return max_mass * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
+            # Induction Time Gate: If antiscalant drives SI below threshold, precipitation doesn't occur in RO residence time
+            if salt == "CaCO3" and t_si <= 0.4:
+                return 0.0
+            elif salt != "CaCO3" and t_si <= 0.05:
+                return 0.0
+            else:
+                t_ratio = 10 ** t_si if t_si > 0 else 1.0
+                return max_mass * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
 
         for prod in economic_sort_order:
             recipe = self.formulations.get(prod, {})
@@ -320,8 +327,8 @@ class UtilityProjectionEngine:
                     si_val = sim_res.get(s_key, 0)
                     if si_val > 0.021:
                         internal_k = f"Ratio_{s_key.replace('Si(OH)4', 'SiOH4')}"
-                        b_ratio = 10 ** si_val
-                        mass = get_excess_mass(s_key, b_ratio, treated_conc_ions, feed_temp)
+                        b_ratio = 10 ** effective.get(s_key, 0)
+                        mass = get_excess_mass(s_key, b_ratio, treated_conc_ions, feed_temp, effective.get(s_key, 0), si_val)
                         
                         if mass > 0.5:
                             if s_key == "CaF2" and si_val <= 1.5:
@@ -469,7 +476,7 @@ class UtilityProjectionEngine:
                 test_conc_ions = {ion: val * cf for ion, val in calc_ions.items()}
                 test_conc_ions['HCO3'] = adj_hco3 * cf
                 test_conc_ions['SO4'] = (calc_ions.get('SO4', 0) + added_so4) * cf
-                test_conc_ions['CO2'] = calc_ions.get('CO2', 0) # Gas fully passes through, does not concentrate
+                test_conc_ions['CO2'] = calc_ions.get('CO2', 0) 
                 
                 conc_ph = test_ph + math.log10(cf)
                 res = self.calculate_scaling_indices(conc_ph, feed_temp, test_conc_ions)
@@ -897,6 +904,27 @@ class UtilityProjectionEngine:
                         pdf.set_font("Arial", size=11)
                         keys_to_print = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
                         
+                        def get_excess_mass_pdf(salt, b_ratio, t_ratio, ions, temp_c, b_si, t_si):
+                            max_m = 0.0
+                            if salt == "CaCO3": max_m = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09 * 0.05
+                            elif salt == "CaSO4": max_m = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
+                            elif salt == "BaSO4": max_m = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
+                            elif salt == "SrSO4": max_m = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
+                            elif salt == "CaF2": max_m = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/19.00)/2.0) * 78.08
+                            elif salt == "Si(OH)4":
+                                limit = 125.0
+                                if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
+                                elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
+                                max_m = max(0.0, ions.get('SiO2',0) - limit)
+                            
+                            b_m = max_m * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
+                            
+                            if salt == "CaCO3" and t_si <= 0.4: t_m = 0.0
+                            elif salt != "CaCO3" and t_si <= 0.05: t_m = 0.0
+                            else: t_m = max_m * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
+                            
+                            return b_m, t_m
+
                         for k in keys_to_print:
                             if k in ["LSI", "SDSI"]:
                                 b_val = treated_conc_data.get(k, 0)
@@ -926,39 +954,24 @@ class UtilityProjectionEngine:
                         pdf.cell(0, 5, "Note: Values for Salts (CaSO4, BaSO4, etc.) represent the Ratio of IAP to Solubility Limit.", ln=True)
                         pdf.cell(0, 5, "A ratio greater than 1.0 indicates a scaling risk without intervention.", ln=True)
                         
-                        # Note: We wrap plot saving in a try/except because Streamlit Cloud often lacks Kaleido dependency for image export
                         try:
                             import plotly.io as pio
-                            # Create a quick mass chart for the PDF
                             mass_pdf_data = []
-                            def get_excess_mass_pdf(salt, b_ratio, t_ratio, ions, temp_c):
-                                max_m = 0.0
-                                if salt == "CaCO3": max_m = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09
-                                elif salt == "CaSO4": max_m = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
-                                elif salt == "BaSO4": max_m = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
-                                elif salt == "SrSO4": max_m = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
-                                elif salt == "CaF2": max_m = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
-                                elif salt == "Si(OH)4":
-                                    limit = 125.0
-                                    if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
-                                    elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
-                                    max_m = max(0.0, ions.get('SiO2',0) - limit)
-                                b_m = max_m * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
-                                t_m = max_m * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
-                                return b_m, t_m
                                 
                             for idx, k in enumerate(["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]):
-                                internal_k = "Ratio_" + k.replace("Si(OH)4", "SiOH4").replace("CaCO3", "CaCO3") # CaCO3 isn't a direct ratio, use LSI approx
+                                internal_k = "Ratio_" + k.replace("Si(OH)4", "SiOH4").replace("CaCO3", "CaCO3") 
                                 if k == "CaCO3":
-                                    b_ratio = 10 ** treated_conc_data.get('LSI', 0)
-                                    t_ratio = 10 ** eff_data_pdf.get('LSI', 0)
+                                    b_si = treated_conc_data.get('LSI', 0)
+                                    t_si = eff_data_pdf.get('LSI', 0)
+                                    b_ratio = 10 ** b_si if b_si > 0 else 1.0
+                                    t_ratio = 10 ** t_si if t_si > 0 else 1.0
                                 else:
                                     b_ratio = treated_conc_data.get(internal_k, 1.0)
                                     b_si = treated_conc_data.get(k, 0)
                                     t_si = eff_data_pdf.get(k, b_si)
                                     t_ratio = 10 ** t_si if (t_si < b_si and t_si > 0) else (1.0 if t_si <= 0 else b_ratio)
                                 
-                                bm, tm = get_excess_mass_pdf(k, b_ratio, t_ratio, treated_conc_ions, feed_temp)
+                                bm, tm = get_excess_mass_pdf(k, b_ratio, t_ratio, treated_conc_ions, feed_temp, b_si, t_si)
                                 mass_pdf_data.append({"Salt": k, "Mass": bm, "Type": "Baseline"})
                                 mass_pdf_data.append({"Salt": k, "Mass": tm, "Type": "Treated"})
                             
@@ -993,10 +1006,9 @@ class UtilityProjectionEngine:
                     
                     b_max_mass = 0
                     for k in ["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
-                        # Approx baseline logic to determine severity
                         if k == "CaCO3": br = 10 ** treated_conc_data.get('LSI', 0)
                         else: br = treated_conc_data.get(f"Ratio_{k.replace('Si(OH)4', 'SiOH4')}", 1.0)
-                        if br > 1.0: b_max_mass += br # simple heuristic
+                        if br > 1.0: b_max_mass += br 
                         
                     if b_max_mass > 50: cip_freq = "1 - 2 Weeks"
                     elif b_max_mass > 10: cip_freq = "3 - 4 Weeks"
@@ -1091,13 +1103,13 @@ class UtilityProjectionEngine:
                     
                     mass_data = []
                     
-                    def get_excess_mass(salt, b_ratio, t_ratio, ions, temp_c):
+                    def get_excess_mass(salt, b_ratio, t_ratio, ions, temp_c, b_si, t_si):
                         max_mass = 0.0
-                        if salt == "CaCO3": max_mass = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09
+                        if salt == "CaCO3": max_mass = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09 * 0.05
                         elif salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
                         elif salt == "BaSO4": max_mass = min(ions.get('Ba',0)/137.33, ions.get('SO4',0)/96.06) * 233.39
                         elif salt == "SrSO4": max_mass = min(ions.get('Sr',0)/87.62, ions.get('SO4',0)/96.06) * 183.68
-                        elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/38.00)/2) * 78.08
+                        elif salt == "CaF2": max_mass = min(ions.get('Ca',0)/40.08, (ions.get('F',0)/19.00)/2.0) * 78.08
                         elif salt == "Si(OH)4":
                             limit = 125.0
                             if temp_c > 25 and temp_c <= 30: limit = 125.0 + ((temp_c - 25.0) * 2.0)
@@ -1105,14 +1117,22 @@ class UtilityProjectionEngine:
                             max_mass = max(0.0, ions.get('SiO2',0) - limit)
                         
                         base_mass = max_mass * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
-                        treat_mass = max_mass * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
+                        
+                        if salt == "CaCO3" and t_si <= 0.4:
+                            treat_mass = 0.0
+                        elif salt != "CaCO3" and t_si <= 0.05:
+                            treat_mass = 0.0
+                        else:
+                            treat_mass = max_mass * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
+                            
                         return base_mass, treat_mass
 
                     for idx, k in enumerate(["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]):
                         if k == "CaCO3":
-                            # Approximate CaCO3 ratio using LSI
-                            b_ratio = 10 ** treated_conc_data.get('LSI', 0)
-                            t_ratio = 10 ** eff_data_final.get('LSI', 0)
+                            b_si = treated_conc_data.get('LSI', 0)
+                            t_si = eff_data_final.get('LSI', 0)
+                            b_ratio = 10 ** b_si if b_si > 0 else 1.0
+                            t_ratio = 10 ** t_si if t_si > 0 else 1.0
                         else:
                             internal_k = ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4"][idx-1]
                             b_ratio = treated_conc_data[internal_k]
@@ -1126,7 +1146,7 @@ class UtilityProjectionEngine:
                             else:
                                 t_ratio = b_ratio
                             
-                        b_mass, t_mass = get_excess_mass(k, b_ratio, t_ratio, treated_conc_ions, feed_temp)
+                        b_mass, t_mass = get_excess_mass(k, b_ratio, t_ratio, treated_conc_ions, feed_temp, b_si, t_si)
                         
                         mass_data.append({"Salt": k, "Mass (ppm)": b_mass, "State": "Before Treatment"})
                         mass_data.append({"Salt": k, "Mass (ppm)": t_mass, "State": f"With {final_prod} ({final_dose} ppm)"})
