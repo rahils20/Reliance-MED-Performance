@@ -1910,35 +1910,35 @@ def main():
                     st.error(f"Structural data matrix crash: {e}")
 
     # --- TAB 8: BULK EXCEL UPLOADER PANEL ---
+    # --- TAB 8: BULK EXCEL UPLOADER PANEL ---
     with tabs[8]:
-        st.subheader("📤 Batch Log Matrix Ingestion Subroutine")
-        st.markdown("Download the target spreadsheet schema file. Copy/pasting raw values in the exact historical Excel configuration is fully supported.")
+        st.subheader("Bulk Data Upload")
+        st.markdown("Upload your monthly Excel/CSV logs here.")
         
         bulk_template = pd.DataFrame(columns=EXACT_DB_COLUMNS)
-        st.download_button(label="1️⃣ Download Schema Verification Template File", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='MED4_BulkMatrixInletSchema.csv', mime='text/csv')
+        st.download_button(label="Download Template File", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='MED4_Bulk_Template.csv', mime='text/csv')
         
         st.divider()
-        bulk_file = st.file_uploader("2️⃣ Ingest Completed System Batch File (.csv)", type=["csv"], key="bulk_uploader")
+        bulk_file = st.file_uploader("Upload CSV Data File", type=["csv"], key="bulk_uploader")
         
         if bulk_file is not None:
             try:
                 df_bulk = pd.read_csv(bulk_file)
-                if 'Date' in df_bulk.columns and 'Date (DD/MM/YYYY)' not in df_bulk.columns:
-                    pass 
                 if 'Date (DD/MM/YYYY)' in df_bulk.columns:
                      df_bulk.rename(columns={'Date (DD/MM/YYYY)': 'Date'}, inplace=True)
 
                 missing = [c for c in EXACT_DB_COLUMNS if c not in df_bulk.columns]
                 if missing:
-                    st.warning(f"⚠️ Omissions detected inside uploaded parameters. Empty slots will auto-fill utilizing historical parameter baseline means. Missing: {', '.join(missing)}")
+                    st.warning(f"Missing columns will be auto-filled: {', '.join(missing)}")
                     for c in missing: 
                         df_bulk[c] = np.nan
                 
+                # THE FIX: Force convert everything to numeric to kill the 'float and str' error
                 num_cols = [c for c in EXACT_DB_COLUMNS if c not in ["Date", "Remarks"]]
                 for col in num_cols:
                     if col in df_bulk.columns:
-                        if df_bulk[col].dtype == object: 
-                            df_bulk[col] = pd.to_numeric(df_bulk[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
+                        # Dropped the weak dtype check. Forcibly cast everything to floats.
+                        df_bulk[col] = pd.to_numeric(df_bulk[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                 
                 df_bulk = df_bulk.dropna(subset=["Date"])
                 
@@ -1955,7 +1955,7 @@ def main():
                     for cat in ['Feed', 'Product']:
                         for param, details in WATER_SPECS[cat].items():
                             df_bulk[details['db_col']] = df_bulk[details['db_col']].fillna(details['avg'])
-                        
+                    
                     df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
                     df_bulk['Delta T'] = df_bulk['Delta T'].fillna(df_bulk['1st effect vapour temp'] - df_bulk['1st effect brine temp'])
@@ -2035,29 +2035,29 @@ def main():
                             
                     db_ready_df = pd.DataFrame(db_ready_dict)
                     
-                    st.success(f"✅ Automatically calculated KPIs, HTC, and Residuals for {len(db_ready_df)} valid rows.")
+                    st.success(f"Calculated KPIs for {len(db_ready_df)} rows.")
                     st.dataframe(db_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
                     
-                    st.markdown("### 💾 Commit Bulk Data")
+                    st.markdown("### Save Bulk Data")
                     c_pwd, c_save = st.columns([2, 2])
                     with c_pwd: 
-                        pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Password to Sync")
+                        pwd_bulk = st.text_input("Master Password", type="password", key="pwd_bulk", label_visibility="collapsed", placeholder="Enter Password to Sync")
                     with c_save:
-                        if st.button("🔄 Append all to Master Database", use_container_width=True):
+                        if st.button("Append to Database", use_container_width=True):
                             if pwd_bulk == "12345678":
                                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
                                 st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                                 save_database(db_conn, st.session_state.daily_logs)
-                                st.success("✅ Bulk Data Successfully Synced to Database!")
+                                st.success("✅ Data Synced!")
                                 time.sleep(1.5)
                                 st.rerun()
                             elif pwd_bulk != "": 
                                 st.error("❌ Incorrect Password.")
                 else: 
-                    st.error("🚨 No valid data found in CSV.")
+                    st.error("No valid data found in CSV.")
             except Exception as e: 
                 st.error(f"Error processing file: {e}")
-
+                
     render_chatbot()
 
 if __name__ == "__main__":
