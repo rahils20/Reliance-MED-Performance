@@ -1372,18 +1372,15 @@ class UtilityProjectionEngine:
                     fig = px.line(
                         df_performance,
                         x="Dose (ppm)",
-                        y=[col for col in df_performance.columns if col != "Dose (ppm)"],
-                        labels={
-                            "value": "Effective Saturation Index (SI)",
-                            "variable": "Mineral Species",
-                            "Dose (ppm)": "Product Dose (ppm)"
-                        }
+                        y=[col for col in df_performance.columns if col != "Dose (ppm)"]
                     )
                     
                     fig.update_layout(
                         title=f"Scaling Suppression Projection: {final_prod}",
                         hovermode="x unified",
-                        legend_title_text="Mineral Indices",
+                        xaxis_title="Product Dose (ppm)",
+                        yaxis_title="Effective Saturation Index (SI)",
+                        legend_title_text="Mineral Species",
                         height=600,
                         margin=dict(l=20, r=20, t=50, b=20)
                     )
