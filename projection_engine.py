@@ -239,118 +239,224 @@ class UtilityProjectionEngine:
 
     def calculate_effective_scaling(self, raw_data, product_name, dose_ppm):
         effective = raw_data.copy()
-        target_salts = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
-        
-        # Polymer Stress Check
-        active_secondary_salts = sum(1 for s in ["Ratio_CaSO4", "Ratio_BaSO4", "Ratio_SrSO4", "Ratio_CaF2", "Ratio_SiOH4"] if raw_data.get(s, 0) > 1.0)
-        high_lsi = raw_data.get('LSI', 0) > 1.5
-        polymer_penalty = 0.25 if (high_lsi and active_secondary_salts > 0) else 1.0
         
         if product_name == "Kem Watreat R 824":
-            active_homopolymer = dose_ppm * 0.40
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_homopolymer * self.k_factors['homopolymer'][salt]) * polymer_penalty
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    if salt in ["LSI", "SDSI", "CaCO3"]: multiplier = max(multiplier, 0.40)
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            active_dose = dose_ppm * 0.40
+            if effective['LSI'] > 0:
+                k_lsi = 1.6 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['SDSI'] > 0:
+                k_sdsi = 1.6 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+            if effective['CaSO4'] > 0:
+                reduction = min((active_dose / 3.2) * 0.20, 0.20)
+                effective['CaSO4'] = round(max(0.0, effective['CaSO4'] - reduction), 3)
 
         elif product_name == "Kem Watreat R 246":
-            active_terpolymer = dose_ppm * 0.30
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_terpolymer * self.k_factors['terpolymer'][salt]) * polymer_penalty
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    if salt in ["LSI", "SDSI", "CaCO3"]: multiplier = max(multiplier, 0.40)
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            active_dose = dose_ppm * 0.30
+            if effective['LSI'] > 0:
+                k_lsi = 1.0 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * active_dose)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['SDSI'] > 0:
+                k_sdsi = 1.0 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * active_dose)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+            for sulfate in ['CaSO4', 'BaSO4', 'SrSO4']:
+                if effective[sulfate] > 0:
+                    k_sulf = 1.2 / (effective[sulfate] ** 0.5)
+                    eta_sulf = 1.0 - math.exp(-k_sulf * active_dose)
+                    effective[sulfate] = round(effective[sulfate] * (1.0 - eta_sulf), 3)
+            for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
+                if effective[silica] > 0:
+                    k_si = 1.5 / (effective[silica] ** 0.5)
+                    eta_si = 1.0 - math.exp(-k_si * active_dose)
+                    effective[silica] = round(effective[silica] * (1.0 - eta_si), 3)
+            if effective['Fe'] > 0:
+                k_fe = 1.8 / (effective['Fe'] ** 0.5)
+                eta_fe = 1.0 - math.exp(-k_fe * active_dose)
+                effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
+            if effective['CaF2'] > 0:
+                reduction = min((active_dose / 3.0) * 0.15, 0.15)
+                effective['CaF2'] = round(max(0.0, effective['CaF2'] - reduction), 3)
 
         elif product_name == "Kem Watreat R 428 I":
-            active_homopolymer = dose_ppm * 0.10
+            active_polymer = dose_ppm * 0.10
             active_hedp = dose_ppm * 0.077
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_homopolymer * self.k_factors['homopolymer'][salt]) + (active_hedp * self.k_factors['hedp'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            total_active = active_polymer + active_hedp
+            if effective['LSI'] > 0:
+                k_lsi = 2.0 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * total_active)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['SDSI'] > 0:
+                k_sdsi = 2.0 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+            if effective['CaSO4'] > 0:
+                k_caso4 = 1.5 / (effective['CaSO4'] ** 0.5)
+                eta_caso4 = 1.0 - math.exp(-k_caso4 * total_active)
+                effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    k_heavy_sulf = 0.8 / (effective[sulf] ** 0.5)
+                    eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_hedp)
+                    effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+            if effective['CaF2'] > 0:
+                k_caf2 = 1.2 / (effective['CaF2'] ** 0.5)
+                eta_caf2 = 1.0 - math.exp(-k_caf2 * active_hedp)
+                effective['CaF2'] = round(effective['CaF2'] * (1.0 - eta_caf2), 3)
+            if effective['Fe'] > 0:
+                k_fe = 1.0 / (effective['Fe'] ** 0.5)
+                eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
+                effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
 
         elif product_name == "Kem Watreat R 4001":
             active_atmp = dose_ppm * 0.0375
             active_hedp = dose_ppm * 0.066
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_atmp * self.k_factors['atmp'][salt]) + (active_hedp * self.k_factors['hedp'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            total_active_phos = active_atmp + active_hedp
+            if effective['LSI'] > 0:
+                k_lsi = 2.5 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * total_active_phos)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['SDSI'] > 0:
+                k_sdsi = 2.5 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active_phos)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+            if effective['CaSO4'] > 0:
+                k_caso4 = 1.8 / (effective['CaSO4'] ** 0.5)
+                eta_caso4 = 1.0 - math.exp(-k_caso4 * total_active_phos)
+                effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    k_heavy_sulf = 1.0 / (effective[sulf] ** 0.5)
+                    eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * total_active_phos)
+                    effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+            if effective['CaF2'] > 0:
+                k_caf2 = 1.2 / (effective['CaF2'] ** 0.5)
+                eta_caf2 = 1.0 - math.exp(-k_caf2 * total_active_phos)
+                effective['CaF2'] = round(effective['CaF2'] * (1.0 - eta_caf2), 3)
+            if effective['Fe'] > 0:
+                k_fe = 1.5 / (effective['Fe'] ** 0.5)
+                eta_fe = 1.0 - math.exp(-k_fe * active_hedp)
+                effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
 
         elif product_name == "Kem Watreat R 170":
             active_pbtc = dose_ppm * 0.0054
             active_detmpa = dose_ppm * 0.135
-            active_homopolymer = dose_ppm * 0.06
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_pbtc * self.k_factors['pbtc'][salt]) + (active_detmpa * self.k_factors['detmpa'][salt]) + (active_homopolymer * self.k_factors['homopolymer'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            active_poly = dose_ppm * 0.06
+            total_active = active_pbtc + active_detmpa + active_poly
+            if effective['LSI'] > 0:
+                k_lsi = 2.2 / (effective['LSI'] ** 0.5)
+                eta_lsi = 1.0 - math.exp(-k_lsi * total_active)
+                effective['LSI'] = round(effective['LSI'] * (1.0 - eta_lsi), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['SDSI'] > 0:
+                k_sdsi = 2.2 / (effective['SDSI'] ** 0.5)
+                eta_sdsi = 1.0 - math.exp(-k_sdsi * total_active)
+                effective['SDSI'] = round(effective['SDSI'] * (1.0 - eta_sdsi), 3)
+            if effective['CaSO4'] > 0:
+                k_caso4 = 2.0 / (effective['CaSO4'] ** 0.5)
+                eta_caso4 = 1.0 - math.exp(-k_caso4 * active_detmpa)
+                effective['CaSO4'] = round(effective['CaSO4'] * (1.0 - eta_caso4), 3)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    k_heavy_sulf = 1.8 / (effective[sulf] ** 0.5)
+                    eta_heavy_sulf = 1.0 - math.exp(-k_heavy_sulf * active_detmpa)
+                    effective[sulf] = round(effective[sulf] * (1.0 - eta_heavy_sulf), 3)
+            if effective['CaF2'] > 0:
+                k_caf2 = 1.5 / (effective['CaF2'] ** 0.5)
+                eta_caf2 = 1.0 - math.exp(-k_caf2 * active_detmpa)
+                effective['CaF2'] = round(effective['CaF2'] * (1.0 - eta_caf2), 3)
+            if effective['Fe'] > 0:
+                k_fe = 1.6 / (effective['Fe'] ** 0.5)
+                eta_fe = 1.0 - math.exp(-k_fe * active_detmpa)
+                effective['Fe'] = round(effective['Fe'] * (1.0 - eta_fe), 3)
+            for silica in ['Si(OH)4', 'SiO2', 'CaSiO3', 'MgSiO3', 'FeSiO3']:
+                if effective[silica] > 0:
+                    k_si = 2.5 / (effective[silica] ** 0.5)
+                    eta_si = 1.0 - math.exp(-k_si * total_active)
+                    effective[silica] = round(effective[silica] * (1.0 - eta_si), 3)
 
         elif product_name == "Kem Watreat R 6863":
-            active_atmp = dose_ppm * 0.1125
-            active_hedp = dose_ppm * 0.0275
-            active_copolymer = dose_ppm * 0.02
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_atmp * self.k_factors['atmp'][salt]) + (active_hedp * self.k_factors['hedp'][salt]) + (active_copolymer * self.k_factors['copolymer'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            total_active = (dose_ppm * 0.040) + (dose_ppm * 0.050) + (dose_ppm * 0.080)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.3 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.6 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    effective[sulf] = round(effective[sulf] * math.exp(-(1.2 / (effective[sulf] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.2 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 6196":
-            active_atmp = dose_ppm * 0.1875
-            active_smbs = dose_ppm * 0.03
-            active_homopolymer = dose_ppm * 0.04
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_atmp * self.k_factors['atmp'][salt]) + (active_smbs * self.k_factors['smbs'][salt]) + (active_homopolymer * self.k_factors['homopolymer'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            total_active = (dose_ppm * 0.050) + (dose_ppm * 0.100) 
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.1 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.2 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.0 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 428 ID":
-            active_hedp = dose_ppm * 0.04565
-            active_homopolymer = dose_ppm * 0.048
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_hedp * self.k_factors['hedp'][salt]) + (active_homopolymer * self.k_factors['homopolymer'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            total_active = (dose_ppm * 0.060) + (dose_ppm * 0.080)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(1.9 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.4 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.0 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 4002":
-            active_hedp = dose_ppm * 0.066
-            active_atmp = dose_ppm * 0.0175
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_hedp * self.k_factors['hedp'][salt]) + (active_atmp * self.k_factors['atmp'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            total_active = (dose_ppm * 0.030) + (dose_ppm * 0.040) + (dose_ppm * 0.080)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.6 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(1.7 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.2 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat R 3687":
-            active_hedp = dose_ppm * 0.1375
-            active_pma = dose_ppm * 0.0326
-            for salt in target_salts:
-                if effective.get(salt, 0) > 0:
-                    kd = (active_hedp * self.k_factors['hedp'][salt]) + (active_pma * self.k_factors['pma'][salt])
-                    multiplier = math.exp(-kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
+            total_active = (dose_ppm * 0.150) + (dose_ppm * 0.050)
+            if effective['LSI'] > 0:
+                effective['LSI'] = round(effective['LSI'] * math.exp(-(2.8 / (effective['LSI'] ** 0.5)) * total_active), 3)
+                effective['CaCO3'] = effective['LSI']
+            if effective['CaSO4'] > 0:
+                effective['CaSO4'] = round(effective['CaSO4'] * math.exp(-(2.2 / (effective['CaSO4'] ** 0.5)) * total_active), 3)
+            for sulf in ['BaSO4', 'SrSO4']:
+                if effective[sulf] > 0:
+                    effective[sulf] = round(effective[sulf] * math.exp(-(1.5 / (effective[sulf] ** 0.5)) * (dose_ppm * 0.050)), 3)
+            if effective['CaF2'] > 0:
+                effective['CaF2'] = round(effective['CaF2'] * math.exp(-(1.0 / (effective['CaF2'] ** 0.5)) * total_active), 3)
 
         elif product_name == "Kem Watreat Custom Blend":
             product_recipe = self.formulations.get(product_name, {})
+            target_salts = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
+            has_polymer = any(p in product_recipe for p in ["homopolymer", "copolymer", "terpolymer", "pma"])
+            is_pure_polymer = all(p in ["homopolymer", "copolymer", "terpolymer", "pma", "smbs"] for p in product_recipe)
             for salt in target_salts:
-                if effective.get(salt, 0) > 0:
+                if salt in effective and effective[salt] > 0:
                     total_kd = 0.0
                     for ingredient, active_pct in product_recipe.items():
                         active_ppm = dose_ppm * active_pct
-                        total_kd += active_ppm * self.k_factors.get(ingredient, {}).get(salt, 0.0)
-                    
-                    multiplier = math.exp(-total_kd / (effective[salt] ** 0.5))
-                    effective[salt] = round(effective[salt] * multiplier, 3)
-
+                        base_k = self.k_factors.get(ingredient, {}).get(salt, 0.0)
+                        total_kd += active_ppm * base_k
+                    raw_si = effective[salt]
+                    decay_multiplier = math.exp(-total_kd / (raw_si ** 0.5))
+                    if is_pure_polymer and salt in ["LSI", "SDSI", "CaCO3"]:
+                        decay_multiplier = max(decay_multiplier, 0.40)
+                    effective[salt] = round(raw_si * decay_multiplier, 3)
+            
         return effective
 
     def run_expert_simulation(self, effective, treated_conc_ions, feed_temp):
@@ -363,7 +469,7 @@ class UtilityProjectionEngine:
 
         high_lsi_risk = effective.get('LSI', 0) > 2.5
 
-        def get_excess_mass_ppm(salt, b_ratio, ions, temp_c, t_si):
+        def get_excess_mass_ppm(salt, b_ratio, ions, temp_c, b_si, t_si):
             max_mass = 0.0
             if salt == "CaCO3": max_mass = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09 * 0.05
             elif salt == "CaSO4": max_mass = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
@@ -376,11 +482,13 @@ class UtilityProjectionEngine:
                 elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
                 max_mass = max(0.0, ions.get('SiO2',0) - limit)
             
-            if salt == "CaCO3" and t_si <= 0.4: return 0.0
-            elif salt != "CaCO3" and t_si <= 0.05: return 0.0
-            
-            t_ratio = 10 ** t_si if t_si > 0 else 1.0
-            return max_mass * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
+            if salt == "CaCO3" and t_si <= 0.4:
+                return 0.0
+            elif salt != "CaCO3" and t_si <= 0.05:
+                return 0.0
+            else:
+                t_ratio = 10 ** t_si if t_si > 0 else 1.0
+                return max_mass * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
 
         for prod in economic_sort_order:
             recipe = self.formulations.get(prod, {})
@@ -402,7 +510,7 @@ class UtilityProjectionEngine:
                     if si_val > 0.021:
                         internal_k = f"Ratio_{s_key.replace('Si(OH)4', 'SiOH4')}"
                         b_ratio = 10 ** effective.get(s_key, 0)
-                        mass_ppm = get_excess_mass_ppm(s_key, b_ratio, treated_conc_ions, feed_temp, si_val)
+                        mass_ppm = get_excess_mass_ppm(s_key, b_ratio, treated_conc_ions, feed_temp, effective.get(s_key, 0), si_val)
                         
                         if mass_ppm > 0.5:
                             if s_key == "CaF2" and si_val <= 1.5:
@@ -1250,6 +1358,7 @@ class UtilityProjectionEngine:
                     )
                     fig_mass.update_yaxes(showgrid=True, gridcolor="#e0e0e0")
                     
+                    # Convert 1.0 ppm danger threshold to kg/day for the graph baseline
                     danger_kg_day = (1.0 * c_flow * 24.0) / 1000.0
                     fig_mass.add_hline(y=danger_kg_day, line_dash="dash", line_color="red", annotation_text="Dangerous Mass Threshold", annotation_position="top left")
                     
@@ -1261,8 +1370,6 @@ class UtilityProjectionEngine:
                     st.write(f"### Extended Performance Curve Matrix: {final_prod}")
                     dose_range = [x * 0.5 for x in range(0, 21)] 
                     performance_data = []
-                    
-                    graph_keys = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
                     
                     for d in dose_range:
                         eff_data = self.calculate_effective_scaling(treated_conc_data, final_prod, d)
