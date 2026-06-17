@@ -5,6 +5,7 @@ import plotly.express as px
 import base64
 from datetime import datetime
 import os
+from io import BytesIO
 
 st.set_page_config(layout="wide", page_title="RO Projection Engine")
 
@@ -1017,7 +1018,7 @@ class UtilityProjectionEngine:
             </style>
             """, unsafe_allow_html=True)
             
-            st.info("To save this report as a PDF: Press Ctrl + P (Windows) or Cmd + P (Mac). The layout has been specially CSS-optimized to print cleanly without menus or sidebars.")
+            st.info("To save this report: Click the download button below for a formal Word document.")
             
             if calc_ions.get('Fe', 0) > 0.05 or calc_ions.get('Al', 0) > 0.05:
                 st.warning("Pre-Treatment Advisory: Elevated Iron (Fe) or Aluminum (Al) detected. Chemical antiscalants and acid dosing do not dissolve oxidized metals. We highly recommend installing Manganese Greensand, Birm, or coagulation-assisted multimedia filtration prior to the RO unit to prevent severe membrane fouling.")
@@ -1035,66 +1036,54 @@ class UtilityProjectionEngine:
                 if 'treated_conc_data' in locals() and treated_conc_data:
                     
                     try:
-                        from fpdf import FPDF
+                        from docx import Document
+                        from docx.shared import Pt, Inches
                         import tempfile
                         
-                        pdf = FPDF()
-                        pdf.add_page()
+                        doc = Document()
                         
                         # Chembond Header
-                        pdf.set_font("Arial", 'B', 22)
-                        pdf.set_text_color(0, 51, 102)
-                        pdf.cell(0, 15, "CHEMBOND WATER TECHNOLOGIES", ln=True, align="C")
-                        
-                        pdf.set_font("Arial", 'B', 16)
-                        pdf.set_text_color(50, 50, 50)
-                        pdf.cell(0, 10, "RO SYSTEM PROJECTION & TREATMENT PROPOSAL", ln=True, align="C")
-                        pdf.ln(5)
+                        heading = doc.add_heading('CHEMBOND WATER TECHNOLOGIES', 0)
+                        heading.alignment = 1  # Center
+                        doc.add_heading('RO SYSTEM PROJECTION & TREATMENT PROPOSAL', level=1).alignment = 1
+                        doc.add_paragraph("")
                         
                         # Executive Summary
-                        pdf.set_font("Arial", 'B', 12)
-                        pdf.set_text_color(0, 0, 0)
-                        pdf.cell(0, 10, "Executive Summary", ln=True)
-                        pdf.set_font("Arial", '', 11)
+                        doc.add_heading('Executive Summary', level=2)
                         summary_text = (
                             f"Based on the thermodynamic analysis of the supplied water chemistry at a system recovery of {recovery}%, "
                             f"the raw concentrate presents a severe scaling risk. Without intervention, rapid loss of flux and permanent membrane damage is imminent. "
                             f"To safely inhibit precipitation and maximize plant uptime, Chembond Water Technologies recommends dosing {final_dose} ppm of {final_prod}. "
                             f"This proprietary formulation has been simulated to completely suppress the slightly soluble salts and maintain the saturation indices within safe operational parameters."
                         )
-                        pdf.multi_cell(0, 7, summary_text)
-                        pdf.ln(5)
+                        doc.add_paragraph(summary_text)
                         
                         # Basic Info
-                        pdf.set_font("Arial", 'B', 12)
-                        pdf.cell(0, 10, "Treatment Specification", ln=True)
-                        pdf.set_font("Arial", size=11)
-                        pdf.cell(0, 8, f"Date Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True)
-                        pdf.cell(0, 8, f"Selected Membrane Type: {membrane_type}", ln=True)
-                        pdf.cell(0, 8, f"Selected Product: {final_prod}", ln=True)
-                        pdf.cell(0, 8, f"Recommended Dose: {final_dose} ppm", ln=True)
-                        pdf.ln(5)
+                        doc.add_heading('Treatment Specification', level=2)
+                        doc.add_paragraph(
+                            f"Date Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                            f"Selected Membrane Type: {membrane_type}\n"
+                            f"Selected Product: {final_prod}\n"
+                            f"Recommended Dose: {final_dose} ppm"
+                        )
                         
                         # Data Extraction
-                        pdf.set_font("Arial", 'B', 12)
-                        pdf.cell(0, 10, "Thermodynamic Projection (Before vs After)", ln=True)
+                        doc.add_heading('Thermodynamic Projection (Before vs After)', level=2)
                         
-                        eff_data_pdf = self.calculate_effective_scaling(treated_conc_data, final_prod, final_dose)
+                        eff_data_doc = self.calculate_effective_scaling(treated_conc_data, final_prod, final_dose)
                         
-                        # Indices Table Header
-                        pdf.set_fill_color(220, 220, 220)
-                        pdf.set_font("Arial", 'B', 11)
-                        pdf.cell(60, 10, "Parameter", border=1, fill=True)
-                        pdf.cell(65, 10, "Baseline (Raw Ratio/SI)", border=1, fill=True)
-                        pdf.cell(65, 10, f"Treated ({final_dose} ppm)", border=1, fill=True, ln=True)
+                        # Build Table
+                        table = doc.add_table(rows=1, cols=3)
+                        table.style = 'Table Grid'
+                        hdr_cells = table.rows[0].cells
+                        hdr_cells[0].text = 'Parameter'
+                        hdr_cells[1].text = 'Baseline (Raw Ratio/SI)'
+                        hdr_cells[2].text = f'Treated ({final_dose} ppm)'
                         
-                        # Populate Rows
-                        pdf.set_font("Arial", size=11)
                         keys_to_print = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "CaSiO3", "MgSiO3"]
-                        
                         c_flow = feed_flow * (1 - recovery / 100.0)
 
-                        def get_excess_mass_kg_day_pdf(salt, b_ratio, t_ratio, ions, temp_c, b_si, t_si):
+                        def get_excess_mass_kg_day_doc(salt, b_ratio, t_ratio, ions, temp_c, b_si, t_si):
                             max_m = 0.0
                             if salt == "CaCO3": max_m = min(ions.get('Ca',0)/40.08, ions.get('HCO3',0)/61.02) * 100.09 * 0.05
                             elif salt == "CaSO4": max_m = min(ions.get('Ca',0)/40.08, ions.get('SO4',0)/96.06) * 136.14
@@ -1120,12 +1109,12 @@ class UtilityProjectionEngine:
                         for k in keys_to_print:
                             if k in ["LSI", "SDSI"]:
                                 b_val = treated_conc_data.get(k, 0)
-                                t_val = eff_data_pdf.get(k, b_val)
+                                t_val = eff_data_doc.get(k, b_val)
                             else:
                                 internal_key = f"Ratio_{k.replace('Si(OH)4', 'SiOH4')}"
                                 b_val = treated_conc_data.get(internal_key, 1.0)
                                 b_si = treated_conc_data.get(k, 0)
-                                t_si = eff_data_pdf.get(k, b_si)
+                                t_si = eff_data_doc.get(k, b_si)
                                 
                                 if t_si < b_si and t_si > 0:
                                     t_val = 10 ** t_si
@@ -1137,59 +1126,56 @@ class UtilityProjectionEngine:
                             b_str = f"{b_val:.3f}"
                             t_str = f"{t_val:.3f}"
                             
-                            pdf.cell(60, 10, k, border=1)
-                            pdf.cell(65, 10, b_str, border=1)
-                            pdf.cell(65, 10, t_str, border=1, ln=True)
+                            row_cells = table.add_row().cells
+                            row_cells[0].text = str(k)
+                            row_cells[1].text = str(b_str)
+                            row_cells[2].text = str(t_str)
                             
-                        pdf.ln(5)
-                        pdf.set_font("Arial", 'I', 9)
-                        pdf.cell(0, 5, "Note: Values for Salts (CaSO4, BaSO4, etc.) represent the Ratio of IAP to Solubility Limit.", ln=True)
-                        pdf.cell(0, 5, "A ratio greater than 1.0 indicates a scaling risk without intervention.", ln=True)
+                        doc.add_paragraph("\nNote: Values for Salts (CaSO4, BaSO4, etc.) represent the Ratio of IAP to Solubility Limit. A ratio greater than 1.0 indicates a scaling risk without intervention.")
                         
                         try:
                             import plotly.io as pio
-                            mass_pdf_data = []
+                            mass_doc_data = []
                                 
                             for idx, k in enumerate(["CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]):
                                 internal_k = "Ratio_" + k.replace("Si(OH)4", "SiOH4").replace("CaCO3", "CaCO3") 
                                 if k == "CaCO3":
                                     b_si = treated_conc_data.get('LSI', 0)
-                                    t_si = eff_data_pdf.get('LSI', 0)
+                                    t_si = eff_data_doc.get('LSI', 0)
                                     b_ratio = 10 ** b_si if b_si > 0 else 1.0
                                     t_ratio = 10 ** t_si if t_si > 0 else 1.0
                                 else:
                                     b_ratio = treated_conc_data.get(internal_k, 1.0)
                                     b_si = treated_conc_data.get(k, 0)
-                                    t_si = eff_data_pdf.get(k, b_si)
+                                    t_si = eff_data_doc.get(k, b_si)
                                     t_ratio = 10 ** t_si if (t_si < b_si and t_si > 0) else (1.0 if t_si <= 0 else b_ratio)
                                 
-                                bm_kg, tm_kg = get_excess_mass_kg_day_pdf(k, b_ratio, t_ratio, treated_conc_ions, feed_temp, b_si, t_si)
-                                mass_pdf_data.append({"Salt": k, "Mass": bm_kg, "Type": "Baseline"})
-                                mass_pdf_data.append({"Salt": k, "Mass": tm_kg, "Type": "Treated"})
+                                bm_kg, tm_kg = get_excess_mass_kg_day_doc(k, b_ratio, t_ratio, treated_conc_ions, feed_temp, b_si, t_si)
+                                mass_doc_data.append({"Salt": k, "Mass": bm_kg, "Type": "Baseline"})
+                                mass_doc_data.append({"Salt": k, "Mass": tm_kg, "Type": "Treated"})
                             
-                            df_mpdf = pd.DataFrame(mass_pdf_data)
-                            fig_pdf = px.bar(df_mpdf, x="Salt", y="Mass", color="Type", barmode="group", title="Precipitate Mass Risk (kg/day)")
+                            df_mdoc = pd.DataFrame(mass_doc_data)
+                            fig_doc = px.bar(df_mdoc, x="Salt", y="Mass", color="Type", barmode="group", title="Precipitate Mass Risk (kg/day)")
                             
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-                                fig_pdf.write_image(tmpfile.name, engine="kaleido")
-                                pdf.ln(10)
-                                pdf.image(tmpfile.name, x=10, w=190)
+                                fig_doc.write_image(tmpfile.name, engine="kaleido")
+                                doc.add_picture(tmpfile.name, width=Inches(6.0))
                         except Exception:
-                            pdf.ln(10)
-                            pdf.set_font("Arial", 'I', 10)
-                            pdf.cell(0, 5, "[Note: Graphical elements omitted. Server requires 'kaleido' library to render chart images in PDF.]", ln=True)
+                            doc.add_paragraph("[Note: Graphical elements omitted. Server requires 'kaleido' library to render chart images in Word.]")
 
-                        pdf_bytes = pdf.output(dest="S").encode("latin-1")
+                        doc_stream = BytesIO()
+                        doc.save(doc_stream)
+                        doc_bytes = doc_stream.getvalue()
                         
                         st.download_button(
-                            label="Download Professional PDF Report",
-                            data=pdf_bytes,
-                            file_name="Kem_Watreat_Projection.pdf",
-                            mime="application/pdf"
+                            label="Download Professional Word Report",
+                            data=doc_bytes,
+                            file_name="Kem_Watreat_Projection.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
                         
                     except ImportError:
-                        st.error("System Dependency Missing: To enable Professional PDF downloads, you must add `fpdf` to your `requirements.txt` file.")
+                        st.error("System Dependency Missing: To enable Professional Word downloads, you must add `python-docx` to your `requirements.txt` file.")
                     
                     st.markdown("---")
                     
@@ -1370,6 +1356,8 @@ class UtilityProjectionEngine:
                     st.write(f"### Extended Performance Curve Matrix: {final_prod}")
                     dose_range = [x * 0.5 for x in range(0, 21)] 
                     performance_data = []
+                    
+                    graph_keys = ["LSI", "SDSI", "CaCO3", "CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4", "SiO2", "CaSiO3", "MgSiO3", "FeSiO3", "Fe"]
                     
                     for d in dose_range:
                         eff_data = self.calculate_effective_scaling(treated_conc_data, final_prod, d)
