@@ -483,7 +483,7 @@ class UtilityProjectionEngine:
                 elif temp_c > 30: limit = 135.0 + ((temp_c - 30.0) * 1.96)
                 max_mass = max(0.0, ions.get('SiO2',0) - limit)
             
-            if salt == "CaCO3" and t_si <= 0.4:
+            if salt == "CaCO3" and t_si <= 0.5:
                 return 0.0
             elif salt != "CaCO3" and t_si <= 0.05:
                 return 0.0
@@ -502,8 +502,8 @@ class UtilityProjectionEngine:
             for dose in [x * 0.5 for x in range(2, 17)]: 
                 sim_res = self.calculate_effective_scaling(effective, prod, dose)
                 
-                lsi_safe = -0.3 <= sim_res.get('LSI', 0) <= 0.3
-                sdsi_safe = -0.3 <= sim_res.get('SDSI', 0) <= 0.3
+                lsi_safe = -0.5 <= sim_res.get('LSI', 0) <= 0.5
+                sdsi_safe = -0.5 <= sim_res.get('SDSI', 0) <= 0.5
                 
                 salts_safe = True
                 for s_key in ["CaSO4", "BaSO4", "SrSO4", "CaF2", "Si(OH)4"]:
@@ -545,9 +545,22 @@ class UtilityProjectionEngine:
                 st.write("**Operational Parameters**")
                 feed_flow = st.number_input("Feed Flow Rate (m³/hr)", min_value=0.1, value=10.0, step=1.0)
                 feed_temp = st.number_input("Feed Temperature (°C)", min_value=1.0, max_value=50.0, value=25.0)
-                recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=75)
-                salt_rejection = st.slider("Membrane Salt Rejection (%)", min_value=90.0, max_value=99.8, value=99.0, step=0.1)
+                
                 membrane_type = st.selectbox("Membrane Type Selection", ["Standard Brackish Water (BWRO)", "Fouling Resistant (FRRO)", "Seawater (SWRO)"])
+                
+                rec_default = 75
+                rec_text = "75% - 85%"
+                if "SWRO" in membrane_type:
+                    rec_default = 40
+                    rec_text = "35% - 45%"
+                elif "FRRO" in membrane_type:
+                    rec_default = 75
+                    rec_text = "70% - 80%"
+                    
+                st.caption(f"Recommended System Recovery for {membrane_type}: **{rec_text}**")
+                recovery = st.slider("System Recovery (%)", min_value=10, max_value=95, value=rec_default)
+                
+                salt_rejection = st.slider("Membrane Salt Rejection (%)", min_value=90.0, max_value=99.8, value=99.0, step=0.1)
                 
                 st.write("**Chemical Pre-Treatment (pH & Acid)**")
                 feed_ph = st.number_input("Raw Feed pH", min_value=1.0, max_value=14.0, value=7.5)
@@ -816,7 +829,30 @@ class UtilityProjectionEngine:
                 }
                 
                 df_salts = pd.DataFrame(salt_data)
-                st.dataframe(df_salts, use_container_width=True, hide_index=True)
+                
+                def format_salt_alert(val):
+                    try:
+                        v = float(val)
+                        status = "High" if v > 1.0 else "Okay"
+                        return f"{v:.3f} [{status}]"
+                    except:
+                        return val
+
+                def color_salt_alert(val):
+                    if isinstance(val, str):
+                        if "[High]" in val: return 'color: red; font-weight: bold'
+                        if "[Okay]" in val: return 'color: green'
+                    return ''
+                    
+                for c in ["Raw Feed", "Treated Feed", "Permeate", "Raw Concentrate", "Treated Concentrate"]:
+                    df_salts[c] = df_salts[c].apply(format_salt_alert)
+                    
+                try:
+                    styled_salts = df_salts.style.map(color_salt_alert)
+                except AttributeError:
+                    styled_salts = df_salts.style.applymap(color_salt_alert)
+                    
+                st.dataframe(styled_salts, use_container_width=True, hide_index=True)
                 
                 if treated_conc_ph <= 8.0:
                     st.info("Note: Metal silicates (CaSiO3, MgSiO3, FeSiO3) are reading 0.0 because the treated concentrate pH is 8.0 or below.")
@@ -1098,7 +1134,7 @@ class UtilityProjectionEngine:
                             
                             b_m_ppm = max_m * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
                             
-                            if salt == "CaCO3" and t_si <= 0.4: t_m_ppm = 0.0
+                            if salt == "CaCO3" and t_si <= 0.5: t_m_ppm = 0.0
                             elif salt != "CaCO3" and t_si <= 0.05: t_m_ppm = 0.0
                             else: t_m_ppm = max_m * ((t_ratio - 1.0)/t_ratio) if t_ratio > 1.0 else 0.0
                             
@@ -1256,7 +1292,6 @@ class UtilityProjectionEngine:
                     fig_comp = px.bar(
                         df_combined, x="Salt / Index", y="Intensity_Num", color="State", barmode="group",
                         title=f"Scaling Intensity Before vs After Treatment (%)",
-                        labels={"Intensity_Num": "Scaling Potential (%)", "Salt / Index": ""},
                         color_discrete_map={"Before Treatment": "#e74c3c", f"With {final_prod} ({final_dose} ppm)": "#3498db"}
                     )
                     
@@ -1264,7 +1299,9 @@ class UtilityProjectionEngine:
                         plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
                         font=dict(family="Arial, sans-serif", size=14, color="#333"),
                         margin=dict(l=40, r=40, t=60, b=40),
-                        legend_title_text="Treatment State"
+                        legend_title_text="Treatment State",
+                        xaxis_title="",
+                        yaxis_title="Scaling Potential (%)"
                     )
                     fig_comp.update_yaxes(showgrid=True, gridcolor="#e0e0e0", zeroline=True, zerolinecolor="#999")
                     fig_comp.add_hline(y=0, line_width=2, line_dash="dash", line_color="#2ecc71", annotation_text="Safe Zone (0%)", annotation_position="top right")
@@ -1295,7 +1332,7 @@ class UtilityProjectionEngine:
                         
                         b_m_ppm = max_m * ((b_ratio - 1.0)/b_ratio) if b_ratio > 1.0 else 0.0
                         
-                        if salt == "CaCO3" and t_si <= 0.4:
+                        if salt == "CaCO3" and t_si <= 0.5:
                             t_m_ppm = 0.0
                         elif salt != "CaCO3" and t_si <= 0.05:
                             t_m_ppm = 0.0
