@@ -262,7 +262,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
             db_dates = pd.to_datetime(st.session_state.daily_logs['Date'], errors='coerce').dt.strftime('%Y-%m-%d').values
             if log_date_str in db_dates:
-                row_idx = np.where(db_dates == log_date_str)[0][0]
+                # FIX 1: Access the [-1] index to pull the most recent duplicate date row
+                row_idx = np.where(db_dates == log_date_str)[0][-1]
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
                 db_to_var_mapping = {
@@ -311,6 +312,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 pass 
                 if loaded_vars: 
                     st.sidebar.success(f"Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
+                    st.rerun()  # FIX 2: Trigger an immediate UI refresh so the entire dashboard updates
 
     # Display MED-4 Title
     st.title("MED-4 Management Suite")
@@ -886,8 +888,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         
                         new_log = pd.DataFrame(db_dict)
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
+                        
+                        # FIX 3: Drop duplicates before committing to the master registry
+                        st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
+                        
                         save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
                         st.success("Operational record successfully integrated into file engine!")
+                        time.sleep(1.0)
+                        st.rerun()  # FIX 4: Refresh UI on save
                     elif pwd_append != "": 
                         st.error("Master verification credential failed.")
             with c_export:
@@ -1326,11 +1334,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         if st.button("Append to Database", use_container_width=True):
                             if pwd_bulk == "12345678":
                                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
+                                
+                                # FIX 3: Drop duplicates before saving bulk uploads
                                 st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
+                                
                                 save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
                                 st.success("Data Synced!")
                                 time.sleep(1.5)
-                                st.rerun()
+                                st.rerun()  # FIX 4: Ensure UI reloads on save
                             elif pwd_bulk != "": 
                                 st.error("Incorrect Password.")
                 else: 
