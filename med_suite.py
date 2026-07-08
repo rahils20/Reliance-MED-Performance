@@ -6,12 +6,12 @@ import io
 import os
 import time
 import math
-import altair as alt
 import joblib
 import base64
+import altair as alt
 from io import BytesIO
 from docx import Document
-from docx.shared import RGBColor
+from docx.shared import RGBColor, Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 # MED GLOBAL CONSTANTS
@@ -57,33 +57,47 @@ WATER_SPECS = {
 }
 
 EXACT_DB_COLUMNS = [
-    "Date", "Sea Water Upper", "Sea Water Lower", "Sea Water Feed", "Brine Water Return", 
-    "Desal production", "LP Steam consumption", "Condensate Return", "condensate temp", 
+    "Date", "Sea Water Upper", "Sea Water Lower", "Sea Water Feed", "Sea Water Pressure",
+    "Brine Water Return", "Desal production", "LP Steam consumption", "LP Steam Pressure",
+    "Condensate Return", "condensate temp", "Condensate Conductivity",
     "1st Effect Vapour Temp", "1st effect brine temp", "11th Effect Brine Temp", "Feed Temp to Cold Group",
-    "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", 
+    "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", "Brine Discharge Pressure",
     "Sea Water cond I/L temp", "Sea Water Condenser O/L Temp", 
-    "CW supply", "CW Return", "Gross production", "GOR", "Overall HTC", "1st Effect HTC", 
+    "CW supply", "CW Return", "CW Flow", "Gross production", "GOR", "Overall HTC", "1st Effect HTC", 
     "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Area_1st", "Area_Overall", "Remarks"
 ]
 for cat in ['Feed', 'Product']:
     for param, details in WATER_SPECS[cat].items(): 
         EXACT_DB_COLUMNS.append(details['db_col'])
 
+RIL_EXCEL_HEADERS = [
+    'Parameter', 'Sea water Upper', 'Sea water Lower', 'Sea water feed', 'Brine return', 
+    ' Desal Production', 'LP Steam Consumption', 'Condensate return', 'Condensate Temp', 
+    "1'st effect vapour Temp", '1st Effect Brine Temp', '(1st effect vapour-1st effect brine) Delta Temp', 
+    '1st Effect Vapour pres', 'Brine DischargeTemp', 'Sea water cond (FFC) I/L temp', 
+    'Sea water cond (FFC) o/L temp', 'CW (FCC) supply', 'CW (FCC) return', 
+    'Gross desal water production', 'Recovery', 'Conversion (Product to Feed)', 'Gain Output Ratio', 
+    '11 effect brine Temp', 'Overall delta T(1st eff brine temp - 11th eff brine temp)', 
+    'Steam Economy (Steam/Desal)', 'Antiscalant residual', 'Remarks'
+]
+
 DEFAULTS = {
-    'steam': 71.75, 'desal': 800.0, 'gross': 801.4, 'sw_upper': 553.63, 'sw_total': 2100.0, 'brine_ret': 1275.5,
+    'steam': 71.75, 'stm_press': 4.3, 'desal': 800.0, 'gross': 801.4, 'sw_upper': 553.63, 'sw_total': 2100.0, 'sw_press': 1.7, 
+    'brine_ret': 1275.5, 'brine_press': 1.3,
     'sw_in_t': 30.0, 'brine_out_t': 41.0, 'vap_out_t': 70.0, 'mra_press': 231.76, 'mra_t1': 68.47, 'mra_bt1': 65.46,
     'brine_11': 43.0, 'feed_cold': 37.0,
     'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0, 'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
     'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05, 'p_cl': 0.0, 'p_so4': 0.0,
     'chem_anti_ppm': 4.82, 'chem_anti_cons': 13.5, 'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
     'skip_eff': False, 'skip_wq': False, 'remarks': "", 'area_1st': 1757.49, 'area_overall': 19332.0,
-    'sw_lower': 0.0, 'cond_flow': 0.0, 'cond_temp': 0.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0
+    'sw_lower': 0.0, 'cond_flow': 0.0, 'cond_temp': 0.0, 'cond_cond': 3.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0, 'cw_flow': 2726.0
 }
 
 SYNC_MAP = {
-    'steam': ['in_steam', 't5_steam'], 'desal': ['in_desal'], 'gross': ['in_gross'],
-    'sw_upper': ['in_sw_up', 't5_sw_up', 't2_sw_up'], 'sw_total': ['in_sw_tot', 't4_sw_tot', 't2_sw_tot'], 
-    'brine_ret': ['in_brine', 't5_bflow'], 'sw_in_t': ['in_sw_in', 't2_sw_in'], 'brine_out_t': ['in_brine_out', 't2_brine_out'], 
+    'steam': ['in_steam', 't5_steam'], 'stm_press': ['in_stm_press'], 'desal': ['in_desal'], 'gross': ['in_gross'],
+    'sw_upper': ['in_sw_up', 't5_sw_up', 't2_sw_up'], 'sw_total': ['in_sw_tot', 't4_sw_tot', 't2_sw_tot'], 'sw_press': ['in_sw_press'],
+    'brine_ret': ['in_brine', 't5_bflow'], 'brine_press': ['in_brine_press'], 
+    'sw_in_t': ['in_sw_in', 't2_sw_in'], 'brine_out_t': ['in_brine_out', 't2_brine_out'], 
     'vap_out_t': ['in_vap_out', 't2_vap_out'], 'mra_press': ['in_press', 't5_press'], 
     'mra_t1': ['in_t1', 't5_t1', 't2_t1'], 'mra_bt1': ['in_bt1', 't5_bt1', 't2_bt1'], 
     'brine_11': ['in_brine_11'], 'feed_cold': ['in_feed_cold'],
@@ -95,25 +109,26 @@ SYNC_MAP = {
     'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm', 't5_anti'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
     'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
     'remarks': ['in_remarks'], 'area_1st': ['t2_area_1st'], 'area_overall': ['t2_area_overall'],
-    'sw_lower': ['in_sw_low'], 'cond_flow': ['in_cond_flow'], 'cond_temp': ['in_cond_temp'], 
-    'sw_out_t': ['in_sw_out'], 'cw_supply': ['in_cw_supply'], 'cw_return': ['in_cw_return']
+    'sw_lower': ['in_sw_low'], 'cond_flow': ['in_cond_flow'], 'cond_temp': ['in_cond_temp'], 'cond_cond': ['in_cond_cond'],
+    'sw_out_t': ['in_sw_out'], 'cw_supply': ['in_cw_supply'], 'cw_return': ['in_cw_return'], 'cw_flow': ['in_cw_flow']
 }
 
 LATENT_HEAT_STEAM_KJ_KG = 2330.0
 
-def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra, extra_tags):
+def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
     data_dict = {
         "Date": date.strftime('%d/%m/%Y'),
         "Sea Water Upper": ops['SW_Feed_1st'], "Sea Water Lower": extra_tags['sw_lower'],
-        "Sea Water Feed": ops['SW Total'], "Brine Water Return": ops['Brine Return'],
-        "Desal production": ops['Desal'], "LP Steam consumption": ops['Steam'],
-        "Condensate Return": extra_tags['cond_flow'], "condensate temp": extra_tags['cond_temp'],
+        "Sea Water Feed": ops['SW Total'], "Sea Water Pressure": extra_tags['sw_press'], 
+        "Brine Water Return": ops['Brine Return'], "Desal production": ops['Desal'], 
+        "LP Steam consumption": ops['Steam'], "LP Steam Pressure": extra_tags['stm_press'],
+        "Condensate Return": extra_tags['cond_flow'], "condensate temp": extra_tags['cond_temp'], "Condensate Conductivity": extra_tags['cond_cond'],
         "1st Effect Vapour Temp": ops['Stm In_1st'], "1st effect brine temp": ops['Brine_1st'],
         "11th Effect Brine Temp": extra_tags['brine_11'], "Feed Temp to Cold Group": extra_tags['feed_cold'],
         "Delta T": ops['dt_1st'], "1st effect vapour pressure": ops['Press_1st'],
-        "Brine Discharge Temp": ops['Brine Out_overall'],
+        "Brine Discharge Temp": ops['Brine Out_overall'], "Brine Discharge Pressure": extra_tags['brine_press'],
         "Sea Water cond I/L temp": ops['SW In_overall'], "Sea Water Condenser O/L Temp": extra_tags['sw_out_t'],
-        "CW supply": extra_tags['cw_supply'], "CW Return": extra_tags['cw_return'],
+        "CW supply": extra_tags['cw_supply'], "CW Return": extra_tags['cw_return'], "CW Flow": extra_tags['cw_flow'],
         "Gross production": ops['Gross Prod'], "Recovery (%)": round(ops['Recovery'], 2),
         "GOR": round(ops['GOR'], 2), "Overall HTC": round(ops['htc_overall'], 2),
         "1st Effect HTC": round(ops['htc_1st'], 2), "Residual": round(mra['Residual'], 2),
@@ -127,7 +142,7 @@ def generate_daily_csv(date, ops, display_effect_df, w_data, chem_data, mra, ext
     df = pd.DataFrame([data_dict])
     return df.to_csv(index=False).encode('utf-8')
 
-def generate_comprehensive_report(date, ops, sor_df, w_data, chem_data, mra, skip_wq, remarks):
+def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, skip_wq, remarks):
     doc = Document()
     doc.add_heading('MED-4 Daily Operational & Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
     p = doc.add_paragraph()
@@ -141,17 +156,19 @@ def generate_comprehensive_report(date, ops, sor_df, w_data, chem_data, mra, ski
     doc.add_paragraph(f"On {date.strftime('%d/%m/%Y')}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
 
     doc.add_heading('2. SOR Performance Matrix', level=1)
-    t_ops = doc.add_table(rows=1, cols=6); t_ops.style = 'Table Grid'
-    for i, h in enumerate(['Parameter', 'UOM', 'Design', 'SOR Base', 'Actual', 'Diff']): t_ops.rows[0].cells[i].text = h
-    
-    for index, row in sor_df.iterrows():
-        rc = t_ops.add_row().cells
-        rc[0].text = str(row['Parameter'])
-        rc[1].text = str(row['UOM'])
-        rc[2].text = str(row['Design'])
-        rc[3].text = str(row['SOR Base'])
-        rc[4].text = str(row['Actual'])
-        rc[5].text = str(row['Difference'])
+    for section_name, df in sor_dfs.items():
+        doc.add_heading(section_name, level=2)
+        t_ops = doc.add_table(rows=1, cols=6); t_ops.style = 'Table Grid'
+        for i, h in enumerate(['Parameter', 'UOM', 'Design', 'SOR Base', 'Actual', 'Diff']): t_ops.rows[0].cells[i].text = h
+        
+        for index, row in df.iterrows():
+            rc = t_ops.add_row().cells
+            rc[0].text = str(row['Parameter'])
+            rc[1].text = str(row['UOM'])
+            rc[2].text = str(row['Design'])
+            rc[3].text = str(row['SOR Base'])
+            rc[4].text = str(row['Actual'])
+            rc[5].text = str(row['Difference'])
 
     doc.add_heading('3. Thermal Integrity (HTC)', level=1)
     doc.add_paragraph(f"Overall Plant HTC: {ops['htc_overall']:.2f} W/m²K | 1st Effect HTC: {ops['htc_1st']:.2f} W/m²K")
@@ -227,8 +244,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     med_unit_choice = st.sidebar.selectbox("Select Active Unit Train", [f"MED-{unit_idx}" for unit_idx in range(1, 12)], index=3)
     if med_unit_choice != "MED-4":
-        st.title(f"🏭 {med_unit_choice} Diagnostic Interface")
-        st.info(f"🚧 **Work in Progress:** System data hooks for {med_unit_choice} are under configuration. Diagnostic dashboard metrics will become available upon plant startup.")
+        st.title(f"{med_unit_choice} Diagnostic Interface")
+        st.info(f"System data hooks for {med_unit_choice} are under configuration. Diagnostic dashboard metrics will become available upon plant startup.")
         render_chatbot()
         return
             
@@ -248,32 +265,25 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
                 db_to_var_mapping = {
-                    'gross': ['Gross production', 'Gross Prod (m3/h)', 'Gross Prod'], 
-                    'desal': ['Desal production', 'Desal (m3/h)'], 
-                    'steam': ['LP Steam consumption', 'Steam (TPH)'],
-                    'sw_total': ['Sea Water Feed', 'Total Sea Water Feed (FFC)', 'Total SW Feed (m3/h)', 'SW Feed (m3/h)'], 
-                    'sw_upper': ['Sea Water Upper', '1st Effect SW Feed', 'SW Feed to 1st Effect (m3/h)', 'SW_Upper'],
-                    'sw_lower': ['Sea Water Lower'],
-                    'cond_flow': ['Condensate Return', 'condensate flow', 'Cond_Flow'], 
-                    'cond_temp': ['condensate temp', 'Cond_Temp'],
-                    'sw_out_t': ['Sea Water Condenser O/L Temp', 'Sea Water o/L temp', 'SW_Out_Temp'], 
-                    'cw_supply': ['CW supply', 'CW_Supply'], 
-                    'cw_return': ['CW Return', 'SW return', 'SW_Return'],
-                    'chem_anti_cons': ['Antiscalant (kg)'], 
-                    'chem_foam_cons': ['Antifoam (kg)'], 
-                    'mra_press': ['1st effect vapour pressure', 'Press_1st'], 
-                    'mra_t1': ['1st Effect Vapour Temp', '1st effect vapour temp', 'Temp_1st'], 
-                    'mra_bt1': ['1st effect brine temp', 'Brine_Temp_1st'], 
-                    'brine_11': ['11th Effect Brine Temp'],
-                    'feed_cold': ['Feed Temp to Cold Group'],
-                    'brine_ret': ['Brine Water Return', 'Brine_Flow'], 
+                    'gross': ['Gross production'], 
+                    'desal': ['Desal production'], 
+                    'steam': ['LP Steam consumption'], 'stm_press': ['LP Steam Pressure'],
+                    'sw_total': ['Sea Water Feed'], 'sw_press': ['Sea Water Pressure'],
+                    'sw_upper': ['Sea Water Upper'], 'sw_lower': ['Sea Water Lower'],
+                    'cond_flow': ['Condensate Return'], 'cond_temp': ['condensate temp'], 'cond_cond': ['Condensate Conductivity'],
+                    'sw_out_t': ['Sea Water Condenser O/L Temp'], 
+                    'cw_supply': ['CW supply'], 'cw_return': ['CW Return'], 'cw_flow': ['CW Flow'],
+                    'chem_anti_cons': ['Antiscalant (kg)'], 'chem_foam_cons': ['Antifoam (kg)'], 
+                    'mra_press': ['1st effect vapour pressure'], 
+                    'mra_t1': ['1st Effect Vapour Temp'], 
+                    'mra_bt1': ['1st effect brine temp'], 
+                    'brine_11': ['11th Effect Brine Temp'], 'feed_cold': ['Feed Temp to Cold Group'],
+                    'brine_ret': ['Brine Water Return'], 'brine_press': ['Brine Discharge Pressure'],
                     'chem_anti_ppm': ['Anti_PPM'], 
-                    'sw_in_t': ['Sea Water cond I/L temp', 'SW Cond I/L Temp', 'SW_Cond_Inlet_Temp', 'SW_In_Temp'], 
-                    'brine_out_t': ['Brine Discharge Temp', 'Brine outlet temp', 'Final Brine Temp', 'Final_Brine_Temp', 'Brine_Out_Temp'], 
+                    'sw_in_t': ['Sea Water cond I/L temp'], 
+                    'brine_out_t': ['Brine Discharge Temp'], 
                     'vap_out_t': ['Vap_Out_Temp'], 
-                    'remarks': ['Remarks'],
-                    'area_1st': ['Area_1st'], 
-                    'area_overall': ['Area_Overall']
+                    'remarks': ['Remarks'], 'area_1st': ['Area_1st'], 'area_overall': ['Area_Overall']
                 }
                 
                 for cat in ['Feed', 'Product']:
@@ -299,15 +309,15 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             except: 
                                 pass 
                 if loaded_vars: 
-                    st.sidebar.success(f"📅 Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
+                    st.sidebar.success(f"Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
 
     # Display MED-4 Title
-    st.title("🏭 MED-4 Management Suite")
+    st.title("MED-4 Management Suite")
 
     tabs = st.tabs([
-        "📥 0. Inputs", "🌊 1. SOR KPIs", "🔥 2. HTC", "🧪 3. Quality", 
-        "🛢️ 4. Chemicals", "🧠 5. MRA", "📂 6. Reporting", 
-        "🤖 7. AI Model Select", "📤 8. Bulk Uploads"
+        "0. Inputs", "1. SOR KPIs", "2. HTC", "3. Quality", 
+        "4. Chemicals", "5. MRA", "6. Reporting", 
+        "7. AI Model Select", "8. Bulk Uploads"
     ])
 
     ops_data = {
@@ -338,15 +348,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]]
 
     # --- UPDATED HTC CALCULATION METHODOLOGY ---
-    # Heat Duty (Q) = steam_flow * latent_heat * 1000 / 3600 -> Watts
-    # LMTD = (dT1 - dt2) / ln(dT1/dT2)
     ops_data['q_1st'] = (ops_data['Steam'] * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
-    ops_data['q_overall'] = ops_data['q_1st'] # Conserved total thermal energy input
+    ops_data['q_overall'] = ops_data['q_1st'] 
 
-    # 1st Effect Delta T boundaries
     dt_1st_hot = ops_data['Stm In_1st'] - ops_data['Brine_1st']
     try: 
-        dt_1st_cold = get_v('cond_temp') - st.session_state.shared_effect_df.loc[1, 'Live Brine (°C)'] # Approx Effect 2 brine feeding
+        dt_1st_cold = get_v('cond_temp') - st.session_state.shared_effect_df.loc[1, 'Live Brine (°C)'] 
         if pd.isna(dt_1st_cold) or dt_1st_cold <= 0: dt_1st_cold = dt_1st_hot * 0.8
     except:
         dt_1st_cold = dt_1st_hot * 0.8
@@ -360,7 +367,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     ops_data['htc_1st'] = ops_data['q_1st'] / (get_v('area_1st') * lmtd_1st) if lmtd_1st > 0 and get_v('area_1st') > 0 else 0
     ops_data['fouling_1st'] = 1 / ops_data['htc_1st'] if ops_data['htc_1st'] > 0 else 0
 
-    # Overall Plant Delta T boundaries
     ops_data['dt_overall_simple'] = ops_data['Brine_1st'] - get_v('brine_11')
     dt_ov_hot = ops_data['Stm In_1st'] - ops_data['Brine Out_overall']
     dt_ov_cold = get_v('cond_temp') - ops_data['SW In_overall']
@@ -420,7 +426,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     for cat in ['Feed', 'Product']:
         for param, details in WATER_SPECS[cat].items():
             val = get_v(details['var'])
-            status = "✅ Pass" if details['lim'][0] <= val <= details['lim'][1] else "🚨 Fail"
+            status = "Pass" if details['lim'][0] <= val <= details['lim'][1] else "Fail"
             water_data[cat][param] = {'min': details['lim'][0], 'max': details['lim'][1], 'val': val, 'status': status, 'db_col': details['db_col']}
             
     chem_data = {
@@ -432,12 +438,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     # --- TAB 0: INPUTS & PFD ---
     with tabs[0]:
-        tab0_subtabs = st.tabs(["📋 Data Entry", "🗺️ Live PFD Monitor"])
+        tab0_subtabs = st.tabs(["Data Entry", "Live PFD Monitor"])
         
         with tab0_subtabs[0]:
             st.subheader("Central Data Entry Panel")
             if mra_data['Predicted'] > 950: 
-                st.warning("⚠️ **MRA Prediction is unusually high (>950 m³/h).** Please verify you did not accidentally enter the 'Sea Water Feed' (~2100) into the 'Sea Water Upper' (~550) input.")
+                st.warning("MRA Prediction is unusually high (>950 m³/h). Please verify you did not accidentally enter the 'Sea Water Feed' (~2100) into the 'Sea Water Upper' (~550) input.")
                 
             with st.expander("1. Hydraulics & Mass Balance", expanded=True):
                 c1, c2, c3, c4 = st.columns(4)
@@ -458,19 +464,24 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 with t1: 
                     st.number_input("Sea Water cond I/L temp (°C)", key="in_sw_in", on_change=sync_var, args=('sw_in_t', 'in_sw_in'))
                     st.number_input("Sea Water Condenser O/L Temp (°C)", key="in_sw_out", on_change=sync_var, args=('sw_out_t', 'in_sw_out'))
+                    st.number_input("Sea Water Pressure (kg/cm2-g)", key="in_sw_press", on_change=sync_var, args=('sw_press', 'in_sw_press'))
                     st.number_input("CW supply", key="in_cw_supply", on_change=sync_var, args=('cw_supply', 'in_cw_supply'))
                 with t2: 
                     st.number_input("Brine Discharge Temp (°C)", key="in_brine_out", on_change=sync_var, args=('brine_out_t', 'in_brine_out'))
+                    st.number_input("Brine Discharge Pressure (kg/cm2-g)", key="in_brine_press", on_change=sync_var, args=('brine_press', 'in_brine_press'))
                     st.number_input("CW Return", key="in_cw_return", on_change=sync_var, args=('cw_return', 'in_cw_return'))
-                    st.number_input("1st effect vapour pressure (mmHg)", key="in_press", on_change=sync_var, args=('mra_press', 'in_press'))
+                    st.number_input("CW Flow (m3/h)", key="in_cw_flow", on_change=sync_var, args=('cw_flow', 'in_cw_flow'))
                 with t3: 
                     st.number_input("1st Effect Vapour Temp (°C)", key="in_t1", on_change=sync_var, args=('mra_t1', 'in_t1'))
+                    st.number_input("1st effect vapour pressure (mmHg)", key="in_press", on_change=sync_var, args=('mra_press', 'in_press'))
                     st.number_input("1st effect brine temp (°C)", key="in_bt1", on_change=sync_var, args=('mra_bt1', 'in_bt1'))
                     st.number_input("11th Effect Brine Temp (°C)", key="in_brine_11", on_change=sync_var, args=('brine_11', 'in_brine_11'))
                 with t4: 
-                    st.number_input("Condensate Return", key="in_cond_flow", on_change=sync_var, args=('cond_flow', 'in_cond_flow'))
-                    st.number_input("condensate temp", key="in_cond_temp", on_change=sync_var, args=('cond_temp', 'in_cond_temp'))
+                    st.number_input("Condensate Return (m3/h)", key="in_cond_flow", on_change=sync_var, args=('cond_flow', 'in_cond_flow'))
+                    st.number_input("condensate temp (°C)", key="in_cond_temp", on_change=sync_var, args=('cond_temp', 'in_cond_temp'))
+                    st.number_input("Condensate Conductivity (µS/cm)", key="in_cond_cond", on_change=sync_var, args=('cond_cond', 'in_cond_cond'))
                     st.number_input("Feed Temp to Cold Group (°C)", key="in_feed_cold", on_change=sync_var, args=('feed_cold', 'in_feed_cold'))
+                    st.number_input("LP Steam Pressure (kg/cm2-g)", key="in_stm_press", on_change=sync_var, args=('stm_press', 'in_stm_press'))
                     
             with st.expander("3. Effect-wise Cascade (Temperatures)", expanded=False):
                 st.checkbox("Skip Effect-wise Temperatures for today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
@@ -499,8 +510,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 ch1, ch2 = st.columns(2)
                 with ch1: 
                     st.number_input("Dosing Level (PPM)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
-                    if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_anti_0"): 
-                        st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
                 with ch2: 
                     st.number_input("Actual Consumption (kg/hr)", key="in_anti_cons", on_change=sync_var, args=('chem_anti_cons', 'in_anti_cons'))
                     
@@ -508,8 +517,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 ch3, ch4 = st.columns(2)
                 with ch3: 
                     st.number_input("Dosing Level (PPM)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
-                    if st.button("🧪 Auto-Calculate Optimal Dose", key="btn_auto_foam_0"): 
-                        st.info("🚀 AI-driven Thermodynamic Scaling Engine & Auto-Dosing will be available shortly!")
                 with ch4: 
                     st.number_input("Actual Consumption (kg/hr)", key="in_foam_cons", on_change=sync_var, args=('chem_foam_cons', 'in_foam_cons'))
 
@@ -567,7 +574,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 except Exception as e:
                     st.error(f"Could not render TIF overlay. Error: {e}")
             else:
-                st.info("📌 **Digital Twin HUD:** Please upload 'Desal PFD (1).TIF' into the application directory to unlock the live interactive diagram overlay.")
+                st.info("Digital Twin HUD: Please upload 'Desal PFD (1).TIF' into the application directory to unlock the live interactive diagram overlay.")
 
     # --- TAB 1: FLOW KPIs & SOR MATRIX ---
     with tabs[1]:
@@ -576,36 +583,106 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         anti_gm_m3 = (get_v('chem_anti_cons') / ops_data['SW Total']) * 1000 if ops_data['SW Total'] > 0 else 0
         foam_gm_m3 = (get_v('chem_foam_cons') / ops_data['SW Total']) * 1000 if ops_data['SW Total'] > 0 else 0
         
-        sor_data = [
-            {"Parameter": "Gross Desal Water Production", "UOM": "m³/h", "Design": 1000.0, "SOR Base": 873.0, "Actual": ops_data['Gross Prod']},
-            {"Parameter": "Conversion Ratio (Product to Feed)", "UOM": "%", "Design": 41.6, "SOR Base": 41.4, "Actual": ops_data['Conversion'] * 100},
-            {"Parameter": "GOR / Steam Economy", "UOM": "Ratio", "Design": 10.5, "SOR Base": 11.4, "Actual": ops_data['GOR']},
-            {"Parameter": "Steam Consumption Norms", "UOM": "Norms", "Design": 0.088, "SOR Base": 0.088, "Actual": ops_data['Economy']},
-            {"Parameter": "1st Effect Vapour Temperature", "UOM": "°C", "Design": 74.0, "SOR Base": 72.0, "Actual": get_v('mra_t1')},
-            {"Parameter": "1st Effect Pressure", "UOM": "mm Hg", "Design": 248.0, "SOR Base": 256.0, "Actual": get_v('mra_press')},
-            {"Parameter": "1st Effect Brine Temperature", "UOM": "°C", "Design": 69.0, "SOR Base": 69.0, "Actual": get_v('mra_bt1')},
-            {"Parameter": "11th Effect Brine Temperature", "UOM": "°C", "Design": 44.0, "SOR Base": 42.0, "Actual": get_v('brine_11')},
-            {"Parameter": "Delta T (1st Vapour - 1st Brine)", "UOM": "°C", "Design": 4.0, "SOR Base": 2.5, "Actual": ops_data['dt_1st']},
-            {"Parameter": "Overall Delta T (1st Brine - 11th Brine)", "UOM": "°C", "Design": 25.0, "SOR Base": 27.1, "Actual": ops_data['dt_overall_simple']},
-            {"Parameter": "Feed Temperature to Cold Group (FFC)", "UOM": "°C", "Design": 40.0, "SOR Base": 37.0, "Actual": get_v('feed_cold')},
-            {"Parameter": "Antiscalant Consumption", "UOM": "gm/m³", "Design": 7.0, "SOR Base": 10.5, "Actual": anti_gm_m3},
-            {"Parameter": "Antifoam Consumption", "UOM": "gm/m³", "Design": 0.25, "SOR Base": 0.16, "Actual": foam_gm_m3}
-        ]
+        def color_diff(val):
+            try:
+                v = float(val)
+                color = 'green' if v >= 0 else 'red'
+                return f'color: {color}; font-weight: bold'
+            except:
+                return ''
+
+        # A) SEA WATER
+        st.markdown("### A) SEA WATER")
+        df_a = pd.DataFrame([
+            {"Parameter": "Temp.", "UOM": "°C", "Design": "19-35", "SOR Base": 29.0, "Actual": get_v('sw_in_t'), "Difference": get_v('sw_in_t') - 29.0},
+            {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "2.5", "SOR Base": 1.7, "Actual": get_v('sw_press'), "Difference": get_v('sw_press') - 1.7},
+            {"Parameter": "Total sea water flow to desal unit", "UOM": "m3/hr", "Design": "2400", "SOR Base": 2112.0, "Actual": ops_data['SW Total'], "Difference": ops_data['SW Total'] - 2112.0}
+        ])
+        st.dataframe(df_a.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
+
+        # B) LP STEAM
+        st.markdown("### B) LP STEAM")
+        df_b = pd.DataFrame([
+            {"Parameter": "Total Flow (Thermocompressor + NCG)", "UOM": "Tonne/hr", "Design": "97.5", "SOR Base": 76.94, "Actual": ops_data['Steam'], "Difference": ops_data['Steam'] - 76.94},
+            {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "3.5", "SOR Base": 4.3, "Actual": get_v('stm_press'), "Difference": get_v('stm_press') - 4.3},
+            {"Parameter": "Temp.", "UOM": "°C", "Design": "147", "SOR Base": 176.0, "Actual": get_v('mra_t1'), "Difference": get_v('mra_t1') - 176.0}
+        ])
+        st.dataframe(df_b.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
+
+        # C) COOLING WATER
+        st.markdown("### C) COOLING WATER")
+        df_c = pd.DataFrame([
+            {"Parameter": "Flow", "UOM": "m3/hr", "Design": "4200", "SOR Base": 2726.0, "Actual": get_v('cw_flow'), "Difference": get_v('cw_flow') - 2726.0},
+            {"Parameter": "Cooling Water Supply Temp", "UOM": "°C", "Design": "32", "SOR Base": 31.9, "Actual": get_v('cw_supply'), "Difference": get_v('cw_supply') - 31.9},
+            {"Parameter": "Cooling Water Return Temp", "UOM": "°C", "Design": "41", "SOR Base": 37.5, "Actual": get_v('cw_return'), "Difference": get_v('cw_return') - 37.5}
+        ])
+        st.dataframe(df_c.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
+
+        # D) DESALINATED WATER
+        st.markdown("### D) DESALINATED WATER")
+        df_d = pd.DataFrame([
+            {"Parameter": "Desal water production", "UOM": "m3/hr", "Design": "1000", "SOR Base": 824.0, "Actual": ops_data['Desal'], "Difference": ops_data['Desal'] - 824.0},
+            {"Parameter": "Conductivity", "UOM": "microS/cm", "Design": "<15", "SOR Base": 2.5, "Actual": get_v('p_cond'), "Difference": get_v('p_cond') - 2.5}
+        ])
+        st.dataframe(df_d.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
+
+        # E) BRINE DISCHARGE
+        st.markdown("### E) BRINE DISCHARGE")
+        df_e = pd.DataFrame([
+            {"Parameter": "Flow", "UOM": "m3/hr", "Design": "1400", "SOR Base": 1315.0, "Actual": ops_data['Brine Return'], "Difference": ops_data['Brine Return'] - 1315.0},
+            {"Parameter": "Temp.", "UOM": "°C", "Design": "43.5", "SOR Base": 40.5, "Actual": ops_data['Brine Out_overall'], "Difference": ops_data['Brine Out_overall'] - 40.5},
+            {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "6", "SOR Base": 1.3, "Actual": get_v('brine_press'), "Difference": get_v('brine_press') - 1.3}
+        ])
+        st.dataframe(df_e.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
+
+        # F) CONDENSATE RETURN
+        st.markdown("### F) CONDENSATE RETURN")
+        df_f = pd.DataFrame([
+            {"Parameter": "Quantity", "UOM": "m3/hr", "Design": "100", "SOR Base": 127.0, "Actual": get_v('cond_flow'), "Difference": get_v('cond_flow') - 127.0},
+            {"Parameter": "Temp.", "UOM": "°C", "Design": "70", "SOR Base": 71.0, "Actual": get_v('cond_temp'), "Difference": get_v('cond_temp') - 71.0},
+            {"Parameter": "Conductivity", "UOM": "microS/cm", "Design": "<15", "SOR Base": 3.0, "Actual": get_v('cond_cond'), "Difference": get_v('cond_cond') - 3.0}
+        ])
+        st.dataframe(df_f.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
+
+        # H) PLANT CAPACITY DETAILS
+        st.markdown("### H) PLANT CAPACITY DETAILS")
+        df_h = pd.DataFrame([
+            {"Parameter": "Gross desal water production", "UOM": "tph", "Design": "1000", "SOR Base": 873.0, "Actual": ops_data['Gross Prod'], "Difference": ops_data['Gross Prod'] - 873.0},
+            {"Parameter": "Conversion (Product to Feed)", "UOM": "%", "Design": "41.6", "SOR Base": 41.4, "Actual": ops_data['Conversion'] * 100, "Difference": (ops_data['Conversion'] * 100) - 41.4},
+            {"Parameter": "GOR / Steam Economy", "UOM": "-", "Design": "10.5", "SOR Base": 11.4, "Actual": ops_data['GOR'], "Difference": ops_data['GOR'] - 11.4},
+            {"Parameter": "Steam Economy (Steam/Desal)", "UOM": "Norms", "Design": "0.088", "SOR Base": 0.088, "Actual": ops_data['Economy'], "Difference": ops_data['Economy'] - 0.088},
+            {"Parameter": "1st effect vapour temp.", "UOM": "°C", "Design": "74", "SOR Base": 72.0, "Actual": get_v('mra_t1'), "Difference": get_v('mra_t1') - 72.0},
+            {"Parameter": "1st effect pressure", "UOM": "mm Hg", "Design": "248", "SOR Base": 256.0, "Actual": get_v('mra_press'), "Difference": get_v('mra_press') - 256.0},
+            {"Parameter": "1st effect brine temp.", "UOM": "°C", "Design": "69", "SOR Base": 69.0, "Actual": get_v('mra_bt1'), "Difference": get_v('mra_bt1') - 69.0},
+            {"Parameter": "11th effect brine temp", "UOM": "°C", "Design": "44", "SOR Base": 42.0, "Actual": get_v('brine_11'), "Difference": get_v('brine_11') - 42.0},
+            {"Parameter": "Delta T (1st effect vapour temp -1st effect brine temp)", "UOM": "°C", "Design": "4", "SOR Base": 2.5, "Actual": ops_data['dt_1st'], "Difference": ops_data['dt_1st'] - 2.5},
+            {"Parameter": "Overall delta T(1st eff brine temp - 11th eff brine temp)", "UOM": "°C", "Design": "25", "SOR Base": 27.1, "Actual": ops_data['dt_overall_simple'], "Difference": ops_data['dt_overall_simple'] - 27.1},
+            {"Parameter": "Feed temp to cold group", "UOM": "°C", "Design": "40", "SOR Base": 37.0, "Actual": get_v('feed_cold'), "Difference": get_v('feed_cold') - 37.0}
+        ])
+        st.dataframe(df_h.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.3f}", "Actual": "{:.3f}", "Difference": "{:+.3f}"}), use_container_width=True, hide_index=True)
+
+        # I) CHEMICAL CONSUMPTION
+        st.markdown("### I) CHEMICAL CONSUMPTION")
+        df_i = pd.DataFrame([
+            {"Parameter": "Antiscalant (ID204)/IN-204AS", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5, "Actual": anti_gm_m3, "Difference": anti_gm_m3 - 10.5},
+            {"Parameter": "Antifoam", "UOM": "gm/m3 sea water", "Design": "0.25", "SOR Base": 0.16, "Actual": foam_gm_m3, "Difference": foam_gm_m3 - 0.16}
+        ])
+        st.dataframe(df_i.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
         
-        sor_df = pd.DataFrame(sor_data)
-        sor_df['Difference'] = sor_df['Actual'] - sor_df['SOR Base']
-        
-        # Apply formatting to match strict RIL requirements
-        st.dataframe(sor_df.style.format({
-            "Design": "{:.3f}", "SOR Base": "{:.3f}", "Actual": "{:.3f}", "Difference": "{:+.3f}"
-        }), use_container_width=True, hide_index=True)
+        # Package for Export
+        sor_export_dfs = {
+            "A) SEA WATER": df_a, "B) LP STEAM": df_b, "C) COOLING WATER": df_c, 
+            "D) DESALINATED WATER": df_d, "E) BRINE DISCHARGE": df_e, 
+            "F) CONDENSATE RETURN": df_f, "H) PLANT CAPACITY DETAILS": df_h, 
+            "I) CHEMICAL CONSUMPTION": df_i
+        }
 
     # --- TAB 2: OVERALL HTC ---
     with tabs[2]:
         st.subheader("Thermal Integrity & Fouling Analysis")
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown("### ⚙️ 1st Effect HTC Performance")
+            st.markdown("### 1st Effect HTC Performance")
             st.markdown("Calculates scaling specifically inside the hottest effect stage.")
             st.number_input("1st Effect Surface Area (m²)", key="t2_area_1st", on_change=sync_var, args=('area_1st', 't2_area_1st'))
             st.number_input("Sea Water Upper (m³/h)", key="t2_sw_up", on_change=sync_var, args=('sw_upper', 't2_sw_up'))
@@ -618,7 +695,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.metric("1st Effect Fouling Factor", f"{ops_data['fouling_1st']:.6f}")
 
         with col2:
-            st.markdown("### 🏭 Overall Plant HTC Performance")
+            st.markdown("### Overall Plant HTC Performance")
             st.markdown("Calculates averaged baseline fouling rates across all tube banks.")
             st.number_input("Overall Surface Area (m²)", key="t2_area_overall", on_change=sync_var, args=('area_overall', 't2_area_overall'))
             st.number_input("Sea Water Feed (m³/h)", key="t2_sw_tot", on_change=sync_var, args=('sw_total', 't2_sw_tot'))
@@ -636,14 +713,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         if not get_v('skip_wq'):
             w_col1, w_col2 = st.columns(2)
             with w_col1:
-                st.markdown("### 🌊 Intake Seawater Matrix")
+                st.markdown("**Intake Seawater Matrix**")
                 for param, d in WATER_SPECS["Feed"].items():
                     c_in, c_chk = st.columns([2, 2])
                     with c_in: 
                         st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
                     c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Feed'][param]['status']}</div>", unsafe_allow_html=True)
             with w_col2:
-                st.markdown("### 🚰 Product Distillate Matrix")
+                st.markdown("**Product Distillate Matrix**")
                 for param, d in WATER_SPECS["Product"].items():
                     c_in, c_chk = st.columns([2, 2])
                     with c_in: 
@@ -657,16 +734,16 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         st.divider()
         cc1, cc2 = st.columns(2)
         with cc1:
-            st.markdown("### 🧪 Kem Watreat r 3687 (Antiscalant Evaluation)")
+            st.markdown("### Kem Watreat r 3687 (Antiscalant Evaluation)")
             st.number_input("Target Dosing Level (PPM)", key="t4_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 't4_anti_ppm'))
             theo_anti = (ops_data['SW Total'] * get_v('chem_anti_ppm')) / 1000
-            st.info(f"**Theoretical Flow Target Requirements:** {theo_anti:.2f} kg/hr")
+            st.info(f"Theoretical Flow Target Requirements: {theo_anti:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_anti_cons", on_change=sync_var, args=('chem_anti_cons', 't4_anti_cons'))
         with cc2:
-            st.markdown("### 🫧 Kem Antifoam 1795 Performance")
+            st.markdown("### Kem Antifoam 1795 Performance")
             st.number_input("Target Dosing Level (PPM)", key="t4_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 't4_foam_ppm'))
             theo_foam = (ops_data['SW Total'] * get_v('chem_foam_ppm')) / 1000
-            st.info(f"**Theoretical Flow Target Requirements:** {theo_foam:.2f} kg/hr")
+            st.info(f"Theoretical Flow Target Requirements: {theo_foam:.2f} kg/hr")
             st.number_input("Actual Consumption (kg/hr)", key="t4_foam_cons", on_change=sync_var, args=('chem_foam_cons', 't4_foam_cons'))
 
     # --- TAB 5: MRA EVALUATION ENGINE ---
@@ -698,13 +775,13 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 k3.success(f"Residual Gap: {mra_data['Residual']:.1f} TPH ({diff_pct:.1f}%) - Operational Thermal Base Clean")
                 
             if model_type != "OLS": 
-                st.info("ℹ️ **Machine Learning Evaluation Mode Active:** Multi-variable parameter expansion is only available under pure linear OLS logic.")
+                st.info("Machine Learning Evaluation Mode Active: Multi-variable parameter expansion is only available under pure linear OLS logic.")
             st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
     # --- TAB 6: REPORTING & ANALYTICS ---
     with tabs[6]:
         st.subheader("Central Data Logging & Historical Analytics")
-        rep_tabs = st.tabs(["📅 Daily Execution Dashboard", "📆 Master Historical Database", "📊 Long-Term Performance Trends", "📈 Interactive Explorer"])
+        rep_tabs = st.tabs(["Daily Execution Dashboard", "Master Historical Database", "Long-Term Performance Trends", "Interactive Explorer"])
         
         with rep_tabs[0]:
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -726,7 +803,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             graph_col1, graph_col2 = st.columns(2)
             with graph_col1:
                 if model_type == "OLS":
-                    st.markdown("#### ⚖️ Parameter Deviation Impact (m³/h)")
+                    st.markdown("#### Parameter Deviation Impact (m³/h)")
                     impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar().encode(
                         x=alt.X('Impact (TPH):Q'), 
                         y=alt.Y('Parameter:N', sort='-x', title=''), 
@@ -735,7 +812,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     ).properties(height=300)
                     st.altair_chart(impact_chart, use_container_width=True)
                 else:
-                    st.markdown("#### ⚖️ Component Weight Importance (ML Mode)")
+                    st.markdown("#### Component Weight Importance (ML Mode)")
                     impact_chart = alt.Chart(mra_data['Variance_DF']).mark_bar(color='#1f77b4').encode(
                         x=alt.X('Regression Weight:Q', title="Importance Weight Matrix %"), 
                         y=alt.Y('Parameter:N', sort='-x', title=''), 
@@ -744,7 +821,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.altair_chart(impact_chart, use_container_width=True)
 
             with graph_col2:
-                st.markdown("#### 🌊 Mass Distribution Profile")
+                st.markdown("#### Mass Distribution Profile")
                 unaccounted = ops_data['SW Total'] - (ops_data['Desal'] + ops_data['Brine Return'])
                 mb_data = pd.DataFrame({'Stream': ['Product Net', 'Brine Blowdown', 'Loss Matrix'], 'Volume': [ops_data['Desal'], ops_data['Brine Return'], unaccounted if unaccounted > 0 else 0]})
                 donut = alt.Chart(mb_data).mark_arc(innerRadius=50).encode(
@@ -757,23 +834,26 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.divider()
             st.text_area("Remarks & Performance Observations", key="in_remarks", on_change=sync_var, args=('remarks', 'in_remarks'), placeholder="Record operational shift anomalies, sensor calibrations, or clean notes here...")
             
-            st.markdown("### 💾 Record and Commit Log Payload")
+            st.markdown("### Record and Commit Log Payload")
             c_pwd, c_save, c_export, c_csv = st.columns([1.5, 1, 1, 1])
             with c_pwd: 
-                pwd_append = st.text_input("Security Key Access", type="password", key="pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Security Password to Commit")
+                pwd_append = st.text_input("Security Key Access", type="password", key="pwd_append", label_visibility="collapsed", placeholder="Enter Master Security Password to Commit")
             with c_save:
-                if st.button("💾 Save Operational Record", use_container_width=True):
+                if st.button("Save Operational Record", use_container_width=True):
                     if pwd_append == "12345678":
                         db_dict = {
                             "Date": [log_date_str], 
                             "Sea Water Upper": [get_v('sw_upper')], 
                             "Sea Water Lower": [get_v('sw_lower')],
                             "Sea Water Feed": [ops_data['SW Total']], 
+                            "Sea Water Pressure": [get_v('sw_press')],
                             "Brine Water Return": [ops_data['Brine Return']], 
                             "Desal production": [ops_data['Desal']], 
                             "LP Steam consumption": [ops_data['Steam']],
+                            "LP Steam Pressure": [get_v('stm_press')],
                             "Condensate Return": [get_v('cond_flow')], 
                             "condensate temp": [get_v('cond_temp')],
+                            "Condensate Conductivity": [get_v('cond_cond')],
                             "1st Effect Vapour Temp": [get_v('mra_t1')], 
                             "1st effect brine temp": [get_v('mra_bt1')], 
                             "11th Effect Brine Temp": [get_v('brine_11')],
@@ -781,10 +861,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "Delta T": [ops_data['dt_1st']], 
                             "1st effect vapour pressure": [get_v('mra_press')], 
                             "Brine Discharge Temp": [get_v('brine_out_t')], 
+                            "Brine Discharge Pressure": [get_v('brine_press')],
                             "Sea Water cond I/L temp": [get_v('sw_in_t')], 
                             "Sea Water Condenser O/L Temp": [get_v('sw_out_t')], 
                             "CW supply": [get_v('cw_supply')], 
                             "CW Return": [get_v('cw_return')], 
+                            "CW Flow": [get_v('cw_flow')],
                             "Gross production": [ops_data['Gross Prod']],
                             "GOR": [round(ops_data['GOR'], 2)], 
                             "Overall HTC": [round(ops_data['htc_overall'], 2)], 
@@ -803,45 +885,45 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         
                         new_log = pd.DataFrame(db_dict)
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
-                        save_database(db_conn, st.session_state.daily_logs)
-                        st.success("✅ Operational record successfully integrated into file engine!")
+                        save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                        st.success("Operational record successfully integrated into file engine!")
                     elif pwd_append != "": 
-                        st.error("❌ Master verification credential failed.")
+                        st.error("Master verification credential failed.")
             with c_export:
-                word_file = generate_comprehensive_report(log_date, ops_data, sor_df, water_data, chem_data, mra_data, get_v('skip_wq'), get_v('remarks'))
-                st.download_button("📄 Export Word Document (.docx)", data=word_file, file_name=f"MED4_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                word_file = generate_comprehensive_report(log_date, ops_data, sor_export_dfs, water_data, chem_data, mra_data, get_v('skip_wq'), get_v('remarks'))
+                st.download_button("Export Word Document (.docx)", data=word_file, file_name=f"MED4_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
             with c_csv:
                 csv_file = generate_daily_csv(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, st.session_state.vars)
-                st.download_button("📊 Export Tabular Values (.csv)", data=csv_file, file_name=f"MED4_DataRecord_{log_date_str}.csv", mime="text/csv", use_container_width=True)
+                st.download_button("Export Tabular Values (.csv)", data=csv_file, file_name=f"MED4_DataRecord_{log_date_str}.csv", mime="text/csv", use_container_width=True)
 
         with rep_tabs[1]:
-            st.markdown("#### 📆 Master System Registry Database")
+            st.markdown("#### Master System Registry Database")
             display_cols = [c for c in EXACT_DB_COLUMNS if c in st.session_state.daily_logs.columns]
             edited_db = st.data_editor(st.session_state.daily_logs[display_cols] if not st.session_state.daily_logs.empty else st.session_state.daily_logs, num_rows="dynamic", use_container_width=True)
             c_sync_pwd, c_sync, c_dl = st.columns([2, 1, 1])
             with c_sync_pwd: 
-                pwd_sync = st.text_input("Database Write-Access Password", type="password", key="pwd_sync", label_visibility="collapsed", placeholder="🔑 Enter Database Master Password to Save Modifications")
+                pwd_sync = st.text_input("Database Write-Access Password", type="password", key="pwd_sync", label_visibility="collapsed", placeholder="Enter Database Master Password to Save Modifications")
             with c_sync:
-                if st.button("☁️ Synchronize Registry", use_container_width=True):
+                if st.button("Synchronize Registry", use_container_width=True):
                     if pwd_sync == "12345678":
                         st.session_state.daily_logs = edited_db
-                        save_database(db_conn, st.session_state.daily_logs)
-                        st.success("✅ Master registry records updated successfully!")
+                        save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                        st.success("Master registry records updated successfully!")
                     else: 
-                        st.error("❌ System modification credentials failed.")
+                        st.error("System modification credentials failed.")
             with c_dl:
-                st.download_button("📥 Download Database Offline Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_MasterRegistry_Backup.csv", mime='text/csv', use_container_width=True)
+                st.download_button("Download Database Offline Backup", data=st.session_state.daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"MED4_MasterRegistry_Backup.csv", mime='text/csv', use_container_width=True)
 
             st.divider()
-            st.markdown("#### 📊 Aggregated Monthly Performance Generator")
+            st.markdown("#### Aggregated Monthly Performance Generator")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                 if not month_data.empty:
-                    if st.button("📄 Compile and Generate Monthly Summary (.docx)", use_container_width=True):
+                    if st.button("Compile and Generate Monthly Summary (.docx)", use_container_width=True):
                         monthly_doc = generate_monthly_report(month_data, log_date.strftime('%B'), str(log_date.year))
-                        st.download_button("📥 Download Monthly Briefing Document", data=monthly_doc, file_name=f"MED4_MonthlySummary_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                        st.download_button("Download Monthly Briefing Document", data=monthly_doc, file_name=f"MED4_MonthlySummary_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
@@ -860,7 +942,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 min_date = df_logs['Date'].min().date() if not df_logs['Date'].isnull().all() else datetime.date(2023, 1, 1)
                 max_date = df_logs['Date'].max().date() if not df_logs['Date'].isnull().all() else datetime.date.today()
                 
-                st.markdown("##### 📅 Performance Evaluation Horizon Filter")
+                st.markdown("##### Performance Evaluation Horizon Filter")
                 d_col1, d_col2 = st.columns(2)
                 with d_col1: 
                     start_date = st.date_input("Start Threshold Date", min_date, key="start_d1")
@@ -872,12 +954,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 
                 q_col1, q_col2 = st.columns(2)
                 with q_col1:
-                    st.markdown("#### 📉 Performance Recovery Rate Deviation Trend")
+                    st.markdown("#### Performance Recovery Rate Deviation Trend")
                     if len(df_filtered) > 1:
                         rec_chart = alt.Chart(df_filtered).mark_circle().encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
                         st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red'), use_container_width=True)
                 with q_col2:
-                    st.markdown("#### 🌡️ Seawater Coefficient Degradation Rate (HTC)")
+                    st.markdown("#### Seawater Coefficient Degradation Rate (HTC)")
                     if len(df_filtered) > 1:
                         htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)"))
                         st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall_HTC_Val').mark_line(color='black'), use_container_width=True)
@@ -886,7 +968,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 
                 q_col3, q_col4 = st.columns(2)
                 with q_col3:
-                    st.markdown("#### ⚖️ Actual Mass Output vs Normalized Twin Output")
+                    st.markdown("#### Actual Mass Output vs Normalized Twin Output")
                     if len(df_filtered) > 1:
                         fold_df = df_filtered[['Date', 'Actual Production', 'Predicted Production']].melt('Date', var_name='Metric', value_name='Mass Flow Volume (m³/h)')
                         prod_chart = alt.Chart(fold_df).mark_line(point=True).encode(
@@ -897,7 +979,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         )
                         st.altair_chart(prod_chart, use_container_width=True)
                 with q_col4:
-                    st.markdown("#### 💰 Specific Unit Thermal Efficiency GOR Performance")
+                    st.markdown("#### Specific Unit Thermal Efficiency GOR Performance")
                     if len(df_filtered) > 1:
                         gor_chart = alt.Chart(df_filtered).mark_line(point=True, color='green').encode(
                             x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('GOR_Val:Q', scale=alt.Scale(zero=False), title="Gain Output Ratio"),
@@ -906,7 +988,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR_Val').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
 
         with rep_tabs[3]:
-            st.markdown("#### 📈 Multivariable Cross-Correlation Explorer")
+            st.markdown("#### Multivariable Cross-Correlation Explorer")
             if not st.session_state.daily_logs.empty:
                 exp_df = st.session_state.daily_logs.copy()
                 exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
@@ -944,42 +1026,42 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     # --- TAB 7: AI MODEL SELECTOR ---
     with tabs[7]:
-        st.subheader("🤖 Machine Learning & OLS Calibration Suite")
+        st.subheader("Machine Learning & OLS Calibration Suite")
         if not SKLEARN_INSTALLED:
-            st.error("🚨 Mathematical package 'scikit-learn' is missing from file dependencies.")
+            st.error("Mathematical package 'scikit-learn' is missing from file dependencies.")
         else:
             from sklearn.linear_model import LinearRegression
             from sklearn.ensemble import RandomForestRegressor
             from sklearn.metrics import r2_score
             
-            st.warning("📌 **Ephemeral Server Parameter Caution:** Since this tracking node runs on temporary testing cloud containers, manual machine-learning logic selection targets revert back to historical OLS baseline models after inactive shutdown flags are generated. Selection options remain permanently hardlocked upon local internal node integration.")
-            st.markdown("### 💾 Manage Baseline Evaluation Multipliers")
+            st.warning("Ephemeral Server Parameter Caution: Since this tracking node runs on temporary testing cloud containers, manual machine-learning logic selection targets revert back to historical OLS baseline models after inactive shutdown flags are generated. Selection options remain permanently hardlocked upon local internal node integration.")
+            st.markdown("### Manage Baseline Evaluation Multipliers")
             st.markdown(f"**Current Evaluator Logic Subroutine:** `{model_type}`")
             c_reset, _ = st.columns([1, 1])
             with c_reset:
-                if st.button("🔄 Execute Subroutine Calibration Factory Reset", use_container_width=True):
+                if st.button("Execute Subroutine Calibration Factory Reset", use_container_width=True):
                     st.session_state.mra_coef = MRA_COEF_2014.copy()
-                    save_config(db_conn, st.session_state.mra_coef)
-                    st.success("✅ Baseline parameters successfully reverted back to original OLS multipliers!")
+                    save_config(db_conn, st.session_state.mra_coef, LOCAL_CONFIG_FILE)
+                    st.success("Baseline parameters successfully reverted back to original OLS multipliers!")
                     time.sleep(1.5)
                     st.rerun()
 
             st.divider()
-            st.markdown("### 📊 Multi-Variable Predictive Optimization Logic Model Builder")
+            st.markdown("### Multi-Variable Predictive Optimization Logic Model Builder")
             st.markdown("Upload plant calibration verification matrices to evaluate structural variations between standard linear regression loops and active tree configurations.")
             
             req_cols = ["Date", "Gross production", "1st effect vapour pressure", "1st Effect Vapour Temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Anti_PPM"]
             template_df = pd.DataFrame(columns=req_cols)
-            st.download_button(label="1️⃣ Download Standard Structural Training Template File", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_CalibrationTemplate.csv', mime='text/csv')
+            st.download_button(label="Download Standard Structural Training Template File", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_CalibrationTemplate.csv', mime='text/csv')
             
             st.divider()
-            uploaded_file = st.file_uploader("2️⃣ Inject Completed Optimization Dataset", type=["csv"], key="mra_trainer")
+            uploaded_file = st.file_uploader("Inject Completed Optimization Dataset", type=["csv"], key="mra_trainer")
             
             if uploaded_file is not None:
                 try:
                     df_train = pd.read_csv(uploaded_file)
                     if not all(col in df_train.columns for col in req_cols): 
-                        st.error(f"❌ Structural training template verification failed due to parameter column omissions.")
+                        st.error(f"Structural training template verification failed due to parameter column omissions.")
                     else:
                         for col in req_cols:
                             if col != "Date":
@@ -987,7 +1069,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                     df_train[col] = pd.to_numeric(df_train[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                         
                         df_train = df_train.dropna(subset=[c for c in req_cols if c != "Date"])
-                        st.success(f"✅ Training Initialized successfully utilizing {len(df_train)} localized validation rows.")
+                        st.success(f"Training Initialized successfully utilizing {len(df_train)} localized validation rows.")
                         
                         if len(df_train) > 0:
                             X = df_train[["1st effect vapour pressure", "1st Effect Vapour Temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Anti_PPM"]]
@@ -1004,7 +1086,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 model_xgb = xgb.XGBRegressor(n_estimators=100, random_state=42).fit(X, Y)
                                 r2_xgb = r2_score(Y, model_xgb.predict(X))
                             
-                            st.markdown("### 🏆 Algorithm Accuracy Evaluation Matrix")
+                            st.markdown("### Algorithm Accuracy Evaluation Matrix")
                             m1, m2, m3 = st.columns(3)
                             m1.metric("1. Linear OLS Fit (R² Coefficient)", f"{r2_ols * 100:.2f}%")
                             m2.metric("2. Random Forest Tree Logic (R²)", f"{r2_rf * 100:.2f}%")
@@ -1024,14 +1106,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             
                             st.dataframe(pd.DataFrame(comp_dict).style.format(precision=4), use_container_width=True, hide_index=True)
                             
-                            st.markdown("### 💾 Commit & Lock Mathematical Subroutine Target")
+                            st.markdown("### Commit & Lock Mathematical Subroutine Target")
                             opts = ["OLS (Linear)", "Random Forest"]
                             if XGB_INSTALLED: 
                                 opts.append("XGBoost")
                                 
                             selected_model = st.radio("Configure Active Live Prediction Logic Block:", opts)
                             
-                            if st.button("🔥 Confirm and Hardlock Active Operational Subroutine", type="primary", use_container_width=True):
+                            if st.button("Confirm and Hardlock Active Operational Subroutine", type="primary", use_container_width=True):
                                 if selected_model == "OLS (Linear)":
                                     new_coefs = {
                                         "model_type": "OLS", "Intercept": float(model_ols.intercept_),
@@ -1041,7 +1123,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                         "Anti_PPM": float(model_ols.coef_[6])
                                     }
                                     st.session_state.mra_coef = new_coefs
-                                    save_config(db_conn, new_coefs)
+                                    save_config(db_conn, new_coefs, LOCAL_CONFIG_FILE)
                                 else:
                                     target_m = model_rf if selected_model == "Random Forest" else model_xgb
                                     joblib.dump(target_m, AI_MODEL_FILE)
@@ -1053,23 +1135,23 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                         "Anti_PPM": float(target_m.feature_importances_[6])
                                     }
                                     st.session_state.mra_coef = ai_coefs
-                                    save_config(db_conn, ai_coefs)
+                                    save_config(db_conn, ai_coefs, LOCAL_CONFIG_FILE)
                                     
-                                st.success(f"✅ System evaluation subroutine locked into {selected_model} logic sequence.")
+                                st.success(f"System evaluation subroutine locked into {selected_model} logic sequence.")
                                 time.sleep(1.5)
                                 st.rerun()
                         else: 
-                            st.error("🚨 Structural data parsing produced empty float ranges inside parameters.")
+                            st.error("Structural data parsing produced empty float ranges inside parameters.")
                 except Exception as e: 
                     st.error(f"Structural data matrix crash: {e}")
 
     # --- TAB 8: BULK EXCEL UPLOADER PANEL ---
     with tabs[8]:
         st.subheader("Bulk Data Upload")
-        st.markdown("Upload your monthly Excel/CSV logs here.")
+        st.markdown("Upload your monthly Excel/CSV logs directly. The system utilizes the exact layout from the native operational registry.")
         
-        bulk_template = pd.DataFrame(columns=EXACT_DB_COLUMNS)
-        st.download_button(label="Download Template File", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='MED4_Bulk_Template.csv', mime='text/csv')
+        bulk_template = pd.DataFrame(columns=RIL_EXCEL_HEADERS)
+        st.download_button(label="Download Exact RIL Matrix Schema Template", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='MED4_Bulk_Template.csv', mime='text/csv')
         
         st.divider()
         bulk_file = st.file_uploader("Upload CSV Data File", type=["csv"], key="bulk_uploader")
@@ -1077,16 +1159,43 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         if bulk_file is not None:
             try:
                 df_bulk = pd.read_csv(bulk_file)
-                if 'Date (DD/MM/YYYY)' in df_bulk.columns:
-                     df_bulk.rename(columns={'Date (DD/MM/YYYY)': 'Date'}, inplace=True)
+                
+                # Filter out the Unit and TAG metadata rows if present
+                df_bulk = df_bulk[~df_bulk['Parameter'].isin(['Unit', 'TAG'])]
 
-                missing = [c for c in EXACT_DB_COLUMNS if c not in df_bulk.columns]
+                # Map exact Excel Headers to Internal Logic 
+                df_bulk.rename(columns={
+                    'Parameter': 'Date',
+                    'Sea water Upper': 'Sea Water Upper',
+                    'Sea water Lower': 'Sea Water Lower',
+                    'Sea water feed': 'Sea Water Feed',
+                    'Brine return': 'Brine Water Return',
+                    ' Desal Production': 'Desal production',
+                    'LP Steam Consumption': 'LP Steam consumption',
+                    'Condensate return': 'Condensate Return',
+                    'Condensate Temp': 'condensate temp',
+                    "1'st effect vapour Temp": '1st Effect Vapour Temp',
+                    '1st Effect Brine Temp': '1st effect brine temp',
+                    '(1st effect vapour-1st effect brine) Delta Temp': 'Delta T',
+                    '1st Effect Vapour pres': '1st effect vapour pressure',
+                    'Brine DischargeTemp': 'Brine Discharge Temp',
+                    'Sea water cond (FFC) I/L temp': 'Sea Water cond I/L temp',
+                    'Sea water cond (FFC) o/L temp': 'Sea Water Condenser O/L Temp',
+                    'CW (FCC) supply': 'CW supply',
+                    'CW (FCC) return': 'CW Return',
+                    'Gross desal water production': 'Gross production',
+                    '11 effect brine Temp': '11th Effect Brine Temp',
+                    'Overall delta T(1st eff brine temp - 11th eff brine temp)': 'Overall Delta T',
+                    'Antiscalant residual': 'Anti_PPM'
+                }, inplace=True)
+
+                missing = [c for c in ['Date', 'Sea Water Upper', 'Sea Water Feed', 'Brine Water Return', 'Desal production', 'LP Steam consumption'] if c not in df_bulk.columns]
                 if missing:
-                    st.warning(f"Missing columns will be auto-filled: {', '.join(missing)}")
+                    st.warning(f"Missing core columns will be auto-filled: {', '.join(missing)}")
                     for c in missing: 
                         df_bulk[c] = np.nan
                 
-                num_cols = [c for c in EXACT_DB_COLUMNS if c not in ["Date", "Remarks"]]
+                num_cols = [c for c in df_bulk.columns if c not in ["Date", "Remarks", "Unnamed: 27", "Unnamed: 28"]]
                 for col in num_cols:
                     if col in df_bulk.columns:
                         df_bulk[col] = pd.to_numeric(df_bulk[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
@@ -1098,18 +1207,16 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         ['1st effect vapour pressure', '1st Effect Vapour Temp', 'Sea Water Upper', '1st effect brine temp', 'Brine Water Return', 'LP Steam consumption'],
                         [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75]
                     ):
-                        df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
+                        if col_name in df_bulk.columns:
+                            df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
                     
-                    df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
-                    df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
-                    
-                    for cat in ['Feed', 'Product']:
-                        for param, details in WATER_SPECS[cat].items():
-                            df_bulk[details['db_col']] = df_bulk[details['db_col']].fillna(details['avg'])
+                    if 'Anti_PPM' in df_bulk.columns: df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
+                    if 'Gross production' in df_bulk.columns: df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
                     
                     df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
-                    df_bulk['Delta T'] = df_bulk['Delta T'].fillna(df_bulk['1st Effect Vapour Temp'] - df_bulk['1st effect brine temp'])
+                    if 'Delta T' not in df_bulk.columns or df_bulk['Delta T'].isnull().all():
+                        df_bulk['Delta T'] = df_bulk['1st Effect Vapour Temp'] - df_bulk['1st effect brine temp']
 
                     if model_type == "OLS":
                         df_bulk['Predicted'] = (
@@ -1132,57 +1239,62 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             df_bulk['Predicted'] = 0.0
                             
                     df_bulk['Residual'] = df_bulk['Gross production'] - df_bulk['Predicted']
-                    df_bulk['Sea Water cond I/L temp'] = df_bulk['Sea Water cond I/L temp'].fillna(30.0)
-                    df_bulk['Brine Discharge Temp'] = df_bulk['Brine Discharge Temp'].fillna(41.0)
-                    df_bulk['Sea Water Feed'] = df_bulk['Sea Water Feed'].fillna(2100.0)
+                    
+                    if 'Sea Water cond I/L temp' in df_bulk.columns: df_bulk['Sea Water cond I/L temp'] = df_bulk['Sea Water cond I/L temp'].fillna(30.0)
+                    if 'Brine Discharge Temp' in df_bulk.columns: df_bulk['Brine Discharge Temp'] = df_bulk['Brine Discharge Temp'].fillna(41.0)
+                    if 'Sea Water Feed' in df_bulk.columns: df_bulk['Sea Water Feed'] = df_bulk['Sea Water Feed'].fillna(2100.0)
                     
                     area_overall = get_v('area_overall')
                     dt_overall = df_bulk['1st Effect Vapour Temp'] - df_bulk['Brine Discharge Temp']
-                    q_overall = df_bulk['Sea Water Feed'] * (df_bulk['Brine Discharge Temp'] - df_bulk['Sea Water cond I/L temp']) * 0.930
-                    df_bulk['Overall HTC'] = np.where(dt_overall > 0, (q_overall / (area_overall * dt_overall)) * 1000, 0)
+                    q_overall = (df_bulk['LP Steam consumption'] * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
+                    df_bulk['Overall HTC'] = np.where(dt_overall > 0, (q_overall / (area_overall * dt_overall)), 0)
 
                     area_1st = get_v('area_1st')
-                    brine_avg = 55.0 
-                    q_1st = df_bulk['Sea Water Upper'] * (df_bulk['1st effect brine temp'] - brine_avg) * 0.930
-                    df_bulk['1st Effect HTC'] = np.where(df_bulk['Delta T'] > 0, (q_1st / (area_1st * df_bulk['Delta T'])) * 1000, 0)
+                    q_1st = q_overall 
+                    df_bulk['1st Effect HTC'] = np.where(df_bulk['Delta T'] > 0, (q_1st / (area_1st * df_bulk['Delta T'])), 0)
                     
                     db_ready_dict = {
                         "Date": df_bulk['Date_Clean'], 
                         "Sea Water Upper": df_bulk['Sea Water Upper'], 
-                        "Sea Water Lower": df_bulk['Sea Water Lower'].fillna(0),
+                        "Sea Water Lower": df_bulk.get('Sea Water Lower', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Sea Water Feed": df_bulk['Sea Water Feed'], 
+                        "Sea Water Pressure": df_bulk.get('Sea Water Pressure', pd.Series(1.7, index=df_bulk.index)).fillna(1.7),
                         "Brine Water Return": df_bulk['Brine Water Return'],
                         "Desal production": df_bulk['Desal production'].fillna(0), 
                         "LP Steam consumption": df_bulk['LP Steam consumption'],
-                        "Condensate Return": df_bulk['Condensate Return'].fillna(0), 
-                        "condensate temp": df_bulk['condensate temp'].fillna(0),
+                        "LP Steam Pressure": df_bulk.get('LP Steam Pressure', pd.Series(4.3, index=df_bulk.index)).fillna(4.3),
+                        "Condensate Return": df_bulk.get('Condensate Return', pd.Series(0, index=df_bulk.index)).fillna(0), 
+                        "condensate temp": df_bulk.get('condensate temp', pd.Series(0, index=df_bulk.index)).fillna(0),
+                        "Condensate Conductivity": df_bulk.get('Condensate Conductivity', pd.Series(3.0, index=df_bulk.index)).fillna(3.0),
                         "1st Effect Vapour Temp": df_bulk['1st Effect Vapour Temp'], 
                         "1st effect brine temp": df_bulk['1st effect brine temp'],
-                        "11th Effect Brine Temp": df_bulk['11th Effect Brine Temp'].fillna(43.0),
-                        "Feed Temp to Cold Group": df_bulk['Feed Temp to Cold Group'].fillna(37.0),
+                        "11th Effect Brine Temp": df_bulk.get('11th Effect Brine Temp', pd.Series(43.0, index=df_bulk.index)).fillna(43.0),
+                        "Feed Temp to Cold Group": df_bulk.get('Feed Temp to Cold Group', pd.Series(37.0, index=df_bulk.index)).fillna(37.0),
                         "Delta T": df_bulk['Delta T'], 
                         "1st effect vapour pressure": df_bulk['1st effect vapour pressure'],
                         "Brine Discharge Temp": df_bulk['Brine Discharge Temp'],
+                        "Brine Discharge Pressure": df_bulk.get('Brine Discharge Pressure', pd.Series(1.3, index=df_bulk.index)).fillna(1.3),
                         "Sea Water cond I/L temp": df_bulk['Sea Water cond I/L temp'], 
-                        "Sea Water Condenser O/L Temp": df_bulk['Sea Water Condenser O/L Temp'].fillna(0),
-                        "CW supply": df_bulk['CW supply'].fillna(0), 
-                        "CW Return": df_bulk['CW Return'].fillna(0),
+                        "Sea Water Condenser O/L Temp": df_bulk.get('Sea Water Condenser O/L Temp', pd.Series(0, index=df_bulk.index)).fillna(0),
+                        "CW supply": df_bulk.get('CW supply', pd.Series(0, index=df_bulk.index)).fillna(0), 
+                        "CW Return": df_bulk.get('CW Return', pd.Series(0, index=df_bulk.index)).fillna(0),
+                        "CW Flow": df_bulk.get('CW Flow', pd.Series(2726.0, index=df_bulk.index)).fillna(2726.0),
                         "Gross production": df_bulk['Gross production'],
                         "GOR": df_bulk['GOR'].round(2), 
                         "Overall HTC": df_bulk['Overall HTC'].round(2), 
                         "1st Effect HTC": df_bulk['1st Effect HTC'].round(2),
                         "Residual": df_bulk['Residual'].round(1),
-                        "Antiscalant (kg)": df_bulk['Antiscalant (kg)'].fillna(0), 
-                        "Antifoam (kg)": df_bulk['Antifoam (kg)'].fillna(0),
+                        "Antiscalant (kg)": df_bulk.get('Antiscalant (kg)', pd.Series(0, index=df_bulk.index)).fillna(0), 
+                        "Antifoam (kg)": df_bulk.get('Antifoam (kg)', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Anti_PPM": df_bulk['Anti_PPM'], 
-                        "Remarks": df_bulk['Remarks'].fillna(""),
+                        "Remarks": df_bulk.get('Remarks', pd.Series("", index=df_bulk.index)).fillna(""),
                         "Area_1st": area_1st, 
                         "Area_Overall": area_overall
                     }
                     
                     for cat in ['Feed', 'Product']:
                         for param, details in WATER_SPECS[cat].items(): 
-                            db_ready_dict[details['db_col']] = df_bulk[details['db_col']]
+                            db_ready_dict[details['db_col']] = df_bulk.get(details['db_col'], pd.Series(details['avg'], index=df_bulk.index)).fillna(details['avg'])
                             
                     db_ready_df = pd.DataFrame(db_ready_dict)
                     
@@ -1199,11 +1311,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
                                 st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                                 save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
-                                st.success("✅ Data Synced!")
+                                st.success("Data Synced!")
                                 time.sleep(1.5)
                                 st.rerun()
                             elif pwd_bulk != "": 
-                                st.error("❌ Incorrect Password.")
+                                st.error("Incorrect Password.")
                 else: 
                     st.error("No valid data found in CSV.")
             except Exception as e: 
