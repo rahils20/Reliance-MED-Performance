@@ -1238,7 +1238,13 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     if 'Anti_PPM' in df_bulk.columns: df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
                     if 'Gross production' in df_bulk.columns: df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
                     
-                    df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+                    # Try explicit format like 1-Jun-26 first, then fallback to robust day-first parsing
+                    df_bulk['Date_Clean'] = pd.to_datetime(
+                        df_bulk['Date'], format='%d-%b-%y', errors='coerce'
+                    ).fillna(
+                        pd.to_datetime(df_bulk['Date'], dayfirst=True, format='mixed', errors='coerce')
+                    ).dt.strftime('%Y-%m-%d')
+
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
                     if 'Delta T' not in df_bulk.columns or df_bulk['Delta T'].isnull().all():
                         df_bulk['Delta T'] = df_bulk['1st Effect Vapour Temp'] - df_bulk['1st effect brine temp']
