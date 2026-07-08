@@ -74,11 +74,12 @@ RIL_EXCEL_HEADERS = [
     'Parameter', 'Sea water Upper', 'Sea water Lower', 'Sea water feed', 'Brine return', 
     ' Desal Production', 'LP Steam Consumption', 'Condensate return', 'Condensate Temp', 
     "1'st effect vapour Temp", '1st Effect Brine Temp', '(1st effect vapour-1st effect brine) Delta Temp', 
-    '1st Effect Vapour pres', 'Brine DischargeTemp', 'Sea water cond (FFC) I/L temp', 
+    '1st Effect Vapour pres', 'Steam Inlet Temp', 'Brine DischargeTemp', 'Sea water cond (FFC) I/L temp', 
     'Sea water cond (FFC) o/L temp', 'CW (FCC) supply', 'CW (FCC) return', 
     'Gross desal water production', 'Recovery', 'Conversion (Product to Feed)', 'Gain Output Ratio', 
     '11 effect brine Temp', 'Overall delta T(1st eff brine temp - 11th eff brine temp)', 
-    'Steam Economy (Steam/Desal)', 'Antiscalant residual', 'Remarks'
+    'Steam Economy (Steam/Desal)', 'Antiscalant residual (Cold group)', 'Antiscalant residual (Hot group)', 
+    'Antiscalant residual (Brine)', 'Remarks'
 ]
 
 DEFAULTS = {
@@ -1162,8 +1163,22 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             try:
                 df_bulk = pd.read_csv(bulk_file)
                 
-                # Filter out the Unit and TAG metadata rows if present
-                df_bulk = df_bulk[~df_bulk['Parameter'].isin(['Unit', 'TAG'])]
+                # Filter out the Design, Unit, and TAG metadata rows if present
+                df_bulk = df_bulk[~df_bulk['Parameter'].isin(['Design', 'Unit', 'TAG'])]
+
+                # Fix Antiscalant columns dynamically based on native CSV vs Template Upload
+                if 'Antiscalant residual' in df_bulk.columns:
+                    df_bulk.rename(columns={
+                        'Antiscalant residual': 'Anti_PPM',
+                        'Unnamed: 27': 'Anti_Hot',
+                        'Unnamed: 28': 'Anti_Brine'
+                    }, inplace=True)
+                else:
+                    df_bulk.rename(columns={
+                        'Antiscalant residual (Cold group)': 'Anti_PPM',
+                        'Antiscalant residual (Hot group)': 'Anti_Hot',
+                        'Antiscalant residual (Brine)': 'Anti_Brine'
+                    }, inplace=True)
 
                 # Map exact Excel Headers to Internal Logic 
                 df_bulk.rename(columns={
@@ -1180,6 +1195,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     '1st Effect Brine Temp': '1st effect brine temp',
                     '(1st effect vapour-1st effect brine) Delta Temp': 'Delta T',
                     '1st Effect Vapour pres': '1st effect vapour pressure',
+                    'Steam Inlet Temp': 'Steam inlet temp',
                     'Brine DischargeTemp': 'Brine Discharge Temp',
                     'Sea water cond (FFC) I/L temp': 'Sea Water cond I/L temp',
                     'Sea water cond (FFC) o/L temp': 'Sea Water Condenser O/L Temp',
@@ -1187,8 +1203,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     'CW (FCC) return': 'CW Return',
                     'Gross desal water production': 'Gross production',
                     '11 effect brine Temp': '11th Effect Brine Temp',
-                    'Overall delta T(1st eff brine temp - 11th eff brine temp)': 'Overall Delta T',
-                    'Antiscalant residual': 'Anti_PPM'
+                    'Overall delta T(1st eff brine temp - 11th eff brine temp)': 'Overall Delta T'
                 }, inplace=True)
 
                 missing = [c for c in ['Date', 'Sea Water Upper', 'Sea Water Feed', 'Brine Water Return', 'Desal production', 'LP Steam consumption'] if c not in df_bulk.columns]
