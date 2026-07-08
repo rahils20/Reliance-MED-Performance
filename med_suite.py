@@ -892,8 +892,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             with c_export:
                 word_file = generate_comprehensive_report(log_date, ops_data, sor_export_dfs, water_data, chem_data, mra_data, get_v('skip_wq'), get_v('remarks'))
                 st.download_button("Export Word Document (.docx)", data=word_file, file_name=f"MED4_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+            
             with c_csv:
-                csv_file = generate_daily_csv(log_date, ops_data, display_effect_df, water_data, chem_data, mra_data, st.session_state.vars)
+                # Removed 'display_effect_df' from the function call
+                csv_file = generate_daily_csv(log_date, ops_data, water_data, chem_data, mra_data, st.session_state.vars)
                 st.download_button("Export Tabular Values (.csv)", data=csv_file, file_name=f"MED4_DataRecord_{log_date_str}.csv", mime="text/csv", use_container_width=True)
 
         with rep_tabs[1]:
