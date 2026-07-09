@@ -224,9 +224,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         if k not in st.session_state.vars: st.session_state.vars[k] = v
 
     def sync_var(var_name, source_key):
-    st.session_state.vars[var_name] = st.session_state[source_key]
-    for target_key in SYNC_MAP.get(var_name, []):  # <--- FIX HERE
-        if target_key != source_key: st.session_state[target_key] = st.session_state[source_key]
+        st.session_state.vars[var_name] = st.session_state[source_key]
+        for target_key in SYNC_MAP.get(var_name, []):  # <--- FIX HERE
+            if target_key != source_key: st.session_state[target_key] = st.session_state[source_key]
 
     def get_v(var_name): return st.session_state.vars[var_name]
 
