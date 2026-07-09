@@ -97,7 +97,16 @@ def load_database(db, target_file=LOCAL_DB_FILE):
 
 def save_database(db, df, target_file=LOCAL_DB_FILE):
     if 'Date' in df.columns:
-        df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d')
+        # By this point 'Date' has already been normalized to unambiguous ISO
+        # YYYY-MM-DD by the calling code. Parse it as ISO first so we never
+        # re-mangle an already-clean date. Re-parsing a clean ISO string with
+        # dayfirst=True was swapping the month/day components (e.g. 2026-07-09
+        # -> 2026-09-07, and 2026-01-15 -> NaT), which silently dropped every
+        # date with day-of-month > 12. Only fall back to a dayfirst guess for
+        # any leftover string that isn't already ISO.
+        parsed = pd.to_datetime(df['Date'], format='%Y-%m-%d', errors='coerce')
+        parsed = parsed.fillna(pd.to_datetime(df['Date'], errors='coerce', dayfirst=True))
+        df['Date'] = parsed.dt.strftime('%Y-%m-%d')
     df = df.fillna(0)
     if db["type"] == "cloud" and target_file == LOCAL_DB_FILE:
         try:
