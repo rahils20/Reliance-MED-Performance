@@ -14,6 +14,16 @@ from docx import Document
 from docx.shared import RGBColor, Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+def standardize_dates(date_series):
+    """Robust master parser for multi-format date registries. 
+    Intercepts any format (1-Apr-26, 2026-04-01, 01/04/2026) and aligns them."""
+    parsed = pd.to_datetime(date_series, format='%d-%b-%y', errors='coerce')
+    parsed = parsed.fillna(pd.to_datetime(date_series, format='%d-%b-%Y', errors='coerce'))
+    parsed = parsed.fillna(pd.to_datetime(date_series, format='%Y-%m-%d', errors='coerce'))
+    parsed = parsed.fillna(pd.to_datetime(date_series, format='%d/%m/%Y', errors='coerce'))
+    parsed = parsed.fillna(pd.to_datetime(date_series, errors='coerce'))
+    return parsed
+
 # MED GLOBAL CONSTANTS
 MRA_COEF_2014 = {
     "model_type": "OLS",
@@ -225,7 +235,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     def sync_var(var_name, source_key):
         st.session_state.vars[var_name] = st.session_state[source_key]
-        for target_key in SYNC_MAP.get(var_name, []): # KEY ERROR FIX: Safely checks the dictionary
+        for target_key in SYNC_MAP.get(var_name, []):
             if target_key != source_key: st.session_state[target_key] = st.session_state[source_key]
 
     def get_v(var_name): return st.session_state.vars[var_name]
@@ -260,8 +270,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
-            # ROW BY ROW FIX: Forces Pandas to evaluate every single row format dynamically
-            db_dates = st.session_state.daily_logs['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce')).dt.strftime('%Y-%m-%d').values
+            # CORE FIX: Standardize all registry dates right now, extract as safe strings
+            db_dates_parsed = standardize_dates(st.session_state.daily_logs['Date'])
+            db_dates = db_dates_parsed.dt.strftime('%Y-%m-%d').values
+            
             if log_date_str in db_dates:
                 row_idx = np.where(db_dates == log_date_str)[0][-1]
                 row = st.session_state.daily_logs.iloc[row_idx]
@@ -876,6 +888,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         
                         new_log = pd.DataFrame(db_dict)
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
+                        
+                        # MASTER DATE FIX: Standardize before dropping duplicates to eradicate "ghost" format duplication
+                        st.session_state.daily_logs['Date'] = standardize_dates(st.session_state.daily_logs['Date']).dt.strftime('%Y-%m-%d')
+                        st.session_state.daily_logs = st.session_state.daily_logs.dropna(subset=['Date'])
                         st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                         
                         save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
@@ -902,7 +918,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             with c_sync:
                 if st.button("Synchronize Registry", use_container_width=True):
                     if pwd_sync == "12345678":
-                        st.session_state.daily_logs = edited_db
+                        # MASTER DATE FIX: Standardize manually edited database
+                        edited_db['Date'] = standardize_dates(edited_db['Date']).dt.strftime('%Y-%m-%d')
+                        st.session_state.daily_logs = edited_db.dropna(subset=['Date']).drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
+                        
                         save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
                         st.success("Master registry records updated successfully!")
                     else: 
@@ -915,8 +934,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 
-                # DATE FIX: Row by row evaluation and instantly drop NaTs
-                df_logs['Date'] = df_logs['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce'))
+                df_logs['Date'] = standardize_dates(df_logs['Date'])
                 df_logs = df_logs.dropna(subset=['Date'])
                 
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
@@ -929,8 +947,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
                 
-                # DATE FIX: Evaluate row-by-row and DROP corrupted/blank dates so charts don't crash
-                df_logs['Date'] = df_logs['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce'))
+                df_logs['Date'] = standardize_dates(df_logs['Date'])
                 df_logs = df_logs.dropna(subset=['Date'])
                 
                 if not df_logs.empty:
@@ -998,8 +1015,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             if not st.session_state.daily_logs.empty:
                 exp_df = st.session_state.daily_logs.copy()
                 
-                # DATE FIX: Same row-by-row mapping to prevent graph crash
-                exp_df['Date'] = exp_df['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce'))
+                exp_df['Date'] = standardize_dates(exp_df['Date'])
                 exp_df = exp_df.dropna(subset=['Date'])
                 
                 if not exp_df.empty:
@@ -1237,8 +1253,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     if 'Anti_PPM' in df_bulk.columns: df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
                     if 'Gross production' in df_bulk.columns: df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
                     
-                    # DATE FIX: Aggressive mixed parsing and standardization
-                    df_bulk['Date_Clean'] = df_bulk['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce')).dt.strftime('%Y-%m-%d')
+                    # MASTER DATE FIX: Aggressively standardize raw CSV string and dump bad lines BEFORE adding to DB.
+                    df_bulk['Date_Clean'] = standardize_dates(df_bulk['Date']).dt.strftime('%Y-%m-%d')
+                    df_bulk = df_bulk.dropna(subset=['Date_Clean'])
                     
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
                     if 'Delta T' not in df_bulk.columns or df_bulk['Delta T'].isnull().all():
@@ -1335,7 +1352,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         if st.button("Append to Database", use_container_width=True):
                             if pwd_bulk == "12345678":
                                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
+                                
+                                # MASTER DATE FIX: Standardize database once more before doing the final duplicate drop.
+                                st.session_state.daily_logs['Date'] = standardize_dates(st.session_state.daily_logs['Date']).dt.strftime('%Y-%m-%d')
+                                st.session_state.daily_logs = st.session_state.daily_logs.dropna(subset=['Date'])
                                 st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
+                                
                                 save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
                                 st.success("Data Synced!")
                                 time.sleep(1.5)
