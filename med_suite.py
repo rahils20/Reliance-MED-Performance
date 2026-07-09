@@ -225,7 +225,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     def sync_var(var_name, source_key):
         st.session_state.vars[var_name] = st.session_state[source_key]
-        for target_key in SYNC_MAP.get(var_name, []):  # <--- FIX HERE
+        for target_key in SYNC_MAP.get(var_name, []): # KEY ERROR FIX: Safely checks the dictionary
             if target_key != source_key: st.session_state[target_key] = st.session_state[source_key]
 
     def get_v(var_name): return st.session_state.vars[var_name]
@@ -260,9 +260,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
-            db_dates = pd.to_datetime(st.session_state.daily_logs['Date'], format='mixed', dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d').values
+            # ROW BY ROW FIX: Forces Pandas to evaluate every single row format dynamically
+            db_dates = st.session_state.daily_logs['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce')).dt.strftime('%Y-%m-%d').values
             if log_date_str in db_dates:
-                # FIX 1: Access the [-1] index to pull the most recent duplicate date row
                 row_idx = np.where(db_dates == log_date_str)[0][-1]
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
@@ -312,7 +312,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 pass 
                 if loaded_vars: 
                     st.sidebar.success(f"Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
-                    st.rerun()  # FIX 2: Trigger an immediate UI refresh so the entire dashboard updates
+                    st.rerun() 
 
     # Display MED-4 Title
     st.title("MED-4 Management Suite")
@@ -350,7 +350,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]]
 
-    # --- UPDATED HTC CALCULATION METHODOLOGY ---
     ops_data['q_1st'] = (ops_data['Steam'] * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
     ops_data['q_overall'] = ops_data['q_1st'] 
 
@@ -594,7 +593,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             except:
                 return ''
 
-        # A) SEA WATER
         st.markdown("### A) SEA WATER")
         df_a = pd.DataFrame([
             {"Parameter": "Temp.", "UOM": "°C", "Design": "19-35", "SOR Base": 29.0, "Actual": get_v('sw_in_t'), "Difference": get_v('sw_in_t') - 29.0},
@@ -603,7 +601,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_a.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        # B) LP STEAM
         st.markdown("### B) LP STEAM")
         df_b = pd.DataFrame([
             {"Parameter": "Total Flow (Thermocompressor + NCG)", "UOM": "Tonne/hr", "Design": "97.5", "SOR Base": 76.94, "Actual": ops_data['Steam'], "Difference": ops_data['Steam'] - 76.94},
@@ -612,7 +609,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_b.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
 
-        # C) COOLING WATER
         st.markdown("### C) COOLING WATER")
         df_c = pd.DataFrame([
             {"Parameter": "Flow", "UOM": "m3/hr", "Design": "4200", "SOR Base": 2726.0, "Actual": get_v('cw_flow'), "Difference": get_v('cw_flow') - 2726.0},
@@ -621,7 +617,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_c.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        # D) DESALINATED WATER
         st.markdown("### D) DESALINATED WATER")
         df_d = pd.DataFrame([
             {"Parameter": "Desal water production", "UOM": "m3/hr", "Design": "1000", "SOR Base": 824.0, "Actual": ops_data['Desal'], "Difference": ops_data['Desal'] - 824.0},
@@ -629,7 +624,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_d.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        # E) BRINE DISCHARGE
         st.markdown("### E) BRINE DISCHARGE")
         df_e = pd.DataFrame([
             {"Parameter": "Flow", "UOM": "m3/hr", "Design": "1400", "SOR Base": 1315.0, "Actual": ops_data['Brine Return'], "Difference": ops_data['Brine Return'] - 1315.0},
@@ -638,7 +632,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_e.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        # F) CONDENSATE RETURN
         st.markdown("### F) CONDENSATE RETURN")
         df_f = pd.DataFrame([
             {"Parameter": "Quantity", "UOM": "m3/hr", "Design": "100", "SOR Base": 127.0, "Actual": get_v('cond_flow'), "Difference": get_v('cond_flow') - 127.0},
@@ -647,7 +640,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_f.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        # H) PLANT CAPACITY DETAILS
         st.markdown("### H) PLANT CAPACITY DETAILS")
         df_h = pd.DataFrame([
             {"Parameter": "Gross desal water production", "UOM": "tph", "Design": "1000", "SOR Base": 873.0, "Actual": ops_data['Gross Prod'], "Difference": ops_data['Gross Prod'] - 873.0},
@@ -664,7 +656,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_h.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.3f}", "Actual": "{:.3f}", "Difference": "{:+.3f}"}), use_container_width=True, hide_index=True)
 
-        # I) CHEMICAL CONSUMPTION
         st.markdown("### I) CHEMICAL CONSUMPTION")
         df_i = pd.DataFrame([
             {"Parameter": "Antiscalant (ID204)/IN-204AS", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5, "Actual": anti_gm_m3, "Difference": anti_gm_m3 - 10.5},
@@ -672,7 +663,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_i.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
         
-        # Package for Export
         sor_export_dfs = {
             "A) SEA WATER": df_a, "B) LP STEAM": df_b, "C) COOLING WATER": df_c, 
             "D) DESALINATED WATER": df_d, "E) BRINE DISCHARGE": df_e, 
@@ -686,7 +676,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### 1st Effect HTC Performance")
-            st.markdown("Calculates scaling specifically inside the hottest effect stage.")
             st.number_input("1st Effect Surface Area (m²)", key="t2_area_1st", on_change=sync_var, args=('area_1st', 't2_area_1st'))
             st.number_input("Sea Water Upper (m³/h)", key="t2_sw_up", on_change=sync_var, args=('sw_upper', 't2_sw_up'))
             st.number_input("1st Effect Vapour Temp (°C)", key="t2_t1", on_change=sync_var, args=('mra_t1', 't2_t1'))
@@ -699,7 +688,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
         with col2:
             st.markdown("### Overall Plant HTC Performance")
-            st.markdown("Calculates averaged baseline fouling rates across all tube banks.")
             st.number_input("Overall Surface Area (m²)", key="t2_area_overall", on_change=sync_var, args=('area_overall', 't2_area_overall'))
             st.number_input("Sea Water Feed (m³/h)", key="t2_sw_tot", on_change=sync_var, args=('sw_total', 't2_sw_tot'))
             st.number_input("Sea Water cond I/L temp (°C)", key="t2_sw_in", on_change=sync_var, args=('sw_in_t', 't2_sw_in'))
@@ -888,14 +876,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         
                         new_log = pd.DataFrame(db_dict)
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
-                        
-                        # FIX 3: Drop duplicates before committing to the master registry
                         st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                         
                         save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
                         st.success("Operational record successfully integrated into file engine!")
                         time.sleep(1.0)
-                        st.rerun()  # FIX 4: Refresh UI on save
+                        st.rerun()  
                     elif pwd_append != "": 
                         st.error("Master verification credential failed.")
             with c_export:
@@ -903,7 +889,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 st.download_button("Export Word Document (.docx)", data=word_file, file_name=f"MED4_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
             
             with c_csv:
-                # Removed 'display_effect_df' from the function call
                 csv_file = generate_daily_csv(log_date, ops_data, water_data, chem_data, mra_data, st.session_state.vars)
                 st.download_button("Export Tabular Values (.csv)", data=csv_file, file_name=f"MED4_DataRecord_{log_date_str}.csv", mime="text/csv", use_container_width=True)
 
@@ -929,8 +914,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.markdown("#### Aggregated Monthly Performance Generator")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', errors='coerce')
+                
+                # DATE FIX: Row by row evaluation and instantly drop NaTs
+                df_logs['Date'] = df_logs['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce'))
                 df_logs = df_logs.dropna(subset=['Date'])
+                
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                 if not month_data.empty:
                     if st.button("Compile and Generate Monthly Summary (.docx)", use_container_width=True):
@@ -940,103 +928,111 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', errors='coerce')
+                
+                # DATE FIX: Evaluate row-by-row and DROP corrupted/blank dates so charts don't crash
+                df_logs['Date'] = df_logs['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce'))
                 df_logs = df_logs.dropna(subset=['Date'])
                 
-                df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Sea Water Feed', 0), errors='coerce')
-                df_logs['Recovery (%)'] = np.where(df_logs['Total SW Feed (m3/h)'] > 0, (pd.to_numeric(df_logs.get('Gross production', 0), errors='coerce') / df_logs['Total SW Feed (m3/h)']) * 100, 0)
-                
-                df_logs['Actual Production'] = pd.to_numeric(df_logs.get('Gross production', 0), errors='coerce')
-                df_logs['Residual_Val'] = pd.to_numeric(df_logs.get('Residual', 0), errors='coerce')
-                df_logs['Predicted Production'] = df_logs['Actual Production'] - df_logs['Residual_Val']
-                df_logs['Overall_HTC_Val'] = pd.to_numeric(df_logs.get('Overall HTC', 0), errors='coerce')
-                df_logs['GOR_Val'] = pd.to_numeric(df_logs.get('GOR', 0), errors='coerce')
-                
-                min_date = df_logs['Date'].min().date() if not df_logs['Date'].isnull().all() else datetime.date(2023, 1, 1)
-                max_date = df_logs['Date'].max().date() if not df_logs['Date'].isnull().all() else datetime.date.today()
-                
-                st.markdown("##### Performance Evaluation Horizon Filter")
-                d_col1, d_col2 = st.columns(2)
-                with d_col1: 
-                    start_date = st.date_input("Start Threshold Date", min_date, key="start_d1")
-                with d_col2: 
-                    end_date = st.date_input("End Threshold Date", max_date, key="end_d1")
-                
-                mask = (df_logs['Date'].dt.date >= start_date) & (df_logs['Date'].dt.date <= end_date)
-                df_filtered = df_logs.loc[mask]
-                
-                q_col1, q_col2 = st.columns(2)
-                with q_col1:
-                    st.markdown("#### Performance Recovery Rate Deviation Trend")
-                    if len(df_filtered) > 1:
-                        rec_chart = alt.Chart(df_filtered).mark_circle().encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
-                        st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red'), use_container_width=True)
-                with q_col2:
-                    st.markdown("#### Seawater Coefficient Degradation Rate (HTC)")
-                    if len(df_filtered) > 1:
-                        htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)"))
-                        st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall_HTC_Val').mark_line(color='black'), use_container_width=True)
+                if not df_logs.empty:
+                    df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Sea Water Feed', 0), errors='coerce')
+                    df_logs['Recovery (%)'] = np.where(df_logs['Total SW Feed (m3/h)'] > 0, (pd.to_numeric(df_logs.get('Gross production', 0), errors='coerce') / df_logs['Total SW Feed (m3/h)']) * 100, 0)
+                    
+                    df_logs['Actual Production'] = pd.to_numeric(df_logs.get('Gross production', 0), errors='coerce')
+                    df_logs['Residual_Val'] = pd.to_numeric(df_logs.get('Residual', 0), errors='coerce')
+                    df_logs['Predicted Production'] = df_logs['Actual Production'] - df_logs['Residual_Val']
+                    df_logs['Overall_HTC_Val'] = pd.to_numeric(df_logs.get('Overall HTC', 0), errors='coerce')
+                    df_logs['GOR_Val'] = pd.to_numeric(df_logs.get('GOR', 0), errors='coerce')
+                    
+                    min_date = df_logs['Date'].min().date() 
+                    max_date = df_logs['Date'].max().date()
+                    
+                    st.markdown("##### Performance Evaluation Horizon Filter")
+                    d_col1, d_col2 = st.columns(2)
+                    with d_col1: 
+                        start_date = st.date_input("Start Threshold Date", min_date, key="start_d1")
+                    with d_col2: 
+                        end_date = st.date_input("End Threshold Date", max_date, key="end_d1")
+                    
+                    mask = (df_logs['Date'].dt.date >= start_date) & (df_logs['Date'].dt.date <= end_date)
+                    df_filtered = df_logs.loc[mask]
+                    
+                    q_col1, q_col2 = st.columns(2)
+                    with q_col1:
+                        st.markdown("#### Performance Recovery Rate Deviation Trend")
+                        if len(df_filtered) > 1:
+                            rec_chart = alt.Chart(df_filtered).mark_circle().encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
+                            st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red'), use_container_width=True)
+                    with q_col2:
+                        st.markdown("#### Seawater Coefficient Degradation Rate (HTC)")
+                        if len(df_filtered) > 1:
+                            htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)"))
+                            st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall_HTC_Val').mark_line(color='black'), use_container_width=True)
 
-                st.divider()
-                
-                q_col3, q_col4 = st.columns(2)
-                with q_col3:
-                    st.markdown("#### Actual Mass Output vs Normalized Twin Output")
-                    if len(df_filtered) > 1:
-                        fold_df = df_filtered[['Date', 'Actual Production', 'Predicted Production']].melt('Date', var_name='Metric', value_name='Mass Flow Volume (m³/h)')
-                        prod_chart = alt.Chart(fold_df).mark_line(point=True).encode(
-                            x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Mass Flow Volume (m³/h):Q', scale=alt.Scale(zero=False)),
-                            color=alt.Color('Metric:N', scale=alt.Scale(domain=['Actual Production', 'Predicted Production'], range=['#1f77b4', '#ff7f0e'])),
-                            strokeDash=alt.condition(alt.datum.Metric == 'Predicted Production', alt.value([5, 5]), alt.value([0])),
-                            tooltip=['Date:T', 'Metric', 'Mass Flow Volume (m³/h)']
-                        )
-                        st.altair_chart(prod_chart, use_container_width=True)
-                with q_col4:
-                    st.markdown("#### Specific Unit Thermal Efficiency GOR Performance")
-                    if len(df_filtered) > 1:
-                        gor_chart = alt.Chart(df_filtered).mark_line(point=True, color='green').encode(
-                            x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('GOR_Val:Q', scale=alt.Scale(zero=False), title="Gain Output Ratio"),
-                            tooltip=['Date:T', 'GOR_Val']
-                        )
-                        st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR_Val').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
+                    st.divider()
+                    
+                    q_col3, q_col4 = st.columns(2)
+                    with q_col3:
+                        st.markdown("#### Actual Mass Output vs Normalized Twin Output")
+                        if len(df_filtered) > 1:
+                            fold_df = df_filtered[['Date', 'Actual Production', 'Predicted Production']].melt('Date', var_name='Metric', value_name='Mass Flow Volume (m³/h)')
+                            prod_chart = alt.Chart(fold_df).mark_line(point=True).encode(
+                                x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Mass Flow Volume (m³/h):Q', scale=alt.Scale(zero=False)),
+                                color=alt.Color('Metric:N', scale=alt.Scale(domain=['Actual Production', 'Predicted Production'], range=['#1f77b4', '#ff7f0e'])),
+                                strokeDash=alt.condition(alt.datum.Metric == 'Predicted Production', alt.value([5, 5]), alt.value([0])),
+                                tooltip=['Date:T', 'Metric', 'Mass Flow Volume (m³/h)']
+                            )
+                            st.altair_chart(prod_chart, use_container_width=True)
+                    with q_col4:
+                        st.markdown("#### Specific Unit Thermal Efficiency GOR Performance")
+                        if len(df_filtered) > 1:
+                            gor_chart = alt.Chart(df_filtered).mark_line(point=True, color='green').encode(
+                                x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('GOR_Val:Q', scale=alt.Scale(zero=False), title="Gain Output Ratio"),
+                                tooltip=['Date:T', 'GOR_Val']
+                            )
+                            st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR_Val').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
+                else:
+                    st.info("No valid dates found in registry to draw charts.")
 
         with rep_tabs[3]:
             st.markdown("#### Multivariable Cross-Correlation Explorer")
             if not st.session_state.daily_logs.empty:
                 exp_df = st.session_state.daily_logs.copy()
-                exp_df['Date'] = pd.to_datetime(exp_df['Date'], format='mixed', errors='coerce')
+                
+                # DATE FIX: Same row-by-row mapping to prevent graph crash
+                exp_df['Date'] = exp_df['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce'))
                 exp_df = exp_df.dropna(subset=['Date'])
                 
-                min_date2 = exp_df['Date'].min().date() if not exp_df['Date'].isnull().all() else datetime.date(2023, 1, 1)
-                max_date2 = exp_df['Date'].max().date() if not exp_df['Date'].isnull().all() else datetime.date.today()
-                
-                d_col1, d_col2 = st.columns(2)
-                with d_col1: 
-                    start_date2 = st.date_input("Start Horizon Date", min_date2, key="start_d2")
-                with d_col2: 
-                    end_date2 = st.date_input("End Horizon Date", max_date2, key="end_d2")
-                
-                mask2 = (exp_df['Date'].dt.date >= start_date2) & (exp_df['Date'].dt.date <= end_date2)
-                exp_df = exp_df.loc[mask2]
-                
-                num_cols = [col for col in exp_df.columns if col not in ['Date']]
-                x_c, y_c, t_c = st.columns(3)
-                with x_c: 
-                    exp_x = st.selectbox("Select Independent Domain X-Axis", ['Date'] + num_cols, index=0)
-                with y_c: 
-                    exp_y = st.selectbox("Select Dependent Variable Y-Axis", num_cols, index=0)
-                with t_c: 
-                    exp_type = st.selectbox("Select Functional Chart Variant", ["Line Chart", "Scatter Plot", "Bar Chart"])
-                
-                if exp_type == "Line Chart": 
-                    chart = alt.Chart(exp_df).mark_line(point=True).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
-                elif exp_type == "Scatter Plot": 
-                    chart = alt.Chart(exp_df).mark_circle(size=80).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
-                else: 
-                    chart = alt.Chart(exp_df).mark_bar().encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':N'}"), y=alt.Y(f"{exp_y}:Q"), tooltip=[exp_x, exp_y])
-                st.altair_chart(chart.interactive(), use_container_width=True)
-            else:
-                st.info("No active historical registry values detected to perform correlation modeling.")
+                if not exp_df.empty:
+                    min_date2 = exp_df['Date'].min().date() 
+                    max_date2 = exp_df['Date'].max().date()
+                    
+                    d_col1, d_col2 = st.columns(2)
+                    with d_col1: 
+                        start_date2 = st.date_input("Start Horizon Date", min_date2, key="start_d2")
+                    with d_col2: 
+                        end_date2 = st.date_input("End Horizon Date", max_date2, key="end_d2")
+                    
+                    mask2 = (exp_df['Date'].dt.date >= start_date2) & (exp_df['Date'].dt.date <= end_date2)
+                    exp_df = exp_df.loc[mask2]
+                    
+                    num_cols = [col for col in exp_df.columns if col not in ['Date']]
+                    x_c, y_c, t_c = st.columns(3)
+                    with x_c: 
+                        exp_x = st.selectbox("Select Independent Domain X-Axis", ['Date'] + num_cols, index=0)
+                    with y_c: 
+                        exp_y = st.selectbox("Select Dependent Variable Y-Axis", num_cols, index=0)
+                    with t_c: 
+                        exp_type = st.selectbox("Select Functional Chart Variant", ["Line Chart", "Scatter Plot", "Bar Chart"])
+                    
+                    if exp_type == "Line Chart": 
+                        chart = alt.Chart(exp_df).mark_line(point=True).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
+                    elif exp_type == "Scatter Plot": 
+                        chart = alt.Chart(exp_df).mark_circle(size=80).encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':Q'}"), y=alt.Y(f"{exp_y}:Q", scale=alt.Scale(zero=False)), tooltip=[exp_x, exp_y])
+                    else: 
+                        chart = alt.Chart(exp_df).mark_bar().encode(x=alt.X(f"{exp_x}{':T' if exp_x == 'Date' else ':N'}"), y=alt.Y(f"{exp_y}:Q"), tooltip=[exp_x, exp_y])
+                    st.altair_chart(chart.interactive(), use_container_width=True)
+                else:
+                    st.info("No active historical registry values detected to perform correlation modeling.")
 
     # --- TAB 7: AI MODEL SELECTOR ---
     with tabs[7]:
@@ -1241,9 +1237,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     if 'Anti_PPM' in df_bulk.columns: df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
                     if 'Gross production' in df_bulk.columns: df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
                     
-                    # Try explicit format like 1-Jun-26 first, then fallback to robust day-first parsing
-                    df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date'], format='mixed', errors='coerce').dt.strftime('%Y-%m-%d')
-
+                    # DATE FIX: Aggressive mixed parsing and standardization
+                    df_bulk['Date_Clean'] = df_bulk['Date'].apply(lambda x: pd.to_datetime(x, format='mixed', errors='coerce')).dt.strftime('%Y-%m-%d')
+                    
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
                     if 'Delta T' not in df_bulk.columns or df_bulk['Delta T'].isnull().all():
                         df_bulk['Delta T'] = df_bulk['1st Effect Vapour Temp'] - df_bulk['1st effect brine temp']
@@ -1339,14 +1335,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         if st.button("Append to Database", use_container_width=True):
                             if pwd_bulk == "12345678":
                                 st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, db_ready_df], ignore_index=True)
-                                
-                                # FIX 3: Drop duplicates before saving bulk uploads
                                 st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
-                                
                                 save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
                                 st.success("Data Synced!")
                                 time.sleep(1.5)
-                                st.rerun()  # FIX 4: Ensure UI reloads on save
+                                st.rerun()
                             elif pwd_bulk != "": 
                                 st.error("Incorrect Password.")
                 else: 
