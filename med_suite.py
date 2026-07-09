@@ -929,7 +929,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.markdown("#### Aggregated Monthly Performance Generator")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', dayfirst=True, errors='coerce')
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', errors='coerce')
                 df_logs = df_logs.dropna(subset=['Date'])
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                 if not month_data.empty:
@@ -940,7 +940,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', dayfirst=True, errors='coerce')
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', errors='coerce')
                 df_logs = df_logs.dropna(subset=['Date'])
                 
                 df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Sea Water Feed', 0), errors='coerce')
@@ -1004,7 +1004,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.markdown("#### Multivariable Cross-Correlation Explorer")
             if not st.session_state.daily_logs.empty:
                 exp_df = st.session_state.daily_logs.copy()
-                exp_df['Date'] = pd.to_datetime(exp_df['Date'], format='mixed', dayfirst=True, errors='coerce')
+                exp_df['Date'] = pd.to_datetime(exp_df['Date'], format='mixed', errors='coerce')
                 exp_df = exp_df.dropna(subset=['Date'])
                 
                 min_date2 = exp_df['Date'].min().date() if not exp_df['Date'].isnull().all() else datetime.date(2023, 1, 1)
@@ -1242,11 +1242,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     if 'Gross production' in df_bulk.columns: df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
                     
                     # Try explicit format like 1-Jun-26 first, then fallback to robust day-first parsing
-                    df_bulk['Date_Clean'] = pd.to_datetime(
-                        df_bulk['Date'], format='%d-%b-%y', errors='coerce'
-                    ).fillna(
-                        pd.to_datetime(df_bulk['Date'], dayfirst=True, format='mixed', errors='coerce')
-                    ).dt.strftime('%Y-%m-%d')
+                    df_bulk['Date_Clean'] = pd.to_datetime(df_bulk['Date'], format='mixed', errors='coerce').dt.strftime('%Y-%m-%d')
 
                     df_bulk['GOR'] = np.where(df_bulk['LP Steam consumption'] > 0, df_bulk['Gross production'] / df_bulk['LP Steam consumption'], 0)
                     if 'Delta T' not in df_bulk.columns or df_bulk['Delta T'].isnull().all():
