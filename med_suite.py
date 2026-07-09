@@ -1005,6 +1005,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             if not st.session_state.daily_logs.empty:
                 exp_df = st.session_state.daily_logs.copy()
                 exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
+                exp_df = exp_df.dropna(subset=['Date'])
                 
                 min_date2 = exp_df['Date'].min().date() if not exp_df['Date'].isnull().all() else datetime.date(2023, 1, 1)
                 max_date2 = exp_df['Date'].max().date() if not exp_df['Date'].isnull().all() else datetime.date.today()
