@@ -80,7 +80,7 @@ EXACT_DB_COLUMNS = [
     "1st Effect Vapour Temp", "1st effect brine temp", "11th Effect Brine Temp", "Feed Temp to Cold Group",
     "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", "Brine Discharge Pressure",
     "Sea Water cond I/L temp", "Sea Water Condenser O/L Temp", 
-    "CW supply", "CW Return", "CW Flow", "Gross production", "GOR", "Overall HTC", "1st Effect HTC", 
+    "CW supply", "CW Return", "CW Flow", "Gross production", "GOR", "STEC", "Overall HTC", "1st Effect HTC", 
     "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Area_1st", "Area_Overall", "Remarks"
 ]
 for cat in ['Feed', 'Product']:
@@ -148,7 +148,7 @@ def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
         "Sea Water cond I/L temp": ops['SW In_overall'], "Sea Water Condenser O/L Temp": extra_tags['sw_out_t'],
         "CW supply": extra_tags['cw_supply'], "CW Return": extra_tags['cw_return'], "CW Flow": extra_tags['cw_flow'],
         "Gross production": ops['Gross Prod'], "Recovery (%)": round(ops['Recovery'], 2),
-        "GOR": round(ops['GOR'], 2), "Overall HTC": round(ops['htc_overall'], 2),
+        "GOR": round(ops['GOR'], 2), "STEC": round(ops['STEC'], 2), "Overall HTC": round(ops['htc_overall'], 2),
         "1st Effect HTC": round(ops['htc_1st'], 2), "Residual": round(mra['Residual'], 2),
         "Antiscalant Dosing (PPM)": chem_data['anti_ppm'], "Antiscalant (kg)": chem_data['anti_cons'],
         "Antifoam Dosing (PPM)": chem_data['foam_ppm'], "Antifoam (kg)": chem_data['foam_cons'],
@@ -224,7 +224,7 @@ def generate_monthly_report(df_month, month_str, year_str):
     doc.add_heading('1. Monthly Aggregation', level=1)
     t_agg = doc.add_table(rows=1, cols=4); t_agg.style = 'Table Grid'
     for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
-    metrics = [("Gross production (m³/h)", df_month['Gross production']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("1st Effect HTC", df_month['1st Effect HTC'])]
+    metrics = [("Gross production (m³/h)", df_month['Gross production']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Specific Thermal Energy Consumption (STEC, kWh/ton)", df_month.get('STEC', pd.Series(np.nan, index=df_month.index))), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("1st Effect HTC", df_month['1st Effect HTC'])]
     for name, series in metrics:
         rc = t_agg.add_row().cells
         rc[0].text, rc[1].text, rc[2].text, rc[3].text = name, f"{pd.to_numeric(series, errors='coerce').min():.2f}", f"{pd.to_numeric(series, errors='coerce').max():.2f}", f"{pd.to_numeric(series, errors='coerce').mean():.2f}"
@@ -879,6 +879,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "CW Flow": [get_v('cw_flow')],
                             "Gross production": [ops_data['Gross Prod']],
                             "GOR": [round(ops_data['GOR'], 2)], 
+                            "STEC": [round(ops_data['STEC'], 2)],
                             "Overall HTC": [round(ops_data['htc_overall'], 2)], 
                             "1st Effect HTC": [round(ops_data['htc_1st'], 2)], 
                             "Residual": [round(mra_data['Residual'], 1)], 
@@ -966,6 +967,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     df_logs['Predicted Production'] = df_logs['Actual Production'] - df_logs['Residual_Val']
                     df_logs['Overall_HTC_Val'] = pd.to_numeric(df_logs.get('Overall HTC', 0), errors='coerce')
                     df_logs['GOR_Val'] = pd.to_numeric(df_logs.get('GOR', 0), errors='coerce')
+                    df_logs['STEC_Val'] = pd.to_numeric(df_logs.get('STEC', np.nan), errors='coerce')
                     
                     min_date = df_logs['Date'].min().date() 
                     max_date = df_logs['Date'].max().date()
@@ -1014,6 +1016,19 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 tooltip=['Date:T', 'GOR_Val']
                             )
                             st.altair_chart(gor_chart + gor_chart.transform_regression('Date', 'GOR_Val').mark_line(color='red', strokeDash=[5, 5]), use_container_width=True)
+
+                    st.divider()
+
+                    st.markdown("#### Specific Thermal Energy Consumption (STEC) Trend")
+                    df_stec = df_filtered.dropna(subset=['STEC_Val'])
+                    if len(df_stec) > 1:
+                        stec_chart = alt.Chart(df_stec).mark_line(point=True, color='purple').encode(
+                            x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('STEC_Val:Q', scale=alt.Scale(zero=False), title="STEC (kWh/ton)"),
+                            tooltip=['Date:T', 'STEC_Val']
+                        )
+                        st.altair_chart(stec_chart + stec_chart.transform_regression('Date', 'STEC_Val').mark_line(color='black', strokeDash=[5, 5]), use_container_width=True)
+                    else:
+                        st.info("No STEC data available yet for the selected range. Rows saved before this update won't have a stored STEC value.")
                 else:
                     st.info("No valid dates found in registry to draw charts.")
 
@@ -1293,15 +1308,63 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     if 'Sea Water cond I/L temp' in df_bulk.columns: df_bulk['Sea Water cond I/L temp'] = df_bulk['Sea Water cond I/L temp'].fillna(30.0)
                     if 'Brine Discharge Temp' in df_bulk.columns: df_bulk['Brine Discharge Temp'] = df_bulk['Brine Discharge Temp'].fillna(41.0)
                     if 'Sea Water Feed' in df_bulk.columns: df_bulk['Sea Water Feed'] = df_bulk['Sea Water Feed'].fillna(2100.0)
-                    
-                    area_overall = get_v('area_overall')
-                    dt_overall = df_bulk['1st Effect Vapour Temp'] - df_bulk['Brine Discharge Temp']
-                    q_overall = (df_bulk['LP Steam consumption'] * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
-                    df_bulk['Overall HTC'] = np.where(dt_overall > 0, (q_overall / (area_overall * dt_overall)), 0)
 
+                    # Ensure condensate temp exists as a clean numeric column. A missing value here is
+                    # treated as "not provided" (NaN), never silently as a real 0°C reading, since a bare
+                    # 0 would otherwise wreck the cold-side LMTD driving force below.
+                    if 'condensate temp' not in df_bulk.columns:
+                        df_bulk['condensate temp'] = np.nan
+                    df_bulk['condensate temp'] = pd.to_numeric(df_bulk['condensate temp'], errors='coerce')
+                    cond_temp_raw = df_bulk['condensate temp']
+
+                    area_overall = get_v('area_overall')
                     area_1st = get_v('area_1st')
-                    q_1st = q_overall 
-                    df_bulk['1st Effect HTC'] = np.where(df_bulk['Delta T'] > 0, (q_1st / (area_1st * df_bulk['Delta T'])), 0)
+                    q_overall = (df_bulk['LP Steam consumption'] * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
+                    q_1st = q_overall
+
+                    # --- STEC: Specific Thermal Energy Consumption (kWh/ton), same formula as manual entry ---
+                    df_bulk['STEC'] = np.where(
+                        df_bulk['Desal production'] > 0,
+                        ((df_bulk['LP Steam consumption'] * 1000) / 3600 * LATENT_HEAT_STEAM_KJ_KG) / df_bulk['Desal production'],
+                        0
+                    )
+
+                    # --- Overall HTC via LMTD (matches the manual-entry formula, vectorized for bulk rows) ---
+                    # Hot side: 1st effect vapour temp vs brine discharge temp (always present in bulk data).
+                    dt_ov_hot = df_bulk['1st Effect Vapour Temp'] - df_bulk['Brine Discharge Temp']
+                    # Cold side: condensate temp vs seawater condenser inlet temp, when condensate temp was
+                    # actually supplied in the CSV; otherwise fall back to the same 0.8x proxy manual entry
+                    # uses when its own cold-side reading is unavailable/invalid.
+                    dt_ov_cold_raw = cond_temp_raw - df_bulk['Sea Water cond I/L temp']
+                    dt_ov_cold = np.where(
+                        cond_temp_raw.notna() & (dt_ov_cold_raw > 0),
+                        dt_ov_cold_raw,
+                        dt_ov_hot * 0.8
+                    )
+                    ratio_ov = np.where(dt_ov_cold > 0, dt_ov_hot / dt_ov_cold, 1.0)
+                    log_ov = np.log(np.where(ratio_ov > 0, ratio_ov, 1.0))
+                    lmtd_ov = np.where(
+                        (dt_ov_hot > 0) & (dt_ov_cold > 0) & (dt_ov_hot != dt_ov_cold) & (log_ov != 0),
+                        (dt_ov_hot - dt_ov_cold) / log_ov,
+                        dt_ov_hot
+                    )
+                    df_bulk['Overall HTC'] = np.where((lmtd_ov > 0) & (area_overall > 0), q_overall / (area_overall * lmtd_ov), 0)
+
+                    # --- 1st Effect HTC via LMTD ---
+                    # Hot side: same as Delta T (1st effect vapour temp vs 1st effect brine temp).
+                    dt_1st_hot = df_bulk['Delta T']
+                    # Cold side: bulk data has no per-effect live brine reading (that field is a manual-
+                    # dashboard-only input on the Effects tab), so this always uses the same 0.8x fallback
+                    # manual entry itself falls back to when that live reading is missing.
+                    dt_1st_cold = dt_1st_hot * 0.8
+                    ratio_1st = np.where(dt_1st_cold > 0, dt_1st_hot / dt_1st_cold, 1.0)
+                    log_1st = np.log(np.where(ratio_1st > 0, ratio_1st, 1.0))
+                    lmtd_1st = np.where(
+                        (dt_1st_hot > 0) & (dt_1st_cold > 0) & (dt_1st_hot != dt_1st_cold) & (log_1st != 0),
+                        (dt_1st_hot - dt_1st_cold) / log_1st,
+                        dt_1st_hot
+                    )
+                    df_bulk['1st Effect HTC'] = np.where((lmtd_1st > 0) & (area_1st > 0), q_1st / (area_1st * lmtd_1st), 0)
                     
                     db_ready_dict = {
                         "Date": df_bulk['Date_Clean'], 
@@ -1331,6 +1394,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         "CW Flow": df_bulk.get('CW Flow', pd.Series(2726.0, index=df_bulk.index)).fillna(2726.0),
                         "Gross production": df_bulk['Gross production'],
                         "GOR": df_bulk['GOR'].round(2), 
+                        "STEC": df_bulk['STEC'].round(2),
                         "Overall HTC": df_bulk['Overall HTC'].round(2), 
                         "1st Effect HTC": df_bulk['1st Effect HTC'].round(2),
                         "Residual": df_bulk['Residual'].round(1),
