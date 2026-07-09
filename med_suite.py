@@ -260,7 +260,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
-            db_dates = pd.to_datetime(st.session_state.daily_logs['Date'], errors='coerce').dt.strftime('%Y-%m-%d').values
+            db_dates = pd.to_datetime(st.session_state.daily_logs['Date'], format='mixed', dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d').values
             if log_date_str in db_dates:
                 # FIX 1: Access the [-1] index to pull the most recent duplicate date row
                 row_idx = np.where(db_dates == log_date_str)[0][-1]
@@ -929,7 +929,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.markdown("#### Aggregated Monthly Performance Generator")
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', dayfirst=True, errors='coerce')
                 df_logs = df_logs.dropna(subset=['Date'])
                 month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                 if not month_data.empty:
@@ -940,7 +940,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         with rep_tabs[2]:
             if not st.session_state.daily_logs.empty:
                 df_logs = st.session_state.daily_logs.copy()
-                df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
+                df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='mixed', dayfirst=True, errors='coerce')
                 df_logs = df_logs.dropna(subset=['Date'])
                 
                 df_logs['Total SW Feed (m3/h)'] = pd.to_numeric(df_logs.get('Sea Water Feed', 0), errors='coerce')
@@ -1004,7 +1004,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.markdown("#### Multivariable Cross-Correlation Explorer")
             if not st.session_state.daily_logs.empty:
                 exp_df = st.session_state.daily_logs.copy()
-                exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
+                exp_df['Date'] = pd.to_datetime(exp_df['Date'], format='mixed', dayfirst=True, errors='coerce')
                 exp_df = exp_df.dropna(subset=['Date'])
                 
                 min_date2 = exp_df['Date'].min().date() if not exp_df['Date'].isnull().all() else datetime.date(2023, 1, 1)
