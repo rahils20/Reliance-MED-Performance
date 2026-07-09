@@ -15,13 +15,20 @@ from docx.shared import RGBColor, Pt, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 def standardize_dates(date_series):
-    """Robust master parser for multi-format date registries. 
-    Intercepts any format (1-Apr-26, 2026-04-01, 01/04/2026) and aligns them."""
+    """Robust master parser for multi-format date registries.
+    Intercepts any format (1-Apr-26, 2026-04-01, 01/04/2026, 01-04-2026) and aligns them.
+    All ambiguous numeric formats (slash or hyphen) are treated as DAY-FIRST (DD-MM-YYYY),
+    matching the plant's standard convention. Never falls back to pandas' default
+    month-first interpretation, which was silently swapping day/month for any
+    day-of-month <= 12 (e.g. 09-07-2026 read as 7 September instead of 9 July)."""
     parsed = pd.to_datetime(date_series, format='%d-%b-%y', errors='coerce')
     parsed = parsed.fillna(pd.to_datetime(date_series, format='%d-%b-%Y', errors='coerce'))
     parsed = parsed.fillna(pd.to_datetime(date_series, format='%Y-%m-%d', errors='coerce'))
     parsed = parsed.fillna(pd.to_datetime(date_series, format='%d/%m/%Y', errors='coerce'))
-    parsed = parsed.fillna(pd.to_datetime(date_series, errors='coerce'))
+    parsed = parsed.fillna(pd.to_datetime(date_series, format='%d-%m-%Y', errors='coerce'))
+    # Final catch-all: force dayfirst=True instead of pandas' default month-first
+    # inference, so any leftover ambiguous numeric date is still read as DD-MM-YYYY.
+    parsed = parsed.fillna(pd.to_datetime(date_series, errors='coerce', dayfirst=True))
     return parsed
 
 # MED GLOBAL CONSTANTS
@@ -128,7 +135,7 @@ LATENT_HEAT_STEAM_KJ_KG = 2330.0
 
 def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
     data_dict = {
-        "Date": date.strftime('%d/%m/%Y'),
+        "Date": date.strftime('%d-%m-%Y'),
         "Sea Water Upper": ops['SW_Feed_1st'], "Sea Water Lower": extra_tags['sw_lower'],
         "Sea Water Feed": ops['SW Total'], "Sea Water Pressure": extra_tags['sw_press'], 
         "Brine Water Return": ops['Brine Return'], "Desal production": ops['Desal'], 
@@ -160,11 +167,11 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
     p.add_run('Prepared by: ').bold = True
     p.add_run('Chembond Water Technologies Limited\n')
     p.add_run('Date: ').bold = True
-    p.add_run(date.strftime('%d/%m/%Y'))
+    p.add_run(date.strftime('%d-%m-%Y'))
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     doc.add_heading('1. Executive Summary', level=1)
-    doc.add_paragraph(f"On {date.strftime('%d/%m/%Y')}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
+    doc.add_paragraph(f"On {date.strftime('%d-%m-%Y')}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
 
     doc.add_heading('2. SOR Performance Matrix', level=1)
     for section_name, df in sor_dfs.items():
@@ -323,7 +330,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             except: 
                                 pass 
                 if loaded_vars: 
-                    st.sidebar.success(f"Auto-loaded historical data for {log_date.strftime('%d/%m/%Y')}")
+                    st.sidebar.success(f"Auto-loaded historical data for {log_date.strftime('%d-%m-%Y')}")
                     st.rerun() 
 
     # Display MED-4 Title
@@ -788,7 +795,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         
         with rep_tabs[0]:
             m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("Target Record Date", log_date.strftime('%d/%m/%Y')) 
+            m_col1.metric("Target Record Date", log_date.strftime('%d-%m-%Y')) 
             m_col2.metric("Gross Volumetric Production", f"{ops_data['Gross Prod']} m³/h", delta=f"{ops_data['Gross Prod'] - 1000:.0f} from Design" if ops_data['Gross Prod'] < 1000 else None)
             m_col3.metric("System GOR", f"{ops_data['GOR']:.2f}", delta=f"{ops_data['GOR'] - 10.5:.2f} from Target" if ops_data['GOR'] < 10.5 else None)
             
