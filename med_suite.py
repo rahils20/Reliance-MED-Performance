@@ -60,14 +60,20 @@ WATER_SPECS = {
         "TDS (ppm)": {"lim": (0.0, 42000.0), "var": "f_tds", "db_col": "Feed_TDS", "avg": 41000.0},
         "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk", "db_col": "Feed_Alkalinity", "avg": 170.0},
         "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca", "db_col": "Feed_Calcium", "avg": 1040.0},
+        "Mg Hardness": {"lim": (5400.0, 5700.0), "var": "f_mg", "db_col": "Feed_MgHardness", "avg": 5550.0},
+        "Silica": {"lim": (0.0, 0.67), "var": "f_sio2", "db_col": "Feed_Silica", "avg": 0.3},
         "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl", "db_col": "Feed_Chlorides", "avg": 21500.0},
-        "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4", "db_col": "Feed_Sulphate", "avg": 3150.0}
+        "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4", "db_col": "Feed_Sulphate", "avg": 3150.0},
+        "Sulphide": {"lim": (0.0, 1.0), "var": "f_sulfide", "db_col": "Feed_Sulphide", "avg": 0.0}
     },
     "Product": {
         "pH": {"lim": (5.5, 7.0), "var": "p_ph", "db_col": "Product_pH", "avg": 6.5},
+        "Turbidity (NTU)": {"lim": (0.0, 1.0), "var": "p_turb", "db_col": "Product_Turbidity", "avg": 0.1},
         "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond", "db_col": "Product_Cond", "avg": 4.6},
         "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds", "db_col": "Product_TDS", "avg": 2.5},
+        "Total Hardness": {"lim": (0.0, 0.1), "var": "p_hard", "db_col": "Product_TotalHardness", "avg": 0.0},
         "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron", "db_col": "Product_Iron", "avg": 0.05},
+        "Silica": {"lim": (0.0, 0.02), "var": "p_sio2", "db_col": "Product_Silica", "avg": 0.0},
         "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl", "db_col": "Product_Chlorides", "avg": 0.0},
         "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4", "db_col": "Product_Sulphate", "avg": 0.0}
     }
@@ -81,7 +87,7 @@ EXACT_DB_COLUMNS = [
     "Intermediate Effects Avg Brine Temp", "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", "Brine Discharge Pressure",
     "Sea Water cond I/L temp", "Sea Water Condenser O/L Temp", 
     "CW supply", "CW Return", "CW Flow", "Gross production", "GOR", "STEC", "Overall HTC", "1st Effect HTC", 
-    "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Area_1st", "Area_Overall", "Remarks"
+    "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Foam_PPM", "Area_1st", "Area_Overall", "Remarks"
 ]
 for cat in ['Feed', 'Product']:
     for param, details in WATER_SPECS[cat].items(): 
@@ -104,8 +110,8 @@ DEFAULTS = {
     'brine_ret': 1275.5, 'brine_press': 1.3,
     'sw_in_t': 30.0, 'brine_out_t': 41.0, 'vap_out_t': 70.0, 'mra_press': 231.76, 'mra_t1': 68.47, 'mra_bt1': 65.46,
     'brine_11': 43.0, 'feed_cold': 37.0, 'mid_effects_temp': 56.0,
-    'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0, 'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
-    'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05, 'p_cl': 0.0, 'p_so4': 0.0,
+    'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0, 'f_alk': 170.0, 'f_ca': 1040.0, 'f_mg': 5550.0, 'f_sio2': 0.3, 'f_cl': 21500.0, 'f_so4': 3150.0, 'f_sulfide': 0.0,
+    'p_ph': 6.5, 'p_turb': 0.1, 'p_cond': 4.6, 'p_tds': 2.5, 'p_hard': 0.0, 'p_iron': 0.05, 'p_sio2': 0.0, 'p_cl': 0.0, 'p_so4': 0.0,
     'chem_anti_ppm': 4.82, 'chem_anti_cons': 13.5, 'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
     # Area_1st = pi * tube_length(5.5m) * tube_count(31244) * tube_OD(0.024m); Area_Overall = 11 effects * Area_1st * 1.15
     # (correction factor). Previous defaults (1757.49 / 19332.0) were roughly 7-8x too small, which alone made HTC
@@ -124,9 +130,10 @@ SYNC_MAP = {
     'brine_11': ['in_brine_11'], 'feed_cold': ['in_feed_cold'], 'mid_effects_temp': ['in_mid_effects_temp', 't2_mid_effects_temp'],
     'f_ph': ['in_f_ph', 't3_f_ph'], 
     'f_turb': ['in_f_turb', 't3_f_turb'], 'f_tss': ['in_f_tss', 't3_f_tss'], 'f_tds': ['in_f_tds', 't3_f_tds'],
-    'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
-    'p_ph': ['in_p_ph', 't3_p_ph'], 'p_cond': ['in_p_cond', 't3_p_cond'], 'p_tds': ['in_p_tds', 't3_p_tds'], 
-    'p_iron': ['in_p_iron', 't3_p_iron'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
+    'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_mg': ['t3_f_mg'], 'f_sio2': ['t3_f_sio2'],
+    'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'], 'f_sulfide': ['t3_f_sulfide'],
+    'p_ph': ['in_p_ph', 't3_p_ph'], 'p_turb': ['t3_p_turb'], 'p_cond': ['in_p_cond', 't3_p_cond'], 'p_tds': ['in_p_tds', 't3_p_tds'], 
+    'p_hard': ['t3_p_hard'], 'p_iron': ['in_p_iron', 't3_p_iron'], 'p_sio2': ['t3_p_sio2'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
     'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm', 't5_anti'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
     'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
     'remarks': ['in_remarks'], 'area_1st': ['t2_area_1st'], 'area_overall': ['t2_area_overall'],
@@ -304,7 +311,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     'mra_bt1': ['1st effect brine temp'], 
                     'brine_11': ['11th Effect Brine Temp'], 'feed_cold': ['Feed Temp to Cold Group'],
                     'brine_ret': ['Brine Water Return'], 'brine_press': ['Brine Discharge Pressure'],
-                    'chem_anti_ppm': ['Anti_PPM'], 
+                    'chem_anti_ppm': ['Anti_PPM'], 'chem_foam_ppm': ['Foam_PPM'],
                     'sw_in_t': ['Sea Water cond I/L temp'], 
                     'brine_out_t': ['Brine Discharge Temp'], 
                     'vap_out_t': ['Vap_Out_Temp'], 
@@ -607,10 +614,22 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     # --- TAB 1: FLOW KPIs & SOR MATRIX ---
     with tabs[1]:
         st.subheader("System Operating Reference (SOR) Dashboard")
-        
+
         anti_gm_m3 = (get_v('chem_anti_cons') / ops_data['SW Total']) * 1000 if ops_data['SW Total'] > 0 else 0
         foam_gm_m3 = (get_v('chem_foam_cons') / ops_data['SW Total']) * 1000 if ops_data['SW Total'] > 0 else 0
-        
+        has_anti_kg = get_v('chem_anti_cons') > 0
+        has_foam_kg = get_v('chem_foam_cons') > 0
+
+        # --- Headline KPI cards: the numbers Reliance/Chembond actually track day to day, up front ---
+        st.markdown("##### Headline Performance Indicators")
+        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+        kpi1.metric("GOR", f"{ops_data['GOR']:.2f}", f"{ops_data['GOR'] - 11.4:+.2f} vs SOR", help="Gain Output Ratio: Gross production / Steam consumption. SOR baseline: 11.4")
+        kpi2.metric("STEC", f"{ops_data['STEC']:.1f} kWh/t", help="Specific Thermal Energy Consumption per tonne of distillate")
+        kpi3.metric("Overall HTC", f"{ops_data['htc_overall']:.1f} W/m²K", help="Whole-plant heat transfer coefficient (steam condensation basis)")
+        kpi4.metric("1st Effect HTC", f"{ops_data['htc_1st']:.1f} W/m²K", help="1st effect heat transfer coefficient (steam condensation basis)")
+        kpi5.metric("Recovery", f"{ops_data['Recovery']:.1f}%", help="Gross production / Total sea water feed")
+        st.divider()
+
         def color_diff(val):
             try:
                 v = float(val)
@@ -682,12 +701,23 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_h.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.3f}", "Actual": "{:.3f}", "Difference": "{:+.3f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### I) CHEMICAL CONSUMPTION")
+        st.markdown("### I) CHEMICAL DOSING & RESIDUAL")
+        st.caption("Dosing rate (gm/m³) needs a logged kg-consumption figure for the day; residual PPM comes from lab analysis and is tracked independently.")
         df_i = pd.DataFrame([
-            {"Parameter": "Antiscalant (ID204)/IN-204AS", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5, "Actual": anti_gm_m3, "Difference": anti_gm_m3 - 10.5},
-            {"Parameter": "Antifoam", "UOM": "gm/m3 sea water", "Design": "0.25", "SOR Base": 0.16, "Actual": foam_gm_m3, "Difference": foam_gm_m3 - 0.16}
+            {"Parameter": "Antiscalant (ID204)/IN-204AS", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5,
+             "Actual": anti_gm_m3 if has_anti_kg else np.nan, "Difference": (anti_gm_m3 - 10.5) if has_anti_kg else np.nan,
+             "Residual (PPM)": get_v('chem_anti_ppm')},
+            {"Parameter": "Antifoam", "UOM": "gm/m3 sea water", "Design": "0.25", "SOR Base": 0.16,
+             "Actual": foam_gm_m3 if has_foam_kg else np.nan, "Difference": (foam_gm_m3 - 0.16) if has_foam_kg else np.nan,
+             "Residual (PPM)": get_v('chem_foam_ppm')}
         ])
-        st.dataframe(df_i.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
+        st.dataframe(
+            df_i.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}", "Residual (PPM)": "{:.2f}"}, na_rep="No kg data logged"),
+            use_container_width=True, hide_index=True
+        )
+        if not has_anti_kg or not has_foam_kg:
+            missing_chem = ([] if has_anti_kg else ["antiscalant"]) + ([] if has_foam_kg else ["antifoam"])
+            st.info(f"No {' or '.join(missing_chem)} consumption (kg) is logged for this date, so the gm/m³ dosing rate can't be calculated - only the PPM residual is shown. Log daily kg consumption on the Chemical Dosing tab to enable this.")
         
         sor_export_dfs = {
             "A) SEA WATER": df_a, "B) LP STEAM": df_b, "C) COOLING WATER": df_c, 
@@ -894,6 +924,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "Antiscalant (kg)": [chem_data['anti_cons']], 
                             "Antifoam (kg)": [chem_data['foam_cons']], 
                             "Anti_PPM": [get_v('chem_anti_ppm')], 
+                            "Foam_PPM": [get_v('chem_foam_ppm')], 
                             "Area_1st": [get_v('area_1st')], 
                             "Area_Overall": [get_v('area_overall')], 
                             "Remarks": [get_v('remarks')]
@@ -1273,22 +1304,23 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 df_bulk = df_bulk.dropna(subset=["Date"])
                 
                 if len(df_bulk) > 0:
-                    for col_name, baseline_val in zip(
-                        ['1st effect vapour pressure', '1st Effect Vapour Temp', 'Sea Water Upper', '1st effect brine temp', 'Brine Water Return', 'LP Steam consumption', 'Feed Temp to Cold Group'],
-                        [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75, 37.0]
-                    ):
-                        if col_name in df_bulk.columns:
-                            df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
-
-                    # "Intermediate Effects Avg Brine Temp" (avg brine discharge of effects 4-7) isn't part of the
-                    # standard DCS/CSV export - it's rarely logged day-to-day. Default to the configured baseline
-                    # whenever it's missing or blank, rather than leaving it NaN and breaking the 1st Effect HTC calc.
-                    if 'Intermediate Effects Avg Brine Temp' not in df_bulk.columns:
-                        df_bulk['Intermediate Effects Avg Brine Temp'] = np.nan
-                    df_bulk['Intermediate Effects Avg Brine Temp'] = pd.to_numeric(df_bulk['Intermediate Effects Avg Brine Temp'], errors='coerce').fillna(get_v('mid_effects_temp'))
-                    
-                    if 'Anti_PPM' in df_bulk.columns: df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
-                    if 'Gross production' in df_bulk.columns: df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
+                    # Guarantee every column referenced by the KPI formulas below actually exists in df_bulk,
+                    # creating it with a sensible baseline if the CSV doesn't include it at all. Previously
+                    # several of these were only filled in *if already present*, which meant a CSV missing one
+                    # of these columns outright (e.g. no "Feed Temp to Cold Group") caused a hard KeyError
+                    # further down instead of falling back gracefully.
+                    col_defaults = {
+                        '1st effect vapour pressure': 231.76, '1st Effect Vapour Temp': 68.47,
+                        'Sea Water Upper': 553.63, '1st effect brine temp': 65.46,
+                        'Brine Water Return': 1275.50, 'LP Steam consumption': 71.75,
+                        'Feed Temp to Cold Group': get_v('feed_cold'), 'Intermediate Effects Avg Brine Temp': get_v('mid_effects_temp'),
+                        'Brine Discharge Temp': 41.0, 'Sea Water cond I/L temp': 30.0, 'Sea Water Feed': 2100.0,
+                        'Gross production': 0.0, 'Anti_PPM': 4.82,
+                    }
+                    for col_name, baseline_val in col_defaults.items():
+                        if col_name not in df_bulk.columns:
+                            df_bulk[col_name] = np.nan
+                        df_bulk[col_name] = pd.to_numeric(df_bulk[col_name], errors='coerce').fillna(baseline_val)
                     
                     # MASTER DATE FIX: Aggressively standardize raw CSV string and dump bad lines BEFORE adding to DB.
                     df_bulk['Date_Clean'] = standardize_dates(df_bulk['Date']).dt.strftime('%Y-%m-%d')
@@ -1320,13 +1352,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             
                     df_bulk['Residual'] = df_bulk['Gross production'] - df_bulk['Predicted']
                     
-                    if 'Sea Water cond I/L temp' in df_bulk.columns: df_bulk['Sea Water cond I/L temp'] = df_bulk['Sea Water cond I/L temp'].fillna(30.0)
-                    if 'Brine Discharge Temp' in df_bulk.columns: df_bulk['Brine Discharge Temp'] = df_bulk['Brine Discharge Temp'].fillna(41.0)
-                    if 'Sea Water Feed' in df_bulk.columns: df_bulk['Sea Water Feed'] = df_bulk['Sea Water Feed'].fillna(2100.0)
-
-                    # Ensure condensate temp exists as a clean numeric column. A missing value here is
-                    # treated as "not provided" (NaN), never silently as a real 0°C reading, since a bare
-                    # 0 would otherwise wreck the cold-side LMTD driving force below.
                     if 'condensate temp' not in df_bulk.columns:
                         df_bulk['condensate temp'] = np.nan
                     df_bulk['condensate temp'] = pd.to_numeric(df_bulk['condensate temp'], errors='coerce')
@@ -1422,6 +1447,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         "Antiscalant (kg)": df_bulk.get('Antiscalant (kg)', pd.Series(0, index=df_bulk.index)).fillna(0), 
                         "Antifoam (kg)": df_bulk.get('Antifoam (kg)', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Anti_PPM": df_bulk['Anti_PPM'], 
+                        "Foam_PPM": df_bulk.get('Foam_PPM', pd.Series(np.nan, index=df_bulk.index)),
                         "Remarks": df_bulk.get('Remarks', pd.Series("", index=df_bulk.index)).fillna(""),
                         "Area_1st": area_1st, 
                         "Area_Overall": area_overall
