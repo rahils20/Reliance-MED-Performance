@@ -78,7 +78,7 @@ EXACT_DB_COLUMNS = [
     "Brine Water Return", "Desal production", "LP Steam consumption", "LP Steam Pressure",
     "Condensate Return", "condensate temp", "Condensate Conductivity",
     "1st Effect Vapour Temp", "1st effect brine temp", "11th Effect Brine Temp", "Feed Temp to Cold Group",
-    "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", "Brine Discharge Pressure",
+    "Intermediate Effects Avg Brine Temp", "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", "Brine Discharge Pressure",
     "Sea Water cond I/L temp", "Sea Water Condenser O/L Temp", 
     "CW supply", "CW Return", "CW Flow", "Gross production", "GOR", "STEC", "Overall HTC", "1st Effect HTC", 
     "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Area_1st", "Area_Overall", "Remarks"
@@ -103,11 +103,14 @@ DEFAULTS = {
     'steam': 71.75, 'stm_press': 4.3, 'desal': 800.0, 'gross': 801.4, 'sw_upper': 553.63, 'sw_total': 2100.0, 'sw_press': 1.7, 
     'brine_ret': 1275.5, 'brine_press': 1.3,
     'sw_in_t': 30.0, 'brine_out_t': 41.0, 'vap_out_t': 70.0, 'mra_press': 231.76, 'mra_t1': 68.47, 'mra_bt1': 65.46,
-    'brine_11': 43.0, 'feed_cold': 37.0,
+    'brine_11': 43.0, 'feed_cold': 37.0, 'mid_effects_temp': 56.0,
     'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0, 'f_alk': 170.0, 'f_ca': 1040.0, 'f_cl': 21500.0, 'f_so4': 3150.0,
     'p_ph': 6.5, 'p_cond': 4.6, 'p_tds': 2.5, 'p_iron': 0.05, 'p_cl': 0.0, 'p_so4': 0.0,
     'chem_anti_ppm': 4.82, 'chem_anti_cons': 13.5, 'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
-    'skip_eff': False, 'skip_wq': False, 'remarks': "", 'area_1st': 1757.49, 'area_overall': 19332.0,
+    # Area_1st = pi * tube_length(5.5m) * tube_count(31244) * tube_OD(0.024m); Area_Overall = 11 effects * Area_1st * 1.15
+    # (correction factor). Previous defaults (1757.49 / 19332.0) were roughly 7-8x too small, which alone made HTC
+    # numbers wrong by close to an order of magnitude regardless of anything else. See tube-geometry calc sheet.
+    'skip_eff': False, 'skip_wq': False, 'remarks': "", 'area_1st': 12950.01, 'area_overall': 163818.0,
     'sw_lower': 0.0, 'cond_flow': 0.0, 'cond_temp': 0.0, 'cond_cond': 3.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0, 'cw_flow': 2726.0
 }
 
@@ -118,7 +121,7 @@ SYNC_MAP = {
     'sw_in_t': ['in_sw_in', 't2_sw_in'], 'brine_out_t': ['in_brine_out', 't2_brine_out'], 
     'vap_out_t': ['in_vap_out', 't2_vap_out'], 'mra_press': ['in_press', 't5_press'], 
     'mra_t1': ['in_t1', 't5_t1', 't2_t1'], 'mra_bt1': ['in_bt1', 't5_bt1', 't2_bt1'], 
-    'brine_11': ['in_brine_11'], 'feed_cold': ['in_feed_cold'],
+    'brine_11': ['in_brine_11'], 'feed_cold': ['in_feed_cold'], 'mid_effects_temp': ['in_mid_effects_temp', 't2_mid_effects_temp'],
     'f_ph': ['in_f_ph', 't3_f_ph'], 
     'f_turb': ['in_f_turb', 't3_f_turb'], 'f_tss': ['in_f_tss', 't3_f_tss'], 'f_tds': ['in_f_tds', 't3_f_tds'],
     'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
@@ -143,6 +146,7 @@ def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
         "Condensate Return": extra_tags['cond_flow'], "condensate temp": extra_tags['cond_temp'], "Condensate Conductivity": extra_tags['cond_cond'],
         "1st Effect Vapour Temp": ops['Stm In_1st'], "1st effect brine temp": ops['Brine_1st'],
         "11th Effect Brine Temp": extra_tags['brine_11'], "Feed Temp to Cold Group": extra_tags['feed_cold'],
+        "Intermediate Effects Avg Brine Temp": extra_tags['mid_effects_temp'],
         "Delta T": ops['dt_1st'], "1st effect vapour pressure": ops['Press_1st'],
         "Brine Discharge Temp": ops['Brine Out_overall'], "Brine Discharge Pressure": extra_tags['brine_press'],
         "Sea Water cond I/L temp": ops['SW In_overall'], "Sea Water Condenser O/L Temp": extra_tags['sw_out_t'],
@@ -373,11 +377,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     ops_data['q_overall'] = ops_data['q_1st'] 
 
     dt_1st_hot = ops_data['Stm In_1st'] - ops_data['Brine_1st']
-    try: 
-        dt_1st_cold = get_v('cond_temp') - st.session_state.shared_effect_df.loc[1, 'Live Brine (°C)'] 
-        if pd.isna(dt_1st_cold) or dt_1st_cold <= 0: dt_1st_cold = dt_1st_hot * 0.8
-    except:
-        dt_1st_cold = dt_1st_hot * 0.8
+    # Cold side ΔT2 = Condensate temp - avg brine discharge temp of the intermediate effects (4,5,6,7),
+    # per the plant's HTC calculation sheet. Falls back to the hot-side*0.8 proxy only if the reading is
+    # missing/invalid, since this is a distinct manual/derived input separate from any single effect's live brine.
+    dt_1st_cold = get_v('cond_temp') - get_v('mid_effects_temp')
+    if pd.isna(dt_1st_cold) or dt_1st_cold <= 0: dt_1st_cold = dt_1st_hot * 0.8
 
     if dt_1st_hot > 0 and dt_1st_cold > 0 and dt_1st_hot != dt_1st_cold:
         lmtd_1st = (dt_1st_hot - dt_1st_cold) / math.log(dt_1st_hot / dt_1st_cold)
@@ -390,7 +394,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     ops_data['dt_overall_simple'] = ops_data['Brine_1st'] - get_v('brine_11')
     dt_ov_hot = ops_data['Stm In_1st'] - ops_data['Brine Out_overall']
-    dt_ov_cold = get_v('cond_temp') - ops_data['SW In_overall']
+    # Cold side ΔT2 = Condensate temp - Feed Temp to Cold Group, per the plant's Overall-HTC sheet
+    # (previously this used Sea Water cond I/L temp, the wrong reference point).
+    dt_ov_cold = get_v('cond_temp') - get_v('feed_cold')
     
     if dt_ov_hot > 0 and dt_ov_cold > 0 and dt_ov_hot != dt_ov_cold:
         lmtd_ov = (dt_ov_hot - dt_ov_cold) / math.log(dt_ov_hot / dt_ov_cold)
@@ -497,6 +503,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.number_input("1st effect vapour pressure (mmHg)", key="in_press", on_change=sync_var, args=('mra_press', 'in_press'))
                     st.number_input("1st effect brine temp (°C)", key="in_bt1", on_change=sync_var, args=('mra_bt1', 'in_bt1'))
                     st.number_input("11th Effect Brine Temp (°C)", key="in_brine_11", on_change=sync_var, args=('brine_11', 'in_brine_11'))
+                    st.number_input("Intermediate Effects Avg Brine Temp (4-7) (°C)", key="in_mid_effects_temp", on_change=sync_var, args=('mid_effects_temp', 'in_mid_effects_temp'), help="Average brine discharge temperature of effects 4, 5, 6 and 7 - used as the cold-side reference for the 1st Effect HTC calculation, per the plant's HTC calculation sheet.")
                 with t4: 
                     st.number_input("Condensate Return (m3/h)", key="in_cond_flow", on_change=sync_var, args=('cond_flow', 'in_cond_flow'))
                     st.number_input("condensate temp (°C)", key="in_cond_temp", on_change=sync_var, args=('cond_temp', 'in_cond_temp'))
@@ -868,6 +875,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "1st effect brine temp": [get_v('mra_bt1')], 
                             "11th Effect Brine Temp": [get_v('brine_11')],
                             "Feed Temp to Cold Group": [get_v('feed_cold')],
+                            "Intermediate Effects Avg Brine Temp": [get_v('mid_effects_temp')],
                             "Delta T": [ops_data['dt_1st']], 
                             "1st effect vapour pressure": [get_v('mra_press')], 
                             "Brine Discharge Temp": [get_v('brine_out_t')], 
@@ -1266,11 +1274,18 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 
                 if len(df_bulk) > 0:
                     for col_name, baseline_val in zip(
-                        ['1st effect vapour pressure', '1st Effect Vapour Temp', 'Sea Water Upper', '1st effect brine temp', 'Brine Water Return', 'LP Steam consumption'],
-                        [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75]
+                        ['1st effect vapour pressure', '1st Effect Vapour Temp', 'Sea Water Upper', '1st effect brine temp', 'Brine Water Return', 'LP Steam consumption', 'Feed Temp to Cold Group'],
+                        [231.76, 68.47, 553.63, 65.46, 1275.50, 71.75, 37.0]
                     ):
                         if col_name in df_bulk.columns:
                             df_bulk[col_name] = df_bulk[col_name].fillna(baseline_val)
+
+                    # "Intermediate Effects Avg Brine Temp" (avg brine discharge of effects 4-7) isn't part of the
+                    # standard DCS/CSV export - it's rarely logged day-to-day. Default to the configured baseline
+                    # whenever it's missing or blank, rather than leaving it NaN and breaking the 1st Effect HTC calc.
+                    if 'Intermediate Effects Avg Brine Temp' not in df_bulk.columns:
+                        df_bulk['Intermediate Effects Avg Brine Temp'] = np.nan
+                    df_bulk['Intermediate Effects Avg Brine Temp'] = pd.to_numeric(df_bulk['Intermediate Effects Avg Brine Temp'], errors='coerce').fillna(get_v('mid_effects_temp'))
                     
                     if 'Anti_PPM' in df_bulk.columns: df_bulk['Anti_PPM'] = df_bulk['Anti_PPM'].fillna(4.82)
                     if 'Gross production' in df_bulk.columns: df_bulk['Gross production'] = df_bulk['Gross production'].fillna(0.0)
@@ -1332,10 +1347,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     # --- Overall HTC via LMTD (matches the manual-entry formula, vectorized for bulk rows) ---
                     # Hot side: 1st effect vapour temp vs brine discharge temp (always present in bulk data).
                     dt_ov_hot = df_bulk['1st Effect Vapour Temp'] - df_bulk['Brine Discharge Temp']
-                    # Cold side: condensate temp vs seawater condenser inlet temp, when condensate temp was
-                    # actually supplied in the CSV; otherwise fall back to the same 0.8x proxy manual entry
-                    # uses when its own cold-side reading is unavailable/invalid.
-                    dt_ov_cold_raw = cond_temp_raw - df_bulk['Sea Water cond I/L temp']
+                    # Cold side: condensate temp vs Feed Temp to Cold Group, per the plant's Overall-HTC sheet
+                    # (previously this used Sea Water cond I/L temp, the wrong reference point). Falls back to
+                    # a 0.8x proxy only if condensate temp genuinely wasn't supplied in the CSV.
+                    dt_ov_cold_raw = cond_temp_raw - df_bulk['Feed Temp to Cold Group']
                     dt_ov_cold = np.where(
                         cond_temp_raw.notna() & (dt_ov_cold_raw > 0),
                         dt_ov_cold_raw,
@@ -1353,10 +1368,15 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     # --- 1st Effect HTC via LMTD ---
                     # Hot side: same as Delta T (1st effect vapour temp vs 1st effect brine temp).
                     dt_1st_hot = df_bulk['Delta T']
-                    # Cold side: bulk data has no per-effect live brine reading (that field is a manual-
-                    # dashboard-only input on the Effects tab), so this always uses the same 0.8x fallback
-                    # manual entry itself falls back to when that live reading is missing.
-                    dt_1st_cold = dt_1st_hot * 0.8
+                    # Cold side: condensate temp vs avg brine discharge temp of intermediate effects (4-7),
+                    # per the plant's 1st effect-HTC sheet (previously a blanket 0.8x proxy off an unrelated
+                    # per-effect live-brine field). Falls back to the 0.8x proxy only if that reading is invalid.
+                    dt_1st_cold_raw = cond_temp_raw - df_bulk['Intermediate Effects Avg Brine Temp']
+                    dt_1st_cold = np.where(
+                        cond_temp_raw.notna() & (dt_1st_cold_raw > 0),
+                        dt_1st_cold_raw,
+                        dt_1st_hot * 0.8
+                    )
                     ratio_1st = np.where(dt_1st_cold > 0, dt_1st_hot / dt_1st_cold, 1.0)
                     log_1st = np.log(np.where(ratio_1st > 0, ratio_1st, 1.0))
                     lmtd_1st = np.where(
@@ -1383,6 +1403,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         "1st effect brine temp": df_bulk['1st effect brine temp'],
                         "11th Effect Brine Temp": df_bulk.get('11th Effect Brine Temp', pd.Series(43.0, index=df_bulk.index)).fillna(43.0),
                         "Feed Temp to Cold Group": df_bulk.get('Feed Temp to Cold Group', pd.Series(37.0, index=df_bulk.index)).fillna(37.0),
+                        "Intermediate Effects Avg Brine Temp": df_bulk['Intermediate Effects Avg Brine Temp'],
                         "Delta T": df_bulk['Delta T'], 
                         "1st effect vapour pressure": df_bulk['1st effect vapour pressure'],
                         "Brine Discharge Temp": df_bulk['Brine Discharge Temp'],
