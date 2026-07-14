@@ -102,7 +102,7 @@ RIL_EXCEL_HEADERS = [
     'Gross desal water production', 'Recovery', 'Conversion (Product to Feed)', 'Gain Output Ratio', 
     '11 effect brine Temp', 'Overall delta T(1st eff brine temp - 11th eff brine temp)', 
     'Steam Economy (Steam/Desal)', 'Antiscalant residual (Cold group)', 'Antiscalant residual (Hot group)', 
-    'Antiscalant residual (Brine)', 'Remarks'
+    'Antiscalant residual (Brine)', 'Feed Temp to Cold Group', 'Intermediate Effects Avg Brine Temp (4,5,6,7)', 'Remarks'
 ]
 
 DEFAULTS = {
@@ -287,12 +287,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
+        date_found = False
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
             # CORE FIX: Standardize all registry dates right now, extract as safe strings
             db_dates_parsed = standardize_dates(st.session_state.daily_logs['Date'])
             db_dates = db_dates_parsed.dt.strftime('%Y-%m-%d').values
             
             if log_date_str in db_dates:
+                date_found = True
                 row_idx = np.where(db_dates == log_date_str)[0][-1]
                 row = st.session_state.daily_logs.iloc[row_idx]
                 
@@ -344,6 +346,20 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.sidebar.success(f"Auto-loaded historical data for {log_date.strftime('%d-%m-%Y')}")
                     st.rerun() 
 
+        if not date_found:
+            # No record exists for this date at all - reset every field to 0 rather than leaving
+            # whatever values were on screen from the last date viewed. Showing stale/default numbers
+            # for a day with no actual log entry makes it look like real data exists when it doesn't.
+            for var_key, default_val in DEFAULTS.items():
+                zero_val = 0.0 if isinstance(default_val, (int, float)) and not isinstance(default_val, bool) else default_val
+                if var_key in ('remarks',): zero_val = ""
+                if var_key in ('skip_eff', 'skip_wq'): zero_val = False
+                st.session_state.vars[var_key] = zero_val
+                for tk in SYNC_MAP.get(var_key, []):
+                    st.session_state[tk] = zero_val
+            st.sidebar.info(f"No record found for {log_date.strftime('%d-%m-%Y')} - all fields reset to 0.")
+            st.rerun()
+
     # Display MED-4 Title
     st.title("MED-4 Management Suite")
 
@@ -380,7 +396,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]]
 
-    ops_data['q_1st'] = (ops_data['Steam'] * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
+    # Heat duty: Steam(TPH) -> kg/hr (x1000), x latent heat (kJ/kg) -> kJ/hr, x1000/3600 -> W.
+    # Previously only one factor of 1000 was applied (the kJ->J conversion), silently dropping the
+    # TPH->kg/hr conversion and making every downstream HTC value exactly 1000x too small.
+    ops_data['q_1st'] = (ops_data['Steam'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
     ops_data['q_overall'] = ops_data['q_1st'] 
 
     dt_1st_hot = ops_data['Stm In_1st'] - ops_data['Brine_1st']
@@ -1287,6 +1306,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     'CW (FCC) return': 'CW Return',
                     'Gross desal water production': 'Gross production',
                     '11 effect brine Temp': '11th Effect Brine Temp',
+                    'Intermediate Effects Avg Brine Temp (4,5,6,7)': 'Intermediate Effects Avg Brine Temp',
                     'Overall delta T(1st eff brine temp - 11th eff brine temp)': 'Overall Delta T'
                 }, inplace=True)
 
@@ -1304,23 +1324,31 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 df_bulk = df_bulk.dropna(subset=["Date"])
                 
                 if len(df_bulk) > 0:
-                    # Guarantee every column referenced by the KPI formulas below actually exists in df_bulk,
-                    # creating it with a sensible baseline if the CSV doesn't include it at all. Previously
-                    # several of these were only filled in *if already present*, which meant a CSV missing one
-                    # of these columns outright (e.g. no "Feed Temp to Cold Group") caused a hard KeyError
-                    # further down instead of falling back gracefully.
+                    # Core throughput/process values: if genuinely missing from the CSV, default to 0 rather
+                    # than a fabricated plausible number. A 0 here cleanly propagates through the ">0" guards
+                    # below into a 0 KPI output for that row - an honest "couldn't calculate", not a fabricated
+                    # stand-in value that could get mistaken for a real reading in the master database.
                     col_defaults = {
-                        '1st effect vapour pressure': 231.76, '1st Effect Vapour Temp': 68.47,
-                        'Sea Water Upper': 553.63, '1st effect brine temp': 65.46,
-                        'Brine Water Return': 1275.50, 'LP Steam consumption': 71.75,
-                        'Feed Temp to Cold Group': get_v('feed_cold'), 'Intermediate Effects Avg Brine Temp': get_v('mid_effects_temp'),
-                        'Brine Discharge Temp': 41.0, 'Sea Water cond I/L temp': 30.0, 'Sea Water Feed': 2100.0,
-                        'Gross production': 0.0, 'Anti_PPM': 4.82,
+                        '1st effect vapour pressure': 0.0, '1st Effect Vapour Temp': 0.0,
+                        'Sea Water Upper': 0.0, '1st effect brine temp': 0.0,
+                        'Brine Water Return': 0.0, 'LP Steam consumption': 0.0,
+                        'Sea Water cond I/L temp': 0.0, 'Sea Water Feed': 0.0,
+                        'Gross production': 0.0, 'Anti_PPM': 0.0,
                     }
                     for col_name, baseline_val in col_defaults.items():
                         if col_name not in df_bulk.columns:
                             df_bulk[col_name] = np.nan
                         df_bulk[col_name] = pd.to_numeric(df_bulk[col_name], errors='coerce').fillna(baseline_val)
+
+                    # HTC cold/hot-side reference temperatures are a different case: a 0 here wouldn't fail
+                    # safe to "0 output" the way the throughput values above do - e.g. Brine Discharge Temp=0
+                    # would make the hot-side driving force huge and wrong, not zero. So these stay genuinely
+                    # missing (NaN) when absent from the CSV, and both HTC formulas below explicitly report 0
+                    # for any row missing one of them, rather than guessing a value.
+                    for col_name in ['Feed Temp to Cold Group', 'Intermediate Effects Avg Brine Temp', 'Brine Discharge Temp', 'condensate temp']:
+                        if col_name not in df_bulk.columns:
+                            df_bulk[col_name] = np.nan
+                        df_bulk[col_name] = pd.to_numeric(df_bulk[col_name], errors='coerce')
                     
                     # MASTER DATE FIX: Aggressively standardize raw CSV string and dump bad lines BEFORE adding to DB.
                     df_bulk['Date_Clean'] = standardize_dates(df_bulk['Date']).dt.strftime('%Y-%m-%d')
@@ -1352,14 +1380,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             
                     df_bulk['Residual'] = df_bulk['Gross production'] - df_bulk['Predicted']
                     
-                    if 'condensate temp' not in df_bulk.columns:
-                        df_bulk['condensate temp'] = np.nan
-                    df_bulk['condensate temp'] = pd.to_numeric(df_bulk['condensate temp'], errors='coerce')
                     cond_temp_raw = df_bulk['condensate temp']
 
                     area_overall = get_v('area_overall')
                     area_1st = get_v('area_1st')
-                    q_overall = (df_bulk['LP Steam consumption'] * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
+                    # Same fix as manual entry: Steam(TPH) -> kg/hr (x1000), x latent heat -> kJ/hr, x1000/3600 -> W.
+                    q_overall = (df_bulk['LP Steam consumption'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
                     q_1st = q_overall
 
                     # --- STEC: Specific Thermal Energy Consumption (kWh/ton), same formula as manual entry ---
@@ -1370,45 +1396,29 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     )
 
                     # --- Overall HTC via LMTD (matches the manual-entry formula, vectorized for bulk rows) ---
-                    # Hot side: 1st effect vapour temp vs brine discharge temp (always present in bulk data).
+                    # Hot side: 1st effect vapour temp vs brine discharge temp.
                     dt_ov_hot = df_bulk['1st Effect Vapour Temp'] - df_bulk['Brine Discharge Temp']
-                    # Cold side: condensate temp vs Feed Temp to Cold Group, per the plant's Overall-HTC sheet
-                    # (previously this used Sea Water cond I/L temp, the wrong reference point). Falls back to
-                    # a 0.8x proxy only if condensate temp genuinely wasn't supplied in the CSV.
-                    dt_ov_cold_raw = cond_temp_raw - df_bulk['Feed Temp to Cold Group']
-                    dt_ov_cold = np.where(
-                        cond_temp_raw.notna() & (dt_ov_cold_raw > 0),
-                        dt_ov_cold_raw,
-                        dt_ov_hot * 0.8
-                    )
-                    ratio_ov = np.where(dt_ov_cold > 0, dt_ov_hot / dt_ov_cold, 1.0)
+                    # Cold side: condensate temp vs Feed Temp to Cold Group, per the plant's Overall-HTC sheet.
+                    # Strict policy: if either Brine Discharge Temp, condensate temp, or Feed Temp to Cold Group
+                    # is missing for a row, Overall HTC reports 0 for that row rather than assuming a value.
+                    dt_ov_cold = cond_temp_raw - df_bulk['Feed Temp to Cold Group']
+                    valid_ov = dt_ov_hot.notna() & dt_ov_cold.notna() & (dt_ov_hot > 0) & (dt_ov_cold > 0) & (dt_ov_hot != dt_ov_cold)
+                    ratio_ov = np.where(valid_ov, dt_ov_hot / dt_ov_cold, 1.0)
                     log_ov = np.log(np.where(ratio_ov > 0, ratio_ov, 1.0))
-                    lmtd_ov = np.where(
-                        (dt_ov_hot > 0) & (dt_ov_cold > 0) & (dt_ov_hot != dt_ov_cold) & (log_ov != 0),
-                        (dt_ov_hot - dt_ov_cold) / log_ov,
-                        dt_ov_hot
-                    )
+                    lmtd_ov = np.where(valid_ov & (log_ov != 0), (dt_ov_hot - dt_ov_cold) / log_ov, 0)
                     df_bulk['Overall HTC'] = np.where((lmtd_ov > 0) & (area_overall > 0), q_overall / (area_overall * lmtd_ov), 0)
 
                     # --- 1st Effect HTC via LMTD ---
                     # Hot side: same as Delta T (1st effect vapour temp vs 1st effect brine temp).
                     dt_1st_hot = df_bulk['Delta T']
                     # Cold side: condensate temp vs avg brine discharge temp of intermediate effects (4-7),
-                    # per the plant's 1st effect-HTC sheet (previously a blanket 0.8x proxy off an unrelated
-                    # per-effect live-brine field). Falls back to the 0.8x proxy only if that reading is invalid.
-                    dt_1st_cold_raw = cond_temp_raw - df_bulk['Intermediate Effects Avg Brine Temp']
-                    dt_1st_cold = np.where(
-                        cond_temp_raw.notna() & (dt_1st_cold_raw > 0),
-                        dt_1st_cold_raw,
-                        dt_1st_hot * 0.8
-                    )
-                    ratio_1st = np.where(dt_1st_cold > 0, dt_1st_hot / dt_1st_cold, 1.0)
+                    # per the plant's 1st effect-HTC sheet. Strict policy: if condensate temp or the
+                    # intermediate-effects reading is missing, 1st Effect HTC reports 0 for that row.
+                    dt_1st_cold = cond_temp_raw - df_bulk['Intermediate Effects Avg Brine Temp']
+                    valid_1st = dt_1st_hot.notna() & dt_1st_cold.notna() & (dt_1st_hot > 0) & (dt_1st_cold > 0) & (dt_1st_hot != dt_1st_cold)
+                    ratio_1st = np.where(valid_1st, dt_1st_hot / dt_1st_cold, 1.0)
                     log_1st = np.log(np.where(ratio_1st > 0, ratio_1st, 1.0))
-                    lmtd_1st = np.where(
-                        (dt_1st_hot > 0) & (dt_1st_cold > 0) & (dt_1st_hot != dt_1st_cold) & (log_1st != 0),
-                        (dt_1st_hot - dt_1st_cold) / log_1st,
-                        dt_1st_hot
-                    )
+                    lmtd_1st = np.where(valid_1st & (log_1st != 0), (dt_1st_hot - dt_1st_cold) / log_1st, 0)
                     df_bulk['1st Effect HTC'] = np.where((lmtd_1st > 0) & (area_1st > 0), q_1st / (area_1st * lmtd_1st), 0)
                     
                     db_ready_dict = {
@@ -1416,28 +1426,28 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         "Sea Water Upper": df_bulk['Sea Water Upper'], 
                         "Sea Water Lower": df_bulk.get('Sea Water Lower', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Sea Water Feed": df_bulk['Sea Water Feed'], 
-                        "Sea Water Pressure": df_bulk.get('Sea Water Pressure', pd.Series(1.7, index=df_bulk.index)).fillna(1.7),
+                        "Sea Water Pressure": df_bulk.get('Sea Water Pressure', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Brine Water Return": df_bulk['Brine Water Return'],
                         "Desal production": df_bulk['Desal production'].fillna(0), 
                         "LP Steam consumption": df_bulk['LP Steam consumption'],
-                        "LP Steam Pressure": df_bulk.get('LP Steam Pressure', pd.Series(4.3, index=df_bulk.index)).fillna(4.3),
+                        "LP Steam Pressure": df_bulk.get('LP Steam Pressure', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Condensate Return": df_bulk.get('Condensate Return', pd.Series(0, index=df_bulk.index)).fillna(0), 
-                        "condensate temp": df_bulk.get('condensate temp', pd.Series(0, index=df_bulk.index)).fillna(0),
-                        "Condensate Conductivity": df_bulk.get('Condensate Conductivity', pd.Series(3.0, index=df_bulk.index)).fillna(3.0),
+                        "condensate temp": df_bulk['condensate temp'].fillna(0),
+                        "Condensate Conductivity": df_bulk.get('Condensate Conductivity', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "1st Effect Vapour Temp": df_bulk['1st Effect Vapour Temp'], 
                         "1st effect brine temp": df_bulk['1st effect brine temp'],
-                        "11th Effect Brine Temp": df_bulk.get('11th Effect Brine Temp', pd.Series(43.0, index=df_bulk.index)).fillna(43.0),
-                        "Feed Temp to Cold Group": df_bulk.get('Feed Temp to Cold Group', pd.Series(37.0, index=df_bulk.index)).fillna(37.0),
-                        "Intermediate Effects Avg Brine Temp": df_bulk['Intermediate Effects Avg Brine Temp'],
+                        "11th Effect Brine Temp": df_bulk.get('11th Effect Brine Temp', pd.Series(0, index=df_bulk.index)).fillna(0),
+                        "Feed Temp to Cold Group": df_bulk['Feed Temp to Cold Group'].fillna(0),
+                        "Intermediate Effects Avg Brine Temp": df_bulk['Intermediate Effects Avg Brine Temp'].fillna(0),
                         "Delta T": df_bulk['Delta T'], 
                         "1st effect vapour pressure": df_bulk['1st effect vapour pressure'],
-                        "Brine Discharge Temp": df_bulk['Brine Discharge Temp'],
-                        "Brine Discharge Pressure": df_bulk.get('Brine Discharge Pressure', pd.Series(1.3, index=df_bulk.index)).fillna(1.3),
+                        "Brine Discharge Temp": df_bulk['Brine Discharge Temp'].fillna(0),
+                        "Brine Discharge Pressure": df_bulk.get('Brine Discharge Pressure', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Sea Water cond I/L temp": df_bulk['Sea Water cond I/L temp'], 
                         "Sea Water Condenser O/L Temp": df_bulk.get('Sea Water Condenser O/L Temp', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "CW supply": df_bulk.get('CW supply', pd.Series(0, index=df_bulk.index)).fillna(0), 
                         "CW Return": df_bulk.get('CW Return', pd.Series(0, index=df_bulk.index)).fillna(0),
-                        "CW Flow": df_bulk.get('CW Flow', pd.Series(2726.0, index=df_bulk.index)).fillna(2726.0),
+                        "CW Flow": df_bulk.get('CW Flow', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Gross production": df_bulk['Gross production'],
                         "GOR": df_bulk['GOR'].round(2), 
                         "STEC": df_bulk['STEC'].round(2),
@@ -1447,7 +1457,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         "Antiscalant (kg)": df_bulk.get('Antiscalant (kg)', pd.Series(0, index=df_bulk.index)).fillna(0), 
                         "Antifoam (kg)": df_bulk.get('Antifoam (kg)', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Anti_PPM": df_bulk['Anti_PPM'], 
-                        "Foam_PPM": df_bulk.get('Foam_PPM', pd.Series(np.nan, index=df_bulk.index)),
+                        "Foam_PPM": df_bulk.get('Foam_PPM', pd.Series(0, index=df_bulk.index)).fillna(0),
                         "Remarks": df_bulk.get('Remarks', pd.Series("", index=df_bulk.index)).fillna(""),
                         "Area_1st": area_1st, 
                         "Area_Overall": area_overall
@@ -1455,7 +1465,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     
                     for cat in ['Feed', 'Product']:
                         for param, details in WATER_SPECS[cat].items(): 
-                            db_ready_dict[details['db_col']] = df_bulk.get(details['db_col'], pd.Series(details['avg'], index=df_bulk.index)).fillna(details['avg'])
+                            db_ready_dict[details['db_col']] = df_bulk.get(details['db_col'], pd.Series(0, index=df_bulk.index)).fillna(0)
                             
                     db_ready_df = pd.DataFrame(db_ready_dict)
                     
