@@ -289,7 +289,7 @@ SYNC_MAP = {
     'b_sio2': ['in_b_sio2'], 'b_cl': ['in_b_cl'],
     'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm', 't5_anti'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
     'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
-    'remarks': ['in_remarks'],
+    'remarks': ['in_remarks', 't0_remarks'],
     'area_1st': ['in_area_1st', 't2_area_1st'], 'area_overall': ['in_area_overall', 't2_area_overall'],
     'sw_lower': ['in_sw_low'], 'cond_flow': ['in_cond_flow'], 'cond_temp': ['in_cond_temp'], 'cond_cond': ['in_cond_cond'],
     'sw_out_t': ['in_sw_out'], 'cw_supply': ['in_cw_supply'], 'cw_return': ['in_cw_return'], 'cw_flow': ['in_cw_flow']
@@ -762,7 +762,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
                 st.divider()
                 st.number_input("Condensate Conductivity (µS/cm)", key="in_cond_cond", on_change=sync_var, args=('cond_cond', 'in_cond_cond'))
-                st.text_area("Remarks", key="in_remarks", on_change=sync_var, args=('remarks', 'in_remarks'), height=68)
+                st.text_area("Remarks", key="t0_remarks", on_change=sync_var, args=('remarks', 't0_remarks'), height=68,
+                             help="Mirrors the Remarks box on the Reporting tab - edit either one.")
 
                 with st.expander("Effect-wise Temperature Cascade (optional)"):
                     st.checkbox("Skip effect-wise temperatures today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
