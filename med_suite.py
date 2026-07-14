@@ -433,8 +433,20 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         return
             
     st.sidebar.divider()
-    log_date = st.sidebar.date_input("Date", datetime.date.today(), format="DD/MM/YYYY")
+    # Default to the most recent date that actually has data, not today. Defaulting to today meant
+    # that whenever the registry lagged the calendar (e.g. data ends 6 Jul, today is 14 Jul) the app
+    # opened on a date with no record, reset every field to 0, and showed HTC/KPIs as 0 - even though
+    # the registry and the trend charts were perfectly fine.
+    _default_date = datetime.date.today()
+    _logs0 = st.session_state.get('daily_logs')
+    if _logs0 is not None and not _logs0.empty and 'Date' in _logs0.columns:
+        _d = standardize_dates(_logs0['Date']).dropna()
+        if not _d.empty:
+            _default_date = _d.max().date()
+    log_date = st.sidebar.date_input("Date", _default_date, format="DD/MM/YYYY")
     log_date_str = log_date.strftime('%Y-%m-%d')
+    if _default_date != datetime.date.today() and log_date == _default_date:
+        st.sidebar.caption(f"Showing latest record ({_default_date.strftime('%d-%m-%Y')}).")
     
     if 'last_selected_date' not in st.session_state: 
         st.session_state.last_selected_date = None
@@ -454,24 +466,38 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 
                 db_to_var_mapping = {
                     'gross': ['Gross production'], 
-                    'desal': ['Desal production'], 
-                    'steam': ['LP Steam consumption'], 'stm_press': ['LP Steam Pressure'],
-                    'sw_total': ['Sea Water Feed'], 'sw_press': ['Sea Water Pressure'],
+                    'stm_press': ['LP Steam Pressure'],
+                    'sw_press': ['Sea Water Pressure'],
                     'sw_upper': ['Sea Water Upper'], 'sw_lower': ['Sea Water Lower'],
-                    'cond_flow': ['Condensate Return'], 'cond_temp': ['condensate temp'], 'cond_cond': ['Condensate Conductivity'],
+                    'cond_cond': ['Condensate Conductivity'],
                     'sw_out_t': ['Sea Water Condenser O/L Temp'], 
                     'cw_supply': ['CW supply'], 'cw_return': ['CW Return'], 'cw_flow': ['CW Flow'],
                     'chem_anti_cons': ['Antiscalant (kg)'], 'chem_foam_cons': ['Antifoam (kg)'], 
                     'mra_press': ['1st effect vapour pressure'], 
-                    'mra_t1': ['1st Effect Vapour Temp'], 
-                    'mra_bt1': ['1st effect brine temp'], 
-                    'brine_11': ['11th Effect Brine Temp'], 'feed_cold': ['Feed Temp to Cold Group'],
+                    'brine_11': ['11th Effect Brine Temp'],
                     'brine_ret': ['Brine Water Return'], 'brine_press': ['Brine Discharge Pressure'],
                     'chem_anti_ppm': ['Anti_PPM'], 'chem_foam_ppm': ['Foam_PPM'],
                     'sw_in_t': ['Sea Water cond I/L temp'], 
-                    'brine_out_t': ['Brine Discharge Temp'], 
                     'vap_out_t': ['Vap_Out_Temp'], 
-                    'remarks': ['Remarks'], 'area_1st': ['Area_1st'], 'area_overall': ['Area_Overall']
+                    'remarks': ['Remarks'], 'area_1st': ['Area_1st'], 'area_overall': ['Area_Overall'],
+
+                    # --- HTC-critical inputs: list EVERY column that can carry the value, in priority
+                    # order, because the same physical reading is stored under different names depending
+                    # on which uploader wrote it. Previously these pointed at a single Operational column:
+                    #   - 'Feed Temp to Cold Group' is no longer written by ANY uploader (the Overall HTC
+                    #     uploader writes HTCO_Feed_Temp_ColdGrp), so feed_cold never loaded.
+                    #   - 'Brine Discharge Temp' is '-' (blank) for every row of the Operational sheet,
+                    #     so brine_out_t never loaded either.
+                    # Both silently stayed 0, which collapsed the Overall HTC driving forces to 0.
+                    'feed_cold': ['HTCO_Feed_Temp_ColdGrp', 'Feed Temp to Cold Group'],
+                    'brine_out_t': ['HTCO_Brine_Disch_Temp', 'Brine Discharge Temp'],
+                    'cond_temp': ['condensate temp', 'HTC1_Cond_Temp', 'HTCO_Cond_Temp'],
+                    'mra_t1': ['1st Effect Vapour Temp', 'HTC1_Vapor_Temp', 'HTCO_Vapor_Temp'],
+                    'mra_bt1': ['1st effect brine temp', 'HTC1_Brine_Temp'],
+                    'steam': ['LP Steam consumption', 'HTC1_Steam_TPH', 'HTCO_Steam_TPH'],
+                    'sw_total': ['Sea Water Feed', 'HTCO_Feed_Flow'],
+                    'desal': ['Desal production', 'HTC1_Product_Flow', 'HTCO_Product_Flow'],
+                    'cond_flow': ['Condensate Return', 'HTC1_Cond_Flow', 'HTCO_Cond_Flow'],
                 }
                 
                 for cat in ['Feed', 'Product']:
@@ -494,6 +520,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                         val = val_str
                                     else: 
                                         val = float(val_str.replace(',', ''))
+                                    # Heat transfer areas are fixed equipment geometry. An old row that
+                                    # stored 0/blank must not overwrite the real constant, or every HTC
+                                    # on this date silently reads 0.
+                                    if var_key in ('area_1st', 'area_overall') and (not val or val <= 0):
+                                        break
                                     st.session_state.vars[var_key] = val
                                     for tk in SYNC_MAP.get(var_key, []): 
                                         st.session_state[tk] = val
