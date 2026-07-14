@@ -98,6 +98,8 @@ WATER_SPECS = {
         "Total Alkalinity": {"lim": (160.0, 190.0), "var": "f_alk", "db_col": "Feed_Alkalinity", "avg": 170.0},
         "Calcium Hardness": {"lim": (950.0, 1100.0), "var": "f_ca", "db_col": "Feed_Calcium", "avg": 1040.0},
         "Mg Hardness": {"lim": (5400.0, 5700.0), "var": "f_mg", "db_col": "Feed_MgHardness", "avg": 5550.0},
+        "Total Hardness": {"lim": (0.0, 7000.0), "var": "f_hard", "db_col": "Feed_TotalHardness", "avg": 6640.0},
+        "Conductivity (μs/cm)": {"lim": (0.0, 70000.0), "var": "f_cond", "db_col": "Feed_Cond", "avg": 57000.0},
         "Silica": {"lim": (0.0, 0.67), "var": "f_sio2", "db_col": "Feed_Silica", "avg": 0.3},
         "Chlorides": {"lim": (21000.0, 22000.0), "var": "f_cl", "db_col": "Feed_Chlorides", "avg": 21500.0},
         "Sulphate": {"lim": (3050.0, 3250.0), "var": "f_so4", "db_col": "Feed_Sulphate", "avg": 3150.0},
@@ -108,12 +110,30 @@ WATER_SPECS = {
         "Turbidity (NTU)": {"lim": (0.0, 1.0), "var": "p_turb", "db_col": "Product_Turbidity", "avg": 0.1},
         "Conductivity (μs/cm)": {"lim": (0.0, 15.0), "var": "p_cond", "db_col": "Product_Cond", "avg": 4.6},
         "TDS (ppm)": {"lim": (0.0, 10.0), "var": "p_tds", "db_col": "Product_TDS", "avg": 2.5},
+        "Total Alkalinity": {"lim": (0.0, 10.0), "var": "p_alk", "db_col": "Product_Alkalinity", "avg": 2.0},
+        "Calcium Hardness": {"lim": (0.0, 1.0), "var": "p_ca", "db_col": "Product_Calcium", "avg": 0.0},
+        "Mg Hardness": {"lim": (0.0, 1.0), "var": "p_mg", "db_col": "Product_MgHardness", "avg": 0.0},
         "Total Hardness": {"lim": (0.0, 0.1), "var": "p_hard", "db_col": "Product_TotalHardness", "avg": 0.0},
         "Total Iron": {"lim": (0.0, 0.1), "var": "p_iron", "db_col": "Product_Iron", "avg": 0.05},
         "Silica": {"lim": (0.0, 0.02), "var": "p_sio2", "db_col": "Product_Silica", "avg": 0.0},
         "Chlorides": {"lim": (0.0, 5.0), "var": "p_cl", "db_col": "Product_Chlorides", "avg": 0.0},
         "Sulphate": {"lim": (0.0, 1.0), "var": "p_so4", "db_col": "Product_Sulphate", "avg": 0.0}
     }
+}
+
+# Brine water analysis - right-hand block of the 'Feed & Brine Water Analysis' sheet.
+# The sheet lists no specified limits for brine, so these are tracked/trended, not pass-fail graded.
+BRINE_SPECS = {
+    "pH": {"var": "b_ph", "db_col": "Brine_pH", "avg": 8.4},
+    "Turbidity (NTU)": {"var": "b_turb", "db_col": "Brine_Turbidity", "avg": 14.0},
+    "Conductivity (μs/cm)": {"var": "b_cond", "db_col": "Brine_Cond", "avg": 80500.0},
+    "TDS (ppm)": {"var": "b_tds", "db_col": "Brine_TDS", "avg": 52325.0},
+    "Total Alkalinity": {"var": "b_alk", "db_col": "Brine_Alkalinity", "avg": 218.0},
+    "Calcium Hardness": {"var": "b_ca", "db_col": "Brine_Calcium", "avg": 1790.0},
+    "Mg Hardness": {"var": "b_mg", "db_col": "Brine_MgHardness", "avg": 10710.0},
+    "Total Hardness": {"var": "b_hard", "db_col": "Brine_TotalHardness", "avg": 12500.0},
+    "Silica": {"var": "b_sio2", "db_col": "Brine_Silica", "avg": 0.0},
+    "Chlorides": {"var": "b_cl", "db_col": "Brine_Chlorides", "avg": 31200.0},
 }
 
 EXACT_DB_COLUMNS = [
@@ -139,14 +159,12 @@ EXACT_DB_COLUMNS = [
     "HTCO_Feed_Flow", "HTCO_Product_Flow", "HTCO_Cond_Flow", "HTCO_Steam_TPH",
     "HTCO_Feed_Temp_ColdGrp", "HTCO_Brine_Disch_Temp", "HTCO_Vapor_Temp", "HTCO_Cond_Temp",
     "HTCO_dT1", "HTCO_dT2", "HTCO_LMTD", "HTCO_Q_Steam", "HTCO_Fouling", "HTCO_Rf",
-    # --- Brine water analysis (from 'Feed & Brine Water Analysis' sheet, right-hand block) ---
-    "Brine_pH", "Brine_Turbidity", "Brine_Cond", "Brine_TDS", "Brine_Alkalinity",
-    "Brine_Calcium", "Brine_MgHardness", "Brine_TotalHardness", "Brine_Silica", "Brine_Chlorides",
-    "Feed_Cond", "Feed_TotalHardness",
 ]
 for cat in ['Feed', 'Product']:
     for param, details in WATER_SPECS[cat].items(): 
         EXACT_DB_COLUMNS.append(details['db_col'])
+for param, details in BRINE_SPECS.items():
+    EXACT_DB_COLUMNS.append(details['db_col'])
 
 RIL_EXCEL_HEADERS = [
     'Parameter', 'Sea water Upper', 'Sea water Lower', 'Sea water feed', 'Brine return', 
@@ -203,11 +221,16 @@ DESAL_BULK_HEADERS = [
 # Computes GOR, STEC and MRA Residual - never touches any HTC field.
 OPERATIONAL_BULK_HEADERS = [
     'Parameter', 'Sea water Upper', 'Sea water Lower', 'Sea water feed', 'Brine return',
-    ' Desal Production', 'LP Steam Consumption', 'Condensate return',
-    'CW (FCC) supply', 'CW (FCC) return', 'Gross desal water production',
+    ' Desal Production', 'LP Steam Consumption', 'Condensate return', 'Condensate Temp',
+    "1'st effect vapour Temp", '1st Effect Brine Temp', '1st Effect Vapour pres',
+    'Steam Inlet Temp', 'Brine DischargeTemp',
+    'Sea water cond (FFC) I/L temp', 'Sea water cond (FFC) o/L temp',
+    'CW (FCC) supply', 'CW (FCC) return', 'Gross desal water production', '11 effect brine Temp',
     'Antiscalant residual (Cold group)', 'Antiscalant residual (Hot group)', 'Antiscalant residual (Brine)',
     'Remarks'
 ]
+# Derived on the sheet, deliberately NOT in the template: Delta Temp, Recovery, Conversion,
+# Gain Output Ratio, Overall delta T, Steam Economy. The calculator recomputes all of these.
 
 # --- HTC Data bulk template: mirrors your '1st effect-HTC' and 'Overall-HTC' calculation sheets exactly.
 # Column names are unambiguous about which effect they belong to (unlike the source sheets, which reuse
@@ -225,14 +248,19 @@ DEFAULTS = {
     'steam': 71.75, 'stm_press': 4.3, 'desal': 800.0, 'gross': 801.4, 'sw_upper': 553.63, 'sw_total': 2100.0, 'sw_press': 1.7, 
     'brine_ret': 1275.5, 'brine_press': 1.3,
     'sw_in_t': 30.0, 'brine_out_t': 41.0, 'vap_out_t': 70.0, 'mra_press': 231.76, 'mra_t1': 68.47, 'mra_bt1': 65.46,
-    'brine_11': 43.0, 'feed_cold': 37.0, 'mid_effects_temp': 56.0,
-    'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0, 'f_alk': 170.0, 'f_ca': 1040.0, 'f_mg': 5550.0, 'f_sio2': 0.3, 'f_cl': 21500.0, 'f_so4': 3150.0, 'f_sulfide': 0.0,
-    'p_ph': 6.5, 'p_turb': 0.1, 'p_cond': 4.6, 'p_tds': 2.5, 'p_hard': 0.0, 'p_iron': 0.05, 'p_sio2': 0.0, 'p_cl': 0.0, 'p_so4': 0.0,
+    'brine_11': 40.17, 'feed_cold': 40.0, 'mid_effects_temp': 49.14, 'htc1_feed_flow': 514.0,
+    'steam_in_t': 172.34,
+    'f_ph': 8.14, 'f_turb': 3.2, 'f_tss': 6.5, 'f_tds': 41000.0, 'f_alk': 170.0, 'f_ca': 1040.0, 'f_mg': 5550.0,
+    'f_hard': 6640.0, 'f_cond': 57000.0, 'f_sio2': 0.3, 'f_cl': 21500.0, 'f_so4': 3150.0, 'f_sulfide': 0.0,
+    'p_ph': 6.5, 'p_turb': 0.1, 'p_cond': 4.6, 'p_tds': 2.5, 'p_alk': 2.0, 'p_ca': 0.0, 'p_mg': 0.0,
+    'p_hard': 0.0, 'p_iron': 0.05, 'p_sio2': 0.0, 'p_cl': 0.0, 'p_so4': 0.0,
+    'b_ph': 8.4, 'b_turb': 14.0, 'b_cond': 80500.0, 'b_tds': 52325.0, 'b_alk': 218.0, 'b_ca': 1790.0,
+    'b_mg': 10710.0, 'b_hard': 12500.0, 'b_sio2': 0.0, 'b_cl': 31200.0,
     'chem_anti_ppm': 4.82, 'chem_anti_cons': 13.5, 'chem_foam_ppm': 0.0, 'chem_foam_cons': 0.0,
     # Area_1st = pi * tube_length(5.5m) * tube_count(31244) * tube_OD(0.024m); Area_Overall = 11 effects * Area_1st * 1.15
     # (correction factor). Previous defaults (1757.49 / 19332.0) were roughly 7-8x too small, which alone made HTC
     # numbers wrong by close to an order of magnitude regardless of anything else. See tube-geometry calc sheet.
-    'skip_eff': False, 'skip_wq': False, 'remarks': "", 'area_1st': 12950.01, 'area_overall': 163818.0,
+    'skip_eff': False, 'skip_wq': False, 'remarks': "", 'area_1st': HTC_1ST_AREA, 'area_overall': HTC_OVERALL_AREA,
     'sw_lower': 0.0, 'cond_flow': 0.0, 'cond_temp': 0.0, 'cond_cond': 3.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0, 'cw_flow': 2726.0
 }
 
@@ -243,16 +271,26 @@ SYNC_MAP = {
     'sw_in_t': ['in_sw_in', 't2_sw_in'], 'brine_out_t': ['in_brine_out', 't2_brine_out'], 
     'vap_out_t': ['in_vap_out', 't2_vap_out'], 'mra_press': ['in_press', 't5_press'], 
     'mra_t1': ['in_t1', 't5_t1', 't2_t1'], 'mra_bt1': ['in_bt1', 't5_bt1', 't2_bt1'], 
-    'brine_11': ['in_brine_11'], 'feed_cold': ['in_feed_cold'], 'mid_effects_temp': ['in_mid_effects_temp', 't2_mid_effects_temp'],
+    'brine_11': ['in_brine_11'], 'feed_cold': ['in_feed_cold', 't2_feed_cold'],
+    'mid_effects_temp': ['in_mid_effects_temp', 't2_mid_effects_temp'],
+    'htc1_feed_flow': ['in_htc1_feed_flow', 't2_htc1_feed_flow'], 'steam_in_t': ['in_steam_in_t'],
     'f_ph': ['in_f_ph', 't3_f_ph'], 
     'f_turb': ['in_f_turb', 't3_f_turb'], 'f_tss': ['in_f_tss', 't3_f_tss'], 'f_tds': ['in_f_tds', 't3_f_tds'],
-    'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_mg': ['t3_f_mg'], 'f_sio2': ['t3_f_sio2'],
-    'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'], 'f_sulfide': ['t3_f_sulfide'],
-    'p_ph': ['in_p_ph', 't3_p_ph'], 'p_turb': ['t3_p_turb'], 'p_cond': ['in_p_cond', 't3_p_cond'], 'p_tds': ['in_p_tds', 't3_p_tds'], 
-    'p_hard': ['t3_p_hard'], 'p_iron': ['in_p_iron', 't3_p_iron'], 'p_sio2': ['t3_p_sio2'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
+    'f_alk': ['in_f_alk', 't3_f_alk'], 'f_ca': ['in_f_ca', 't3_f_ca'], 'f_mg': ['in_f_mg', 't3_f_mg'],
+    'f_hard': ['in_f_hard', 't3_f_hard'], 'f_cond': ['in_f_cond', 't3_f_cond'],
+    'f_sio2': ['in_f_sio2', 't3_f_sio2'], 'f_cl': ['in_f_cl', 't3_f_cl'], 'f_so4': ['in_f_so4', 't3_f_so4'],
+    'f_sulfide': ['in_f_sulfide', 't3_f_sulfide'],
+    'p_ph': ['in_p_ph', 't3_p_ph'], 'p_turb': ['in_p_turb', 't3_p_turb'], 'p_cond': ['in_p_cond', 't3_p_cond'],
+    'p_tds': ['in_p_tds', 't3_p_tds'], 'p_alk': ['in_p_alk', 't3_p_alk'], 'p_ca': ['in_p_ca', 't3_p_ca'],
+    'p_mg': ['in_p_mg', 't3_p_mg'], 'p_hard': ['in_p_hard', 't3_p_hard'], 'p_iron': ['in_p_iron', 't3_p_iron'],
+    'p_sio2': ['in_p_sio2', 't3_p_sio2'], 'p_cl': ['in_p_cl', 't3_p_cl'], 'p_so4': ['in_p_so4', 't3_p_so4'],
+    'b_ph': ['in_b_ph'], 'b_turb': ['in_b_turb'], 'b_cond': ['in_b_cond'], 'b_tds': ['in_b_tds'],
+    'b_alk': ['in_b_alk'], 'b_ca': ['in_b_ca'], 'b_mg': ['in_b_mg'], 'b_hard': ['in_b_hard'],
+    'b_sio2': ['in_b_sio2'], 'b_cl': ['in_b_cl'],
     'chem_anti_ppm': ['in_anti_ppm', 't4_anti_ppm', 't5_anti'], 'chem_anti_cons': ['in_anti_cons', 't4_anti_cons'],
     'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
-    'remarks': ['in_remarks'], 'area_1st': ['t2_area_1st'], 'area_overall': ['t2_area_overall'],
+    'remarks': ['in_remarks'],
+    'area_1st': ['in_area_1st', 't2_area_1st'], 'area_overall': ['in_area_overall', 't2_area_overall'],
     'sw_lower': ['in_sw_low'], 'cond_flow': ['in_cond_flow'], 'cond_temp': ['in_cond_temp'], 'cond_cond': ['in_cond_cond'],
     'sw_out_t': ['in_sw_out'], 'cw_supply': ['in_cw_supply'], 'cw_return': ['in_cw_return'], 'cw_flow': ['in_cw_flow']
 }
@@ -439,6 +477,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 for cat in ['Feed', 'Product']:
                     for param, d in WATER_SPECS[cat].items(): 
                         db_to_var_mapping[d['var']] = [d['db_col']]
+                for param, d in BRINE_SPECS.items():
+                    db_to_var_mapping[d['var']] = [d['db_col']]
+                db_to_var_mapping['mid_effects_temp'] = ['HTC1_Feed_Temp_Eff4to7', 'Intermediate Effects Avg Brine Temp']
+                db_to_var_mapping['htc1_feed_flow'] = ['HTC1_Feed_Flow']
+                db_to_var_mapping['steam_in_t'] = ['Steam Inlet Temp']
 
                 loaded_vars = False
                 for var_key, col_names in db_to_var_mapping.items():
@@ -463,17 +506,22 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.rerun() 
 
         if not date_found:
-            # No record exists for this date at all - reset every field to 0 rather than leaving
+            # No record exists for this date at all - reset every MEASURED field to 0 rather than leaving
             # whatever values were on screen from the last date viewed. Showing stale/default numbers
             # for a day with no actual log entry makes it look like real data exists when it doesn't.
+            # Plant CONSTANTS are excluded: the heat transfer areas are fixed equipment geometry, not
+            # daily readings, and zeroing them would force HTC to 0 even after valid data is entered.
+            PLANT_CONSTANTS = ('area_1st', 'area_overall')
             for var_key, default_val in DEFAULTS.items():
+                if var_key in PLANT_CONSTANTS:
+                    continue
                 zero_val = 0.0 if isinstance(default_val, (int, float)) and not isinstance(default_val, bool) else default_val
                 if var_key in ('remarks',): zero_val = ""
                 if var_key in ('skip_eff', 'skip_wq'): zero_val = False
                 st.session_state.vars[var_key] = zero_val
                 for tk in SYNC_MAP.get(var_key, []):
                     st.session_state[tk] = zero_val
-            st.sidebar.info(f"No record found for {log_date.strftime('%d-%m-%Y')} - all fields reset to 0.")
+            st.sidebar.info(f"No record found for {log_date.strftime('%d-%m-%Y')} - measured fields reset to 0.")
             st.rerun()
 
     # Display MED-4 Title
@@ -512,41 +560,68 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             
     display_effect_df = display_effect_df[["Effect ID", "Base Vapor (°C)", "Live Vapor (°C)", "Base Brine (°C)", "Live Brine (°C)", "Base HTC"]]
 
-    # Heat duty: Steam(TPH) -> kg/hr (x1000), x latent heat (kJ/kg) -> kJ/hr, x1000/3600 -> W.
-    # Previously only one factor of 1000 was applied (the kJ->J conversion), silently dropping the
-    # TPH->kg/hr conversion and making every downstream HTC value exactly 1000x too small.
+    # ---- HEAT DUTY (steam condensation basis) --------------------------------------------------
+    # Mirrors cols V/W/X of BOTH HTC sheets:
+    #   ms (kg/hr) = Steam(TPH) x 1000
+    #   W  (kJ/hr) = ms x latent heat
+    #   Q  (W)     = W x 1000 / 3600
     ops_data['q_1st'] = (ops_data['Steam'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
-    ops_data['q_overall'] = ops_data['q_1st'] 
+    ops_data['q_overall'] = ops_data['q_1st']
 
-    dt_1st_hot = ops_data['Stm In_1st'] - ops_data['Brine_1st']
-    # Cold side ΔT2 = Condensate temp - avg brine discharge temp of the intermediate effects (4,5,6,7),
-    # per the plant's HTC calculation sheet. Falls back to the hot-side*0.8 proxy only if the reading is
-    # missing/invalid, since this is a distinct manual/derived input separate from any single effect's live brine.
-    dt_1st_cold = get_v('cond_temp') - get_v('mid_effects_temp')
-    if pd.isna(dt_1st_cold) or dt_1st_cold <= 0: dt_1st_cold = dt_1st_hot * 0.8
+    def _lmtd_scalar(dt1, dt2):
+        """LMTD = (dT1 - dT2) / ln(dT1/dT2), col N of both sheets. Returns 0 when either driving
+        force is missing or non-positive, so the HTC downstream honestly reports 0 rather than a
+        fabricated number. Note dT2 > dT1 in this plant's data - the formula handles that fine."""
+        try:
+            if dt1 is None or dt2 is None or pd.isna(dt1) or pd.isna(dt2):
+                return 0.0
+            if dt1 <= 0 or dt2 <= 0:
+                return 0.0
+            if dt1 == dt2:
+                return float(dt1)
+            return (dt1 - dt2) / math.log(dt1 / dt2)
+        except Exception:
+            return 0.0
 
-    if dt_1st_hot > 0 and dt_1st_cold > 0 and dt_1st_hot != dt_1st_cold:
-        lmtd_1st = (dt_1st_hot - dt_1st_cold) / math.log(dt_1st_hot / dt_1st_cold)
-    else:
-        lmtd_1st = dt_1st_hot
-
-    ops_data['dt_1st'] = dt_1st_hot
-    ops_data['htc_1st'] = ops_data['q_1st'] / (get_v('area_1st') * lmtd_1st) if lmtd_1st > 0 and get_v('area_1st') > 0 else 0
+    # ---- 1st EFFECT HTC  (sheet: '1st effect-HTC') ----------------------------------------------
+    # dT1 = 1st effect vapour temp - 1st effect brine temp        (col L)
+    # dT2 = condensate temp - AVG BRINE TEMP OF EFFECTS 4,5,6,7   (col M)
+    #       NB: the sheet labels that column "Feed Temp", but its tag row reads "Avg of effects of
+    #       7,6,5,4". It is NOT a seawater temperature.
+    ops_data['dt_1st'] = get_v('mra_t1') - get_v('mra_bt1')
+    ops_data['dt2_1st'] = get_v('cond_temp') - get_v('mid_effects_temp')
+    ops_data['lmtd_1st'] = _lmtd_scalar(ops_data['dt_1st'], ops_data['dt2_1st'])
+    _a1 = get_v('area_1st')
+    ops_data['htc_1st'] = (
+        ops_data['q_1st'] / (_a1 * ops_data['lmtd_1st'])
+        if ops_data['lmtd_1st'] > 0 and _a1 > 0 else 0
+    )
     ops_data['fouling_1st'] = 1 / ops_data['htc_1st'] if ops_data['htc_1st'] > 0 else 0
+    # Rf = 1/U_actual - 1/U_SOR_baseline   (col AC)
+    ops_data['rf_1st'] = (
+        (1 / ops_data['htc_1st']) - (1 / HTC_1ST_U_SOR) if ops_data['htc_1st'] > 0 else 0
+    )
 
-    ops_data['dt_overall_simple'] = ops_data['Brine_1st'] - get_v('brine_11')
-    dt_ov_hot = ops_data['Stm In_1st'] - ops_data['Brine Out_overall']
-    # Cold side ΔT2 = Condensate temp - Feed Temp to Cold Group, per the plant's Overall-HTC sheet
-    # (previously this used Sea Water cond I/L temp, the wrong reference point).
-    dt_ov_cold = get_v('cond_temp') - get_v('feed_cold')
-    
-    if dt_ov_hot > 0 and dt_ov_cold > 0 and dt_ov_hot != dt_ov_cold:
-        lmtd_ov = (dt_ov_hot - dt_ov_cold) / math.log(dt_ov_hot / dt_ov_cold)
-    else:
-        lmtd_ov = dt_ov_hot
-        
-    ops_data['htc_overall'] = ops_data['q_overall'] / (get_v('area_overall') * lmtd_ov) if lmtd_ov > 0 and get_v('area_overall') > 0 else 0
+    # ---- OVERALL HTC  (sheet: 'Overall-HTC') ----------------------------------------------------
+    # dT1 = 1st effect vapour temp - brine DISCHARGE temp   (col L)
+    # dT2 = condensate temp - FEED TEMP TO COLD GROUP       (col M)
+    #       NB: this sheet ALSO labels its column "Feed Temp", but here it means the cold-group feed
+    #       temp (~40 C) - a different measurement from the 1st-effect sheet's "Feed Temp" (~49 C).
+    ops_data['dt1_overall'] = get_v('mra_t1') - get_v('brine_out_t')
+    ops_data['dt2_overall'] = get_v('cond_temp') - get_v('feed_cold')
+    ops_data['lmtd_overall'] = _lmtd_scalar(ops_data['dt1_overall'], ops_data['dt2_overall'])
+    _ao = get_v('area_overall')
+    ops_data['htc_overall'] = (
+        ops_data['q_overall'] / (_ao * ops_data['lmtd_overall'])
+        if ops_data['lmtd_overall'] > 0 and _ao > 0 else 0
+    )
     ops_data['fouling_overall'] = 1 / ops_data['htc_overall'] if ops_data['htc_overall'] > 0 else 0
+    ops_data['rf_overall'] = (
+        (1 / ops_data['htc_overall']) - (1 / HTC_OVERALL_U_SOR) if ops_data['htc_overall'] > 0 else 0
+    )
+
+    # Simple (non-LMTD) cascade delta, shown for reference only.
+    ops_data['dt_overall_simple'] = get_v('mra_t1') - get_v('brine_11')
 
     mra_data = {}
     coefs = st.session_state.mra_coef 
@@ -608,87 +683,194 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     # --- TAB 0: INPUTS & PFD ---
     with tabs[0]:
         tab0_subtabs = st.tabs(["Data Entry", "Live PFD Monitor"])
-        
+
         with tab0_subtabs[0]:
-            st.subheader("Central Data Entry Panel")
-            if mra_data['Predicted'] > 950: 
-                st.warning("MRA Prediction is unusually high (>950 m³/h). Please verify you did not accidentally enter the 'Sea Water Feed' (~2100) into the 'Sea Water Upper' (~550) input.")
-                
-            with st.expander("1. Hydraulics & Mass Balance", expanded=True):
-                c1, c2, c3, c4 = st.columns(4)
-                with c1:
-                    st.number_input("LP Steam consumption (TPH)", key="in_steam", on_change=sync_var, args=('steam', 'in_steam'))
-                    st.number_input("Sea Water Upper (m³/h)", key="in_sw_up", on_change=sync_var, args=('sw_upper', 'in_sw_up'))
-                with c2:
-                    st.number_input("Sea Water Feed (m³/h)", key="in_sw_tot", on_change=sync_var, args=('sw_total', 'in_sw_tot'))
-                    st.number_input("Sea Water Lower (m³/h)", key="in_sw_low", on_change=sync_var, args=('sw_lower', 'in_sw_low'))
-                with c3:
-                    st.number_input("Gross production (m³/h)", key="in_gross", on_change=sync_var, args=('gross', 'in_gross'))
-                    st.number_input("Desal production (m³/h)", key="in_desal", on_change=sync_var, args=('desal', 'in_desal'))
-                with c4:
-                    st.number_input("Brine Water Return (m³/h)", key="in_brine", on_change=sync_var, args=('brine_ret', 'in_brine'))
-                    
-            with st.expander("2. Plant Temperatures & Pressures", expanded=False):
+            st.subheader("Daily Data Entry")
+            st.caption(
+                "Five sections, one per source sheet in the plant workbook. Shared readings entered under "
+                "**Operational** flow straight into the HTC sections - you only re-enter what's genuinely "
+                "specific to each HTC calculation."
+            )
+            if mra_data['Predicted'] > 950:
+                st.warning("MRA Prediction is unusually high (>950 m³/h). Check that 'Sea Water Feed' (~2100) wasn't entered into 'Sea Water Upper' (~550).")
+
+            entry = st.tabs([
+                "1 · Operational",
+                "2 · HTC — 1st Effect",
+                "3 · HTC — Overall",
+                "4 · Feed & Brine",
+                "5 · Desal Product",
+            ])
+
+            # ---------------------------------------------------------------- 1 · OPERATIONAL
+            with entry[0]:
+                st.caption("Source sheet: **Operational data**. Everything the plant logs daily from the DCS.")
+
+                st.markdown("**Flows** — m³/h (steam in TPH)")
+                f1, f2, f3, f4 = st.columns(4)
+                with f1:
+                    st.number_input("Sea Water Upper", key="in_sw_up", on_change=sync_var, args=('sw_upper', 'in_sw_up'))
+                    st.number_input("Sea Water Lower", key="in_sw_low", on_change=sync_var, args=('sw_lower', 'in_sw_low'))
+                with f2:
+                    st.number_input("Sea Water Feed (total)", key="in_sw_tot", on_change=sync_var, args=('sw_total', 'in_sw_tot'))
+                    st.number_input("Brine Water Return", key="in_brine", on_change=sync_var, args=('brine_ret', 'in_brine'))
+                with f3:
+                    st.number_input("Desal Production (net)", key="in_desal", on_change=sync_var, args=('desal', 'in_desal'))
+                    st.number_input("Gross Production", key="in_gross", on_change=sync_var, args=('gross', 'in_gross'))
+                with f4:
+                    st.number_input("LP Steam Consumption (TPH)", key="in_steam", on_change=sync_var, args=('steam', 'in_steam'))
+                    st.number_input("Condensate Return", key="in_cond_flow", on_change=sync_var, args=('cond_flow', 'in_cond_flow'))
+
+                st.divider()
+                st.markdown("**Temperatures** — °C")
                 t1, t2, t3, t4 = st.columns(4)
-                with t1: 
-                    st.number_input("Sea Water cond I/L temp (°C)", key="in_sw_in", on_change=sync_var, args=('sw_in_t', 'in_sw_in'))
-                    st.number_input("Sea Water Condenser O/L Temp (°C)", key="in_sw_out", on_change=sync_var, args=('sw_out_t', 'in_sw_out'))
-                    st.number_input("Sea Water Pressure (kg/cm2-g)", key="in_sw_press", on_change=sync_var, args=('sw_press', 'in_sw_press'))
-                    st.number_input("CW supply", key="in_cw_supply", on_change=sync_var, args=('cw_supply', 'in_cw_supply'))
-                with t2: 
-                    st.number_input("Brine Discharge Temp (°C)", key="in_brine_out", on_change=sync_var, args=('brine_out_t', 'in_brine_out'))
-                    st.number_input("Brine Discharge Pressure (kg/cm2-g)", key="in_brine_press", on_change=sync_var, args=('brine_press', 'in_brine_press'))
-                    st.number_input("CW Return", key="in_cw_return", on_change=sync_var, args=('cw_return', 'in_cw_return'))
-                    st.number_input("CW Flow (m3/h)", key="in_cw_flow", on_change=sync_var, args=('cw_flow', 'in_cw_flow'))
-                with t3: 
-                    st.number_input("1st Effect Vapour Temp (°C)", key="in_t1", on_change=sync_var, args=('mra_t1', 'in_t1'))
-                    st.number_input("1st effect vapour pressure (mmHg)", key="in_press", on_change=sync_var, args=('mra_press', 'in_press'))
-                    st.number_input("1st effect brine temp (°C)", key="in_bt1", on_change=sync_var, args=('mra_bt1', 'in_bt1'))
-                    st.number_input("11th Effect Brine Temp (°C)", key="in_brine_11", on_change=sync_var, args=('brine_11', 'in_brine_11'))
-                    st.number_input("Intermediate Effects Avg Brine Temp (4-7) (°C)", key="in_mid_effects_temp", on_change=sync_var, args=('mid_effects_temp', 'in_mid_effects_temp'), help="Average brine discharge temperature of effects 4, 5, 6 and 7 - used as the cold-side reference for the 1st Effect HTC calculation, per the plant's HTC calculation sheet.")
-                with t4: 
-                    st.number_input("Condensate Return (m3/h)", key="in_cond_flow", on_change=sync_var, args=('cond_flow', 'in_cond_flow'))
-                    st.number_input("condensate temp (°C)", key="in_cond_temp", on_change=sync_var, args=('cond_temp', 'in_cond_temp'))
-                    st.number_input("Condensate Conductivity (µS/cm)", key="in_cond_cond", on_change=sync_var, args=('cond_cond', 'in_cond_cond'))
-                    st.number_input("Feed Temp to Cold Group (°C)", key="in_feed_cold", on_change=sync_var, args=('feed_cold', 'in_feed_cold'))
-                    st.number_input("LP Steam Pressure (kg/cm2-g)", key="in_stm_press", on_change=sync_var, args=('stm_press', 'in_stm_press'))
-                    
-            with st.expander("3. Effect-wise Cascade (Temperatures)", expanded=False):
-                st.checkbox("Skip Effect-wise Temperatures for today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
-                if not get_v('skip_eff'):
-                    e_df = st.data_editor(display_effect_df, key="in_effect_df", use_container_width=True, hide_index=True, disabled=["Effect ID", "Base Vapor (°C)", "Base Brine (°C)", "Base HTC"])
-                    if not e_df[["Live Vapor (°C)", "Live Brine (°C)"]].equals(st.session_state.shared_effect_df[["Live Vapor (°C)", "Live Brine (°C)"]]):
-                        st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df["Live Vapor (°C)"]
-                        st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
-                        st.rerun()
-                        
-            with st.expander("4. Laboratory Water Analysis", expanded=False):
-                st.checkbox("Skip Water Analysis for today", key="in_skip_wq", on_change=sync_var, args=('skip_wq', 'in_skip_wq'))
+                with t1:
+                    st.number_input("1st Effect Vapour Temp", key="in_t1", on_change=sync_var, args=('mra_t1', 'in_t1'),
+                                    help="Tag Z711TIT414. Feeds BOTH HTC calculations as the hot-side source temp.")
+                    st.number_input("1st Effect Brine Temp", key="in_bt1", on_change=sync_var, args=('mra_bt1', 'in_bt1'),
+                                    help="Tag Z711TIT401. Hot-side sink for the 1st Effect HTC.")
+                with t2:
+                    st.number_input("Condensate Temp", key="in_cond_temp", on_change=sync_var, args=('cond_temp', 'in_cond_temp'),
+                                    help="Tag Z711TIT415. Cold-side source for BOTH HTC calculations.")
+                    st.number_input("Brine Discharge Temp", key="in_brine_out", on_change=sync_var, args=('brine_out_t', 'in_brine_out'),
+                                    help="Hot-side sink for the Overall HTC.")
+                with t3:
+                    st.number_input("11th Effect Brine Temp", key="in_brine_11", on_change=sync_var, args=('brine_11', 'in_brine_11'))
+                    st.number_input("Steam Inlet Temp", key="in_steam_in_t", on_change=sync_var, args=('steam_in_t', 'in_steam_in_t'))
+                with t4:
+                    st.number_input("SW Condenser (FFC) I/L Temp", key="in_sw_in", on_change=sync_var, args=('sw_in_t', 'in_sw_in'))
+                    st.number_input("SW Condenser (FFC) O/L Temp", key="in_sw_out", on_change=sync_var, args=('sw_out_t', 'in_sw_out'))
+
+                st.divider()
+                st.markdown("**Pressures, Cooling Water & Chemicals**")
+                p1, p2, p3, p4 = st.columns(4)
+                with p1:
+                    st.number_input("1st Effect Vapour Pressure (mmHg)", key="in_press", on_change=sync_var, args=('mra_press', 'in_press'))
+                    st.number_input("LP Steam Pressure (kg/cm²g)", key="in_stm_press", on_change=sync_var, args=('stm_press', 'in_stm_press'))
+                with p2:
+                    st.number_input("Sea Water Pressure (kg/cm²g)", key="in_sw_press", on_change=sync_var, args=('sw_press', 'in_sw_press'))
+                    st.number_input("Brine Discharge Pressure (kg/cm²g)", key="in_brine_press", on_change=sync_var, args=('brine_press', 'in_brine_press'))
+                with p3:
+                    st.number_input("CW Supply Temp (°C)", key="in_cw_supply", on_change=sync_var, args=('cw_supply', 'in_cw_supply'))
+                    st.number_input("CW Return Temp (°C)", key="in_cw_return", on_change=sync_var, args=('cw_return', 'in_cw_return'))
+                    st.number_input("CW Flow (m³/h)", key="in_cw_flow", on_change=sync_var, args=('cw_flow', 'in_cw_flow'))
+                with p4:
+                    st.number_input("Antiscalant Residual (ppm)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
+                    st.number_input("Antiscalant Consumption (kg/hr)", key="in_anti_cons", on_change=sync_var, args=('chem_anti_cons', 'in_anti_cons'))
+                    st.number_input("Antifoam Residual (ppm)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
+                    st.number_input("Antifoam Consumption (kg/hr)", key="in_foam_cons", on_change=sync_var, args=('chem_foam_cons', 'in_foam_cons'))
+
+                st.divider()
+                st.number_input("Condensate Conductivity (µS/cm)", key="in_cond_cond", on_change=sync_var, args=('cond_cond', 'in_cond_cond'))
+                st.text_area("Remarks", key="in_remarks", on_change=sync_var, args=('remarks', 'in_remarks'), height=68)
+
+                with st.expander("Effect-wise Temperature Cascade (optional)"):
+                    st.checkbox("Skip effect-wise temperatures today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
+                    if not get_v('skip_eff'):
+                        e_df = st.data_editor(display_effect_df, key="in_effect_df", use_container_width=True, hide_index=True,
+                                              disabled=["Effect ID", "Base Vapor (°C)", "Base Brine (°C)", "Base HTC"])
+                        if not e_df[["Live Vapor (°C)", "Live Brine (°C)"]].equals(
+                                st.session_state.shared_effect_df[["Live Vapor (°C)", "Live Brine (°C)"]]):
+                            st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df["Live Vapor (°C)"]
+                            st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
+                            st.rerun()
+
+            # ---------------------------------------------------------------- 2 · HTC 1st EFFECT
+            with entry[1]:
+                st.caption("Source sheet: **1st effect-HTC**. Heat transfer across the 1st effect tube bundle only.")
+                st.success(
+                    "**Already taken from Operational** — steam rate, 1st effect vapour temp, 1st effect brine temp, "
+                    "condensate temp. Only the two genuinely 1st-effect-specific readings are below."
+                )
+                h1a, h1b = st.columns(2)
+                with h1a:
+                    st.number_input(
+                        "Avg Brine Temp of Effects 4-5-6-7 (°C)", key="in_mid_effects_temp",
+                        on_change=sync_var, args=('mid_effects_temp', 'in_mid_effects_temp'),
+                        help="On the source sheet this column is labelled 'Feed Temp', but the tag row reads "
+                             "'Avg of effects of 7,6,5,4'. It is the COLD-SIDE reference (ΔT2) for this calculation "
+                             "— NOT a seawater temperature. Typically ~49 °C."
+                    )
+                    st.number_input(
+                        "Feed Flow to 1st Effect (m³/h)", key="in_htc1_feed_flow",
+                        on_change=sync_var, args=('htc1_feed_flow', 'in_htc1_feed_flow'),
+                        help="Tag Z711FIT424 as recorded on the 1st-effect sheet (~514 m³/h). This is NOT the total "
+                             "seawater feed (~2062) used on the Overall sheet."
+                    )
+                with h1b:
+                    st.number_input("1st Effect Heat Transfer Area (m²)", key="in_area_1st",
+                                    on_change=sync_var, args=('area_1st', 'in_area_1st'),
+                                    help="π × 5.5 m × 31,244 tubes × 0.024 m OD = 12,950 m²")
+
+                st.divider()
+                d1, d2, d3, d4 = st.columns(4)
+                d1.metric("ΔT1 (vapour − brine)", f"{ops_data['dt_1st']:.2f} °C")
+                d2.metric("ΔT2 (condensate − eff 4-7)", f"{ops_data.get('dt2_1st', 0):.2f} °C")
+                d3.metric("LMTD", f"{ops_data.get('lmtd_1st', 0):.2f} °C")
+                d4.metric("1st Effect HTC", f"{ops_data['htc_1st']:.1f} W/m²K")
+
+            # ---------------------------------------------------------------- 3 · HTC OVERALL
+            with entry[2]:
+                st.caption("Source sheet: **Overall-HTC**. Heat transfer across all 11 effects combined.")
+                st.success(
+                    "**Already taken from Operational** — steam rate, 1st effect vapour temp, brine discharge temp, "
+                    "condensate temp, total seawater feed. Only the two Overall-specific readings are below."
+                )
+                hoa, hob = st.columns(2)
+                with hoa:
+                    st.number_input(
+                        "Feed Temp to Cold Group (°C)", key="in_feed_cold",
+                        on_change=sync_var, args=('feed_cold', 'in_feed_cold'),
+                        help="On the source sheet this column is also labelled 'Feed Temp' — but here it means the "
+                             "feed temperature into the cold group (~40 °C), a DIFFERENT measurement from the "
+                             "'Feed Temp' on the 1st-effect sheet. It is the cold-side reference (ΔT2) here."
+                    )
+                with hob:
+                    st.number_input("Overall Heat Transfer Area (m²)", key="in_area_overall",
+                                    on_change=sync_var, args=('area_overall', 'in_area_overall'),
+                                    help="11 effects × 12,950 m² × 1.15 correction = 163,818 m²")
+
+                st.divider()
+                o1, o2, o3, o4 = st.columns(4)
+                o1.metric("ΔT1 (vapour − brine disch.)", f"{ops_data.get('dt1_overall', 0):.2f} °C")
+                o2.metric("ΔT2 (condensate − cold grp)", f"{ops_data.get('dt2_overall', 0):.2f} °C")
+                o3.metric("LMTD", f"{ops_data.get('lmtd_overall', 0):.2f} °C")
+                o4.metric("Overall HTC", f"{ops_data['htc_overall']:.2f} W/m²K")
+
+            # ---------------------------------------------------------------- 4 · FEED & BRINE
+            with entry[3]:
+                st.caption("Source sheet: **Feed & Brine Water Analysis**. Daily lab results.")
+                st.checkbox("Skip water analysis today", key="in_skip_wq", on_change=sync_var, args=('skip_wq', 'in_skip_wq'))
                 if not get_v('skip_wq'):
-                    w_col1, w_col2 = st.columns(2)
-                    with w_col1:
-                        st.markdown("**Feed Water**")
-                        for p, d in WATER_SPECS["Feed"].items(): 
-                            st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
-                    with w_col2:
-                        st.markdown("**Desal Product**")
-                        for p, d in WATER_SPECS["Product"].items(): 
-                            st.number_input(f"{p}", key=f"in_{d['var']}", on_change=sync_var, args=(d['var'], f"in_{d['var']}"))
-                        
-            with st.expander("5. Chemical Dosing", expanded=False):
-                st.markdown("**Kem Watreat r 3687 (Antiscalant)**")
-                ch1, ch2 = st.columns(2)
-                with ch1: 
-                    st.number_input("Dosing Level (PPM)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
-                with ch2: 
-                    st.number_input("Actual Consumption (kg/hr)", key="in_anti_cons", on_change=sync_var, args=('chem_anti_cons', 'in_anti_cons'))
-                    
-                st.markdown("**Kem Antifoam 1795**")
-                ch3, ch4 = st.columns(2)
-                with ch3: 
-                    st.number_input("Dosing Level (PPM)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
-                with ch4: 
-                    st.number_input("Actual Consumption (kg/hr)", key="in_foam_cons", on_change=sync_var, args=('chem_foam_cons', 'in_foam_cons'))
+                    wf, wb_ = st.columns(2)
+                    with wf:
+                        st.markdown("**Feed Water (Sea Water)**")
+                        for p, dd in WATER_SPECS["Feed"].items():
+                            lo, hi = dd['lim']
+                            st.number_input(f"{p}", key=f"in_{dd['var']}", on_change=sync_var,
+                                            args=(dd['var'], f"in_{dd['var']}"), help=f"Specified limit: {lo} – {hi}")
+                    with wb_:
+                        st.markdown("**Brine Water**")
+                        st.caption("No specified limits on the source sheet — tracked for trending.")
+                        for p, dd in BRINE_SPECS.items():
+                            st.number_input(f"{p}", key=f"in_{dd['var']}", on_change=sync_var,
+                                            args=(dd['var'], f"in_{dd['var']}"))
+
+            # ---------------------------------------------------------------- 5 · DESAL PRODUCT
+            with entry[4]:
+                st.caption("Source sheet: **Desal Analysis**. Product water quality.")
+                if get_v('skip_wq'):
+                    st.info("Water analysis is currently skipped for today (toggle on the Feed & Brine tab).")
+                else:
+                    pc1, pc2 = st.columns(2)
+                    items = list(WATER_SPECS["Product"].items())
+                    half = (len(items) + 1) // 2
+                    for col, chunk in ((pc1, items[:half]), (pc2, items[half:])):
+                        with col:
+                            for p, dd in chunk:
+                                lo, hi = dd['lim']
+                                st.number_input(f"{p}", key=f"in_{dd['var']}", on_change=sync_var,
+                                                args=(dd['var'], f"in_{dd['var']}"), help=f"Specified limit: {lo} – {hi}")
 
         with tab0_subtabs[1]:
             st.markdown("### Process Flow Diagram - Live Tags")
@@ -864,30 +1046,102 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     # --- TAB 2: OVERALL HTC ---
     with tabs[2]:
         st.subheader("Thermal Integrity & Fouling Analysis")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("### 1st Effect HTC Performance")
-            st.number_input("1st Effect Surface Area (m²)", key="t2_area_1st", on_change=sync_var, args=('area_1st', 't2_area_1st'))
-            st.number_input("Sea Water Upper (m³/h)", key="t2_sw_up", on_change=sync_var, args=('sw_upper', 't2_sw_up'))
-            st.number_input("1st Effect Vapour Temp (°C)", key="t2_t1", on_change=sync_var, args=('mra_t1', 't2_t1'))
-            st.number_input("1st effect brine temp (°C)", key="t2_bt1", on_change=sync_var, args=('mra_bt1', 't2_bt1'))
-            st.divider()
-            st.metric("1st Effect ΔT", f"{ops_data['dt_1st']:.2f} °C")
-            st.metric("1st Effect Q (Heat Load)", f"{ops_data['q_1st']/1000:,.0f} kW")
-            st.metric("1st Effect HTC (U)", f"{ops_data['htc_1st']:.2f} W/m²K")
-            st.metric("1st Effect Fouling Factor", f"{ops_data['fouling_1st']:.6f}")
+        st.caption(
+            "Both calculations use the steam-condensation basis: **U = Q / (A × LMTD)**, with "
+            "**LMTD = (ΔT1 − ΔT2) / ln(ΔT1/ΔT2)**. They differ in which temperatures define ΔT1 and ΔT2, "
+            "and in heat transfer area — exactly as in the two source sheets."
+        )
 
-        with col2:
-            st.markdown("### Overall Plant HTC Performance")
-            st.number_input("Overall Surface Area (m²)", key="t2_area_overall", on_change=sync_var, args=('area_overall', 't2_area_overall'))
-            st.number_input("Sea Water Feed (m³/h)", key="t2_sw_tot", on_change=sync_var, args=('sw_total', 't2_sw_tot'))
-            st.number_input("Sea Water cond I/L temp (°C)", key="t2_sw_in", on_change=sync_var, args=('sw_in_t', 't2_sw_in'))
-            st.number_input("Brine Discharge Temp (°C)", key="t2_brine_out", on_change=sync_var, args=('brine_out_t', 't2_brine_out'))
-            st.divider()
-            st.metric("Overall ΔT (Simple)", f"{ops_data['dt_overall_simple']:.2f} °C")
-            st.metric("Overall Q (Heat Load)", f"{ops_data['q_overall']/1000:,.0f} kW")
-            st.metric("Overall HTC (U)", f"{ops_data['htc_overall']:.2f} W/m²K")
-            st.metric("Overall Fouling Factor", f"{ops_data['fouling_overall']:.6f}")
+        htc_headline = st.columns(4)
+        _d1 = ops_data['htc_1st'] - HTC_1ST_U_SOR
+        _d2 = ops_data['htc_overall'] - HTC_OVERALL_U_SOR
+        htc_headline[0].metric("1st Effect HTC", f"{ops_data['htc_1st']:.1f} W/m²K",
+                               f"{_d1:+.1f} vs SOR ({HTC_1ST_U_SOR:.0f})")
+        htc_headline[1].metric("Overall HTC", f"{ops_data['htc_overall']:.2f} W/m²K",
+                               f"{_d2:+.2f} vs SOR ({HTC_OVERALL_U_SOR:.1f})")
+        htc_headline[2].metric("1st Effect Fouling Rf", f"{ops_data['rf_1st']:.6f}",
+                               help="Rf = 1/U_actual − 1/U_SOR. Rising = fouling building up.")
+        htc_headline[3].metric("Overall Fouling Rf", f"{ops_data['rf_overall']:.5f}",
+                               help="Rf = 1/U_actual − 1/U_SOR. Rising = fouling building up.")
+
+        if ops_data['htc_1st'] == 0 or ops_data['htc_overall'] == 0:
+            st.warning(
+                "An HTC reads 0, which means one of its required temperatures is missing or non-physical "
+                "(ΔT ≤ 0). Check the Inputs tab — the calculator reports 0 rather than inventing a value."
+            )
+
+        st.divider()
+        c1, c2 = st.columns(2)
+
+        with c1:
+            st.markdown("#### 1st Effect")
+            st.caption("Source: `1st effect-HTC` · Area 12,950 m² (single tube bundle)")
+            st.number_input("1st Effect Heat Transfer Area (m²)", key="t2_area_1st",
+                            on_change=sync_var, args=('area_1st', 't2_area_1st'))
+            st.number_input("Avg Brine Temp, Effects 4-5-6-7 (°C)", key="t2_mid_effects_temp",
+                            on_change=sync_var, args=('mid_effects_temp', 't2_mid_effects_temp'),
+                            help="Cold-side reference. The source sheet calls this 'Feed Temp' — it is not a seawater temp.")
+            st.dataframe(pd.DataFrame([
+                {"Step": "ΔT1  =  vapour − 1st eff. brine", "Value": ops_data['dt_1st'], "Unit": "°C"},
+                {"Step": "ΔT2  =  condensate − eff 4-7 avg", "Value": ops_data['dt2_1st'], "Unit": "°C"},
+                {"Step": "LMTD", "Value": ops_data['lmtd_1st'], "Unit": "°C"},
+                {"Step": "Q  (heat duty)", "Value": ops_data['q_1st'] / 1000, "Unit": "kW"},
+                {"Step": "A  (area)", "Value": get_v('area_1st'), "Unit": "m²"},
+                {"Step": "U = Q / (A × LMTD)", "Value": ops_data['htc_1st'], "Unit": "W/m²K"},
+            ]).style.format({"Value": "{:,.2f}"}), use_container_width=True, hide_index=True)
+
+        with c2:
+            st.markdown("#### Overall Plant")
+            st.caption("Source: `Overall-HTC` · Area 163,818 m² (11 × 12,950 × 1.15)")
+            st.number_input("Overall Heat Transfer Area (m²)", key="t2_area_overall",
+                            on_change=sync_var, args=('area_overall', 't2_area_overall'))
+            st.number_input("Feed Temp to Cold Group (°C)", key="t2_feed_cold",
+                            on_change=sync_var, args=('feed_cold', 't2_feed_cold'),
+                            help="Cold-side reference. The source sheet also calls this 'Feed Temp', but it is a "
+                                 "different measurement from the 1st-effect sheet's column of the same name.")
+            st.dataframe(pd.DataFrame([
+                {"Step": "ΔT1  =  vapour − brine discharge", "Value": ops_data['dt1_overall'], "Unit": "°C"},
+                {"Step": "ΔT2  =  condensate − cold grp feed", "Value": ops_data['dt2_overall'], "Unit": "°C"},
+                {"Step": "LMTD", "Value": ops_data['lmtd_overall'], "Unit": "°C"},
+                {"Step": "Q  (heat duty)", "Value": ops_data['q_overall'] / 1000, "Unit": "kW"},
+                {"Step": "A  (area)", "Value": get_v('area_overall'), "Unit": "m²"},
+                {"Step": "U = Q / (A × LMTD)", "Value": ops_data['htc_overall'], "Unit": "W/m²K"},
+            ]).style.format({"Value": "{:,.2f}"}), use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.markdown("#### Fouling Trend")
+        _logs = st.session_state.daily_logs
+        if _logs is not None and not _logs.empty and 'Date' in _logs.columns:
+            tdf = _logs.copy()
+            tdf['Date'] = standardize_dates(tdf['Date'])
+            for c in ['1st Effect HTC', 'Overall HTC']:
+                tdf[c] = pd.to_numeric(tdf.get(c), errors='coerce')
+            tdf = tdf.dropna(subset=['Date']).sort_values('Date')
+            tdf = tdf[(tdf['1st Effect HTC'].fillna(0) > 0) | (tdf['Overall HTC'].fillna(0) > 0)]
+            if len(tdf) > 1:
+                g1, g2 = st.columns(2)
+                for col, metric, base, colr in (
+                    (g1, '1st Effect HTC', HTC_1ST_U_SOR, '#1f77b4'),
+                    (g2, 'Overall HTC', HTC_OVERALL_U_SOR, '#2ca02c'),
+                ):
+                    sub = tdf[tdf[metric] > 0]
+                    if len(sub) > 1:
+                        ch = alt.Chart(sub).mark_line(point=True, color=colr).encode(
+                            x=alt.X('Date:T', title=None),
+                            y=alt.Y(f'{metric}:Q', scale=alt.Scale(zero=False), title='W/m²K'),
+                            tooltip=['Date:T', f'{metric}:Q'])
+                        rule = alt.Chart(pd.DataFrame({'y': [base]})).mark_rule(
+                            color='red', strokeDash=[4, 4]).encode(y='y:Q')
+                        trend = ch.transform_regression('Date', metric).mark_line(
+                            color='black', strokeDash=[5, 5])
+                        col.markdown(f"**{metric}** (red = SOR baseline)")
+                        col.altair_chart(ch + rule + trend, use_container_width=True)
+                    else:
+                        col.info(f"Not enough {metric} history yet.")
+            else:
+                st.info("No HTC history in the registry yet. Upload HTC data on the Bulk Uploads tab to build a trend.")
+        else:
+            st.info("No HTC history in the registry yet.")
 
     # --- TAB 3: WATER ANALYSIS TAB ---
     with tabs[3]:
@@ -1067,6 +1321,34 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         for cat in ['Feed', 'Product']:
                             for param, details in WATER_SPECS[cat].items(): 
                                 db_dict[details['db_col']] = [get_v(details['var'])]
+                        for param, details in BRINE_SPECS.items():
+                            db_dict[details['db_col']] = [get_v(details['var'])]
+
+                        # Persist the HTC sheets' own inputs + derived values so a manually-entered day
+                        # appears on the HTC trends exactly like a bulk-uploaded one.
+                        db_dict.update({
+                            "Steam Inlet Temp": [get_v('steam_in_t')],
+                            "HTC1_Feed_Flow": [get_v('htc1_feed_flow')],
+                            "HTC1_Steam_TPH": [get_v('steam')],
+                            "HTC1_Feed_Temp_Eff4to7": [get_v('mid_effects_temp')],
+                            "HTC1_Brine_Temp": [get_v('mra_bt1')],
+                            "HTC1_Vapor_Temp": [get_v('mra_t1')],
+                            "HTC1_Cond_Temp": [get_v('cond_temp')],
+                            "HTC1_dT1": [round(ops_data['dt_1st'], 3)],
+                            "HTC1_dT2": [round(ops_data['dt2_1st'], 3)],
+                            "HTC1_LMTD": [round(ops_data['lmtd_1st'], 3)],
+                            "HTC1_Rf": [round(ops_data['rf_1st'], 8)],
+                            "HTCO_Feed_Flow": [get_v('sw_total')],
+                            "HTCO_Steam_TPH": [get_v('steam')],
+                            "HTCO_Feed_Temp_ColdGrp": [get_v('feed_cold')],
+                            "HTCO_Brine_Disch_Temp": [get_v('brine_out_t')],
+                            "HTCO_Vapor_Temp": [get_v('mra_t1')],
+                            "HTCO_Cond_Temp": [get_v('cond_temp')],
+                            "HTCO_dT1": [round(ops_data['dt1_overall'], 3)],
+                            "HTCO_dT2": [round(ops_data['dt2_overall'], 3)],
+                            "HTCO_LMTD": [round(ops_data['lmtd_overall'], 3)],
+                            "HTCO_Rf": [round(ops_data['rf_overall'], 8)],
+                        })
                         
                         new_log = pd.DataFrame(db_dict)
                         st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
@@ -1398,6 +1680,32 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             logr = np.log(np.where(ratio > 0, ratio, 1.0))
             return np.where(valid & (logr != 0), (dt1 - dt2) / logr, np.nan)
 
+        def _backfill_from_db(d, mapping):
+            """For any HTC input the uploaded file doesn't supply, fall back to the value already
+            stored in the master registry for that same date (typically loaded by the Operational
+            upload, which shares most of these readings). HTC is only left blank when a value is
+            available NOWHERE - not merely because it was absent from this one file.
+            mapping: {htc_column_in_this_file: master_registry_column}"""
+            logs = st.session_state.daily_logs
+            if logs is None or logs.empty or 'Date' not in logs.columns:
+                return d, []
+            ref = logs.copy()
+            ref['Date'] = standardize_dates(ref['Date']).dt.strftime('%Y-%m-%d')
+            ref = ref.dropna(subset=['Date']).drop_duplicates(subset=['Date'], keep='last').set_index('Date')
+            filled = []
+            for htc_col, db_col in mapping.items():
+                if db_col not in ref.columns:
+                    continue
+                src = pd.to_numeric(d['Date'].map(ref[db_col]), errors='coerce')
+                if htc_col not in d.columns:
+                    d[htc_col] = np.nan
+                n_before = int(d[htc_col].isna().sum())
+                d[htc_col] = d[htc_col].fillna(src)
+                n_after = int(d[htc_col].isna().sum())
+                if n_before > n_after:
+                    filled.append(f"{htc_col.split('_', 1)[-1].replace('_', ' ')} ({n_before - n_after})")
+            return d, filled
+
         bulk_subtabs = st.tabs([
             "A) Operational Data", "B) 1st Effect HTC", "C) Overall HTC", "D) Water Quality"
         ])
@@ -1556,6 +1864,21 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
                     d = d.dropna(subset=['Date'])
 
+                    # Pull anything this file didn't supply from the registry (Operational upload shares
+                    # steam rate, vapour/brine/condensate temps, product and condensate flows).
+                    d, filled = _backfill_from_db(d, {
+                        'HTC1_Steam_TPH': 'LP Steam consumption',
+                        'HTC1_Vapor_Temp': '1st Effect Vapour Temp',
+                        'HTC1_Brine_Temp': '1st effect brine temp',
+                        'HTC1_Cond_Temp': 'condensate temp',
+                        'HTC1_Product_Flow': 'Desal production',
+                        'HTC1_Cond_Flow': 'Condensate Return',
+                        'HTC1_Feed_Temp_Eff4to7': 'HTC1_Feed_Temp_Eff4to7',
+                        'HTC1_Feed_Flow': 'HTC1_Feed_Flow',
+                    })
+                    if filled:
+                        st.info("Filled from existing registry data: " + ", ".join(filled))
+
                     if len(d) == 0:
                         st.error("No valid dated rows found.")
                     else:
@@ -1666,6 +1989,21 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     d = _clean_num(d, ho_inputs)
                     d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
                     d = d.dropna(subset=['Date'])
+
+                    # Pull anything this file didn't supply from the registry (Operational upload shares
+                    # steam rate, vapour/condensate temps, brine discharge temp, seawater feed, flows).
+                    d, filled = _backfill_from_db(d, {
+                        'HTCO_Steam_TPH': 'LP Steam consumption',
+                        'HTCO_Vapor_Temp': '1st Effect Vapour Temp',
+                        'HTCO_Brine_Disch_Temp': 'Brine Discharge Temp',
+                        'HTCO_Cond_Temp': 'condensate temp',
+                        'HTCO_Feed_Flow': 'Sea Water Feed',
+                        'HTCO_Product_Flow': 'Desal production',
+                        'HTCO_Cond_Flow': 'Condensate Return',
+                        'HTCO_Feed_Temp_ColdGrp': 'HTCO_Feed_Temp_ColdGrp',
+                    })
+                    if filled:
+                        st.info("Filled from existing registry data: " + ", ".join(filled))
 
                     if len(d) == 0:
                         st.error("No valid dated rows found.")
