@@ -124,7 +124,25 @@ EXACT_DB_COLUMNS = [
     "Intermediate Effects Avg Brine Temp", "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", "Brine Discharge Pressure",
     "Sea Water cond I/L temp", "Sea Water Condenser O/L Temp", 
     "CW supply", "CW Return", "CW Flow", "Gross production", "GOR", "STEC", "Overall HTC", "1st Effect HTC", 
-    "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Foam_PPM", "Area_1st", "Area_Overall", "Remarks"
+    "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Foam_PPM", "Area_1st", "Area_Overall", "Remarks",
+    # --- Operational sheet extras ---
+    "Steam Inlet Temp", "Recovery", "Conversion", "Steam Economy", "Overall Delta T",
+    "Anti_PPM_Hot", "Anti_PPM_Brine",
+    # --- 1st Effect HTC sheet: its OWN inputs. "Feed flow" here is flow to the 1st effect (~514 m3/hr)
+    #     and "Feed Temp" here is the AVG BRINE TEMP OF EFFECTS 4,5,6,7 (~49C) - both are physically
+    #     different measurements from the identically-named columns on the Overall-HTC sheet.
+    "HTC1_Feed_Flow", "HTC1_Product_Flow", "HTC1_Cond_Flow", "HTC1_Steam_TPH",
+    "HTC1_Feed_Temp_Eff4to7", "HTC1_Brine_Temp", "HTC1_Vapor_Temp", "HTC1_Cond_Temp",
+    "HTC1_dT1", "HTC1_dT2", "HTC1_LMTD", "HTC1_Q_Steam", "HTC1_Fouling", "HTC1_Rf",
+    # --- Overall HTC sheet: its OWN inputs. "Feed flow" here is TOTAL seawater feed (~2062 m3/hr)
+    #     and "Feed Temp" here is the FEED TEMP TO COLD GROUP (~40C). Area is 11x12950x1.15.
+    "HTCO_Feed_Flow", "HTCO_Product_Flow", "HTCO_Cond_Flow", "HTCO_Steam_TPH",
+    "HTCO_Feed_Temp_ColdGrp", "HTCO_Brine_Disch_Temp", "HTCO_Vapor_Temp", "HTCO_Cond_Temp",
+    "HTCO_dT1", "HTCO_dT2", "HTCO_LMTD", "HTCO_Q_Steam", "HTCO_Fouling", "HTCO_Rf",
+    # --- Brine water analysis (from 'Feed & Brine Water Analysis' sheet, right-hand block) ---
+    "Brine_pH", "Brine_Turbidity", "Brine_Cond", "Brine_TDS", "Brine_Alkalinity",
+    "Brine_Calcium", "Brine_MgHardness", "Brine_TotalHardness", "Brine_Silica", "Brine_Chlorides",
+    "Feed_Cond", "Feed_TotalHardness",
 ]
 for cat in ['Feed', 'Product']:
     for param, details in WATER_SPECS[cat].items(): 
@@ -140,6 +158,44 @@ RIL_EXCEL_HEADERS = [
     '11 effect brine Temp', 'Overall delta T(1st eff brine temp - 11th eff brine temp)', 
     'Steam Economy (Steam/Desal)', 'Antiscalant residual (Cold group)', 'Antiscalant residual (Hot group)', 
     'Antiscalant residual (Brine)', 'Feed Temp to Cold Group', 'Intermediate Effects Avg Brine Temp (4,5,6,7)', 'Remarks'
+]
+
+# --- HTC reference constants, read straight off rows 5 (Design) and 6 (SOR/Baseline) of the two HTC sheets.
+# Rf (fouling resistance) = 1/U_actual - 1/U_clean, where the sheets use the SOR baseline as "clean".
+HTC_1ST_AREA = 12950.013120000001      # 1st effect-HTC!K  = pi * 5.5m * 31244 tubes * 0.024m OD
+HTC_OVERALL_AREA = 163818.0            # Overall-HTC!K     = 11 effects * 12950 * 1.15
+HTC_1ST_U_SOR = 415.31060504252554     # 1st effect-HTC!AA6 (steam condensation basis, SOR baseline)
+HTC_OVERALL_U_SOR = 17.726796070321715 # Overall-HTC!AA6   (steam condensation basis, SOR baseline)
+CP_WATER_KJ_KGC = 4.186                # specific heat, both sheets col P
+
+# --- 1st Effect HTC bulk template: mirrors the '1st effect-HTC' sheet's INPUT columns (A-K) exactly.
+# Everything from dT1 onward (L..AC) is recomputed by the calculator, not read from the file.
+HTC_1ST_BULK_HEADERS = [
+    'Date', 'Feed flow', 'Product flow', 'Condensate Flow', 'Steam consumption rate',
+    'Feed Temp', 'Brine Temp', '1st effect vapor temp', 'Condensate temperature', 'Heat Transfer Area'
+]
+
+# --- Overall HTC bulk template: mirrors the 'Overall-HTC' sheet's INPUT columns (A-K) exactly.
+# NOTE: 'Feed flow', 'Feed Temp' and the brine column here are DIFFERENT physical measurements from the
+# same-named columns on the 1st-effect sheet - which is exactly why these need to be two separate uploads.
+HTC_OVERALL_BULK_HEADERS = [
+    'Date', 'Feed flow', 'Product flow', 'Condensate Flow', 'Steam consumption rate',
+    'Feed Temp', 'Brine discharge Temp', '1st effect vapor temp', 'Condensate temperature', 'Heat Transfer Area'
+]
+
+# --- Feed & Brine Water Analysis template: mirrors that sheet's columns A-X.
+FEEDBRINE_BULK_HEADERS = [
+    'Date', 'pH', 'Turbidity', 'TSS', 'Conductivity', 'TDS', 'Total Alkalinity', 'Calcium Hardness',
+    'Mg Hardness', 'Total Hardness', 'Silica', 'Chloride', 'Sulphate', 'Sulphide',
+    'Brine pH', 'Brine Turbidity', 'Brine Conductivity', 'Brine TDS', 'Brine Total Alkalinity',
+    'Brine Calcium Hardness', 'Brine Mg Hardness', 'Brine Total Hardness', 'Brine Silica', 'Brine Chloride',
+    'REMARKS'
+]
+
+# --- Desal (product) Analysis template: mirrors that sheet's columns A-N.
+DESAL_BULK_HEADERS = [
+    'Date', 'pH', 'Turbidity', 'Conductivity', 'TDS', 'Total Alkalinity', 'Calcium Hardness',
+    'Mg Hardness', 'Total Hardness', 'Chloride', 'Total Iron', 'Silica', 'Sulphate', 'REMARKS'
 ]
 
 # --- Operational Data bulk template: throughput/production/chemicals only. Matches your existing
@@ -1314,265 +1370,478 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     # --- TAB 8: BULK EXCEL UPLOADER PANEL ---
     with tabs[8]:
         st.subheader("Bulk Data Upload")
-        st.caption("Three separate uploads, each scoped to one part of the registry - Operational, HTC, and Water Quality. Uploading one never overwrites data from another: only the columns present in that specific file get updated for the matching dates, everything else already saved for that date is left untouched.")
+        st.caption(
+            "Each uploader mirrors ONE tab of the plant workbook exactly. Upload only the INPUT columns - "
+            "every derived value (LMTD, HTC, GOR, STEC, Recovery, Fouling) is recomputed by the calculator "
+            "and any such column in your file is ignored. Uploads are merged by date: loading HTC data never "
+            "overwrites Operational or Water Quality data for the same day, and vice versa."
+        )
 
-        bulk_subtabs = st.tabs(["A) Operational Data", "B) HTC Data", "C) Water Quality Data"])
+        def _clean_num(df, cols):
+            """Coerce to numeric. The plant sheets use '-' for 'not measured'; that must become NaN
+            (genuinely missing), never 0, because a 0 temperature would silently corrupt an LMTD."""
+            for c in cols:
+                if c not in df.columns:
+                    df[c] = np.nan
+                df[c] = pd.to_numeric(
+                    df[c].astype(str).str.replace(',', '', regex=False).str.strip().replace({'-': np.nan, '': np.nan}),
+                    errors='coerce'
+                )
+            return df
 
-        # =======================================================================================
-        # A) OPERATIONAL DATA - throughput, production, steam, chemicals. Matches the plant's
-        #    'Operational data' sheet / DCS export exactly. Computes GOR, STEC, MRA Residual.
-        # =======================================================================================
+        def _lmtd(dt1, dt2):
+            """LMTD = (dT1 - dT2) / ln(dT1/dT2), exactly as in both HTC sheets (col N).
+            Valid only when both driving forces are present and positive. Note dT2 > dT1 in this
+            plant's data, which the formula handles fine (both numerator and log go negative)."""
+            valid = dt1.notna() & dt2.notna() & (dt1 > 0) & (dt2 > 0) & (dt1 != dt2)
+            ratio = np.where(valid, dt1 / dt2, 1.0)
+            logr = np.log(np.where(ratio > 0, ratio, 1.0))
+            return np.where(valid & (logr != 0), (dt1 - dt2) / logr, np.nan)
+
+        bulk_subtabs = st.tabs([
+            "A) Operational Data", "B) 1st Effect HTC", "C) Overall HTC", "D) Water Quality"
+        ])
+
+        # ===================================================================================
+        # A) OPERATIONAL DATA  <-  'Operational data' sheet
+        # ===================================================================================
         with bulk_subtabs[0]:
-            st.markdown("Throughput, production, steam and antiscalant residual. Computes **GOR**, **STEC**, and **MRA Residual**. Matches your existing 'Operational data' export - no reformatting needed.")
-            op_template = pd.DataFrame(columns=OPERATIONAL_BULK_HEADERS)
-            st.download_button("Download Operational Data Template", data=op_template.to_csv(index=False).encode('utf-8'), file_name='MED4_Operational_Template.csv', mime='text/csv', key='dl_op_template')
+            st.markdown(
+                "Source: **`Operational data`** tab. Upload the sheet as-is. The calculator recomputes "
+                "**Recovery**, **Conversion**, **GOR**, **Steam Economy**, **Overall Delta T** and **STEC** "
+                "from the raw readings - the versions of those columns already in your sheet are ignored."
+            )
+            st.download_button(
+                "Download Operational Template", key='dl_op',
+                data=pd.DataFrame(columns=OPERATIONAL_BULK_HEADERS).to_csv(index=False).encode('utf-8'),
+                file_name='MED4_Operational_Template.csv', mime='text/csv'
+            )
             st.divider()
-            op_file = st.file_uploader("Upload Operational Data CSV", type=["csv"], key="op_bulk_uploader")
+            op_file = st.file_uploader("Upload Operational Data CSV", type=["csv"], key="op_up")
 
             if op_file is not None:
                 try:
-                    df_op = pd.read_csv(op_file)
-                    df_op = df_op[~df_op['Parameter'].isin(['Design', 'Unit', 'TAG'])]
-
-                    if 'Antiscalant residual' in df_op.columns:
-                        df_op.rename(columns={'Antiscalant residual': 'Anti_PPM'}, inplace=True)
-                    else:
-                        df_op.rename(columns={'Antiscalant residual (Cold group)': 'Anti_PPM'}, inplace=True)
-
-                    df_op.rename(columns={
-                        'Parameter': 'Date', 'Sea water Upper': 'Sea Water Upper', 'Sea water Lower': 'Sea Water Lower',
+                    d = pd.read_csv(op_file)
+                    if 'Parameter' in d.columns:
+                        d = d[~d['Parameter'].astype(str).isin(['Design', 'Unit', 'TAG', 'SOR/  Base line'])]
+                    d.rename(columns={
+                        'Parameter': 'Date',
+                        'Sea water Upper': 'Sea Water Upper', 'Sea water Lower': 'Sea Water Lower',
                         'Sea water feed': 'Sea Water Feed', 'Brine return': 'Brine Water Return',
-                        ' Desal Production': 'Desal production', 'LP Steam Consumption': 'LP Steam consumption',
-                        'Condensate return': 'Condensate Return', 'CW (FCC) supply': 'CW supply', 'CW (FCC) return': 'CW Return',
+                        ' Desal Production': 'Desal production', 'Desal Production': 'Desal production',
+                        'LP Steam Consumption': 'LP Steam consumption',
+                        'Condensate return': 'Condensate Return', 'Condensate Temp': 'condensate temp',
+                        "1'st effect vapour Temp": '1st Effect Vapour Temp',
+                        '1st Effect Brine Temp': '1st effect brine temp',
+                        '1st Effect Vapour pres': '1st effect vapour pressure',
+                        'Steam Inlet Temp': 'Steam Inlet Temp',
+                        'Brine DischargeTemp': 'Brine Discharge Temp',
+                        'Sea water cond (FFC) I/L temp': 'Sea Water cond I/L temp',
+                        'Sea water cond (FFC) o/L temp': 'Sea Water Condenser O/L Temp',
+                        'CW (FCC) supply': 'CW supply', 'CW (FCC) return': 'CW Return',
                         'Gross desal water production': 'Gross production',
+                        '11 effect brine Temp': '11th Effect Brine Temp',
+                        'Antiscalant residual (Cold group)': 'Anti_PPM',
+                        'Antiscalant residual': 'Anti_PPM',
+                        'Antiscalant residual (Hot group)': 'Anti_PPM_Hot',
+                        'Antiscalant residual (Brine)': 'Anti_PPM_Brine',
+                        'Unnamed: 27': 'Anti_PPM_Hot', 'Unnamed: 28': 'Anti_PPM_Brine',
+                        'Remarks': 'Remarks', 'REMARKS': 'Remarks',
                     }, inplace=True)
 
-                    missing = [c for c in ['Date', 'Sea Water Feed', 'Desal production', 'LP Steam consumption'] if c not in df_op.columns]
-                    if missing:
-                        st.warning(f"Missing core columns will be treated as 0: {', '.join(missing)}")
-                        for c in missing: df_op[c] = np.nan
+                    op_inputs = [
+                        'Sea Water Upper', 'Sea Water Lower', 'Sea Water Feed', 'Brine Water Return',
+                        'Desal production', 'LP Steam consumption', 'Condensate Return', 'condensate temp',
+                        '1st Effect Vapour Temp', '1st effect brine temp', '1st effect vapour pressure',
+                        'Steam Inlet Temp', 'Brine Discharge Temp', 'Sea Water cond I/L temp',
+                        'Sea Water Condenser O/L Temp', 'CW supply', 'CW Return', 'Gross production',
+                        '11th Effect Brine Temp', 'Anti_PPM', 'Anti_PPM_Hot', 'Anti_PPM_Brine',
+                    ]
+                    d = _clean_num(d, op_inputs)
+                    d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
+                    d = d.dropna(subset=['Date'])
 
-                    num_cols = [c for c in df_op.columns if c not in ["Date", "Remarks"]]
-                    for col in num_cols:
-                        df_op[col] = pd.to_numeric(df_op[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
-
-                    df_op['Date_Clean'] = standardize_dates(df_op['Date']).dt.strftime('%Y-%m-%d')
-                    df_op = df_op.dropna(subset=['Date_Clean'])
-
-                    if len(df_op) > 0:
-                        for col_name in ['Sea Water Upper', 'Sea Water Lower', 'Sea Water Feed', 'Brine Water Return',
-                                          'Desal production', 'LP Steam consumption', 'Condensate Return',
-                                          'CW supply', 'CW Return', 'Gross production', 'Anti_PPM']:
-                            if col_name not in df_op.columns: df_op[col_name] = np.nan
-                            df_op[col_name] = pd.to_numeric(df_op[col_name], errors='coerce').fillna(0)
-
-                        df_op['GOR'] = np.where(df_op['LP Steam consumption'] > 0, df_op['Gross production'] / df_op['LP Steam consumption'], 0)
-                        df_op['STEC'] = np.where(df_op['Desal production'] > 0, ((df_op['LP Steam consumption'] * 1000) / 3600 * LATENT_HEAT_STEAM_KJ_KG) / df_op['Desal production'], 0)
-
-                        if model_type == "OLS":
-                            # MRA residual needs 1st-effect temp/pressure fields this template doesn't collect;
-                            # without them the model can't run, so Residual is left unset for pure operational uploads.
-                            df_op['Residual'] = np.nan
-                        else:
-                            df_op['Residual'] = np.nan
-
-                        op_ready_dict = {
-                            "Date": df_op['Date_Clean'], "Sea Water Upper": df_op['Sea Water Upper'],
-                            "Sea Water Lower": df_op['Sea Water Lower'], "Sea Water Feed": df_op['Sea Water Feed'],
-                            "Brine Water Return": df_op['Brine Water Return'], "Desal production": df_op['Desal production'],
-                            "LP Steam consumption": df_op['LP Steam consumption'], "Condensate Return": df_op['Condensate Return'],
-                            "CW supply": df_op['CW supply'], "CW Return": df_op['CW Return'], "Gross production": df_op['Gross production'],
-                            "GOR": df_op['GOR'].round(2), "STEC": df_op['STEC'].round(2), "Anti_PPM": df_op['Anti_PPM'],
-                            "Remarks": df_op.get('Remarks', pd.Series("", index=df_op.index)).fillna(""),
-                        }
-                        op_ready_df = pd.DataFrame(op_ready_dict)
-                        st.success(f"Calculated Operational KPIs for {len(op_ready_df)} rows.")
-                        st.dataframe(op_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
-
-                        st.markdown("##### Save Operational Data")
-                        c_pwd, c_save = st.columns([2, 2])
-                        with c_pwd:
-                            pwd_op = st.text_input("Master Password", type="password", key="pwd_op_bulk", label_visibility="collapsed", placeholder="Enter Password to Sync")
-                        with c_save:
-                            if st.button("Update Database (Operational)", use_container_width=True, key="btn_op_save"):
-                                if pwd_op == "12345678":
-                                    st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, op_ready_df)
-                                    save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
-                                    st.success("Operational data synced - HTC and Water Quality data for these dates were left untouched.")
-                                    time.sleep(1.5)
-                                    st.rerun()
-                                elif pwd_op != "":
-                                    st.error("Incorrect Password.")
+                    if len(d) == 0:
+                        st.error("No valid dated rows found.")
                     else:
-                        st.error("No valid data found in CSV.")
+                        steam = d['LP Steam consumption']
+                        gross = d['Gross production']
+                        desal = d['Desal production']
+                        swfeed = d['Sea Water Feed']
+
+                        # Derived - recomputed, never trusted from the file.
+                        d['Delta T'] = d['1st Effect Vapour Temp'] - d['1st effect brine temp']
+                        d['Overall Delta T'] = d['1st Effect Vapour Temp'] - d['11th Effect Brine Temp']
+                        d['GOR'] = np.where(steam > 0, gross / steam, np.nan)
+                        d['Recovery'] = np.where(swfeed > 0, (gross / swfeed) * 100, np.nan)
+                        d['Conversion'] = d['Recovery'] / 100
+                        d['Steam Economy'] = np.where(desal > 0, steam / desal, np.nan)
+                        d['STEC'] = np.where(
+                            desal > 0, ((steam * 1000) / 3600 * LATENT_HEAT_STEAM_KJ_KG) / desal, np.nan
+                        )
+
+                        out_cols = ['Date'] + op_inputs + [
+                            'Delta T', 'Overall Delta T', 'GOR', 'Recovery', 'Conversion',
+                            'Steam Economy', 'STEC'
+                        ]
+                        ready = d[out_cols].copy()
+                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+
+                        st.success(f"Recomputed operational KPIs for {len(ready)} rows.")
+                        st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
+
+                        cp, cs = st.columns([2, 2])
+                        pw = cp.text_input("Password", type="password", key="pw_op",
+                                           label_visibility="collapsed", placeholder="Master password to sync")
+                        if cs.button("Update Database (Operational)", use_container_width=True, key="b_op"):
+                            if pw == "12345678":
+                                st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
+                                save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                                st.success("Operational data synced. HTC and Water Quality untouched.")
+                                time.sleep(1.2); st.rerun()
+                            elif pw != "":
+                                st.error("Incorrect password.")
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
 
-        # =======================================================================================
-        # B) HTC DATA - mirrors the plant's '1st effect-HTC' and 'Overall-HTC' sheets exactly.
-        #    Computes both HTC values via LMTD, reporting 0 for any row missing a required reading.
-        # =======================================================================================
+        # ===================================================================================
+        # B) 1st EFFECT HTC  <-  '1st effect-HTC' sheet
+        # ===================================================================================
         with bulk_subtabs[1]:
-            st.markdown("Mirrors your **1st effect-HTC** and **Overall-HTC** calculation sheets. Computes both via LMTD (steam condensation basis) - reports **0** for any row missing a required temperature, rather than guessing.")
-            htc_template = pd.DataFrame(columns=HTC_BULK_HEADERS)
-            st.download_button("Download HTC Data Template", data=htc_template.to_csv(index=False).encode('utf-8'), file_name='MED4_HTC_Template.csv', mime='text/csv', key='dl_htc_template')
+            st.markdown(
+                "Source: **`1st effect-HTC`** tab. Upload only columns **A-K** (the process inputs). "
+                "The calculator recomputes ΔT1, ΔT2, LMTD, Heat Duty, HTC and Fouling."
+            )
+            st.info(
+                "**Column meanings on this sheet** (they differ from the Overall-HTC sheet):\n\n"
+                "- **Feed flow** = feed to the 1st effect (~514 m³/hr), tag Z711FIT424\n"
+                "- **Feed Temp** = *average brine temp of effects 4, 5, 6 and 7* (~49 °C) - this is the cold-side reference, not a seawater temp\n"
+                "- **Brine Temp** = 1st effect brine temp (~66 °C), tag Z711TIT401\n"
+                "- **1st effect vapor temp** = ~69 °C, tag Z711TIT414\n"
+                "- **Condensate temperature** = ~75 °C, tag Z711TIT415\n"
+                "- **Heat Transfer Area** = 12,950 m² (leave blank to use this default)\n\n"
+                "ΔT1 = vapor − brine · ΔT2 = condensate − Feed Temp(eff 4-7)"
+            )
+            st.download_button(
+                "Download 1st Effect HTC Template", key='dl_h1',
+                data=pd.DataFrame(columns=HTC_1ST_BULK_HEADERS).to_csv(index=False).encode('utf-8'),
+                file_name='MED4_1stEffect_HTC_Template.csv', mime='text/csv'
+            )
             st.divider()
-            htc_file = st.file_uploader("Upload HTC Data CSV", type=["csv"], key="htc_bulk_uploader")
+            h1_file = st.file_uploader("Upload 1st Effect HTC CSV", type=["csv"], key="h1_up")
 
-            if htc_file is not None:
+            if h1_file is not None:
                 try:
-                    df_htc = pd.read_csv(htc_file)
-                    df_htc = df_htc[~df_htc['Date'].astype(str).isin(['Design', 'Unit', 'TAG'])] if 'Date' in df_htc.columns else df_htc
-
-                    df_htc.rename(columns={
-                        'LP Steam Consumption (TPH)': 'LP Steam consumption',
-                        '1st Effect Vapour Temp (C)': '1st Effect Vapour Temp', 'Condensate Temp (C)': 'condensate temp',
-                        '1st Effect Brine Temp (C)': '1st effect brine temp',
-                        'Intermediate Effects Avg Brine Temp 4-5-6-7 (C)': 'Intermediate Effects Avg Brine Temp',
-                        'Brine Discharge Temp (C)': 'Brine Discharge Temp', 'Feed Temp to Cold Group (C)': 'Feed Temp to Cold Group',
-                        '1st Effect Vapour Pressure (optional)': '1st effect vapour pressure',
-                        '11th Effect Brine Temp (optional)': '11th Effect Brine Temp',
+                    d = pd.read_csv(h1_file)
+                    first = d.columns[0]
+                    d = d[~d[first].astype(str).isin(['Unit ', 'Unit', 'Tag', 'Desigen', 'Design', 'SOR/  Base line'])]
+                    d.rename(columns={
+                        first: 'Date',
+                        'Feed flow': 'HTC1_Feed_Flow', 'Product flow ': 'HTC1_Product_Flow',
+                        'Product flow': 'HTC1_Product_Flow',
+                        'Condensate Flow ': 'HTC1_Cond_Flow', 'Condensate Flow': 'HTC1_Cond_Flow',
+                        'Steam consumption rate': 'HTC1_Steam_TPH',
+                        'Feed Temp': 'HTC1_Feed_Temp_Eff4to7',
+                        'Brine Temp': 'HTC1_Brine_Temp',
+                        '1st effect vapor temp': 'HTC1_Vapor_Temp',
+                        ' Condensate temperature': 'HTC1_Cond_Temp',
+                        'Condensate temperature': 'HTC1_Cond_Temp',
+                        'Heat Transfer Area ': 'HTC1_Area', 'Heat Transfer Area': 'HTC1_Area',
                     }, inplace=True)
 
-                    if 'Date' not in df_htc.columns:
-                        st.error("No 'Date' column found in the HTC file.")
+                    h1_inputs = ['HTC1_Feed_Flow', 'HTC1_Product_Flow', 'HTC1_Cond_Flow', 'HTC1_Steam_TPH',
+                                 'HTC1_Feed_Temp_Eff4to7', 'HTC1_Brine_Temp', 'HTC1_Vapor_Temp',
+                                 'HTC1_Cond_Temp', 'HTC1_Area']
+                    d = _clean_num(d, h1_inputs)
+                    d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
+                    d = d.dropna(subset=['Date'])
+
+                    if len(d) == 0:
+                        st.error("No valid dated rows found.")
                     else:
-                        num_cols = [c for c in df_htc.columns if c not in ["Date", "Remarks"]]
-                        for col in num_cols:
-                            df_htc[col] = pd.to_numeric(df_htc[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
+                        d['HTC1_Area'] = d['HTC1_Area'].fillna(HTC_1ST_AREA)
 
-                        df_htc['Date_Clean'] = standardize_dates(df_htc['Date']).dt.strftime('%Y-%m-%d')
-                        df_htc = df_htc.dropna(subset=['Date_Clean'])
+                        # ΔT1 = 1st effect vapor temp - 1st effect brine temp   (sheet col L)
+                        # ΔT2 = condensate temp - avg brine temp of effects 4-7 (sheet col M)
+                        d['HTC1_dT1'] = d['HTC1_Vapor_Temp'] - d['HTC1_Brine_Temp']
+                        d['HTC1_dT2'] = d['HTC1_Cond_Temp'] - d['HTC1_Feed_Temp_Eff4to7']
+                        d['HTC1_LMTD'] = _lmtd(d['HTC1_dT1'], d['HTC1_dT2'])
 
-                        if len(df_htc) > 0:
-                            # Steam consumption is a core throughput value - 0 fails safe (HTC formula guards on >0).
-                            if 'LP Steam consumption' not in df_htc.columns: df_htc['LP Steam consumption'] = np.nan
-                            df_htc['LP Steam consumption'] = pd.to_numeric(df_htc['LP Steam consumption'], errors='coerce').fillna(0)
+                        # Steam-condensation heat duty (sheet cols V,W,X):
+                        # ms(kg/hr) = TPH*1000 ; W(kJ/hr) = ms*lambda ; Q(W) = W*1000/3600
+                        d['HTC1_Q_Steam'] = (d['HTC1_Steam_TPH'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
 
-                            # Every temperature reference below must be genuinely present (NaN if missing) -
-                            # HTC explicitly reports 0 for a row rather than assuming any of these.
-                            for col_name in ['1st Effect Vapour Temp', 'condensate temp', '1st effect brine temp',
-                                              'Intermediate Effects Avg Brine Temp', 'Brine Discharge Temp', 'Feed Temp to Cold Group']:
-                                if col_name not in df_htc.columns: df_htc[col_name] = np.nan
-                                df_htc[col_name] = pd.to_numeric(df_htc[col_name], errors='coerce')
+                        # U (steam condensation basis) = Q / (A * LMTD)   (sheet col AA)
+                        denom = d['HTC1_Area'] * d['HTC1_LMTD']
+                        d['1st Effect HTC'] = np.where(
+                            d['HTC1_Q_Steam'].notna() & pd.notna(denom) & (denom > 0),
+                            d['HTC1_Q_Steam'] / denom, np.nan
+                        )
+                        d['HTC1_Fouling'] = np.where(d['1st Effect HTC'] > 0, 1 / d['1st Effect HTC'], np.nan)
+                        # Rf = 1/U_actual - 1/U_SOR_baseline   (sheet col AC)
+                        d['HTC1_Rf'] = np.where(
+                            d['1st Effect HTC'] > 0,
+                            (1 / d['1st Effect HTC']) - (1 / HTC_1ST_U_SOR), np.nan
+                        )
+                        d['Area_1st'] = d['HTC1_Area']
 
-                            df_htc['Delta T'] = df_htc['1st Effect Vapour Temp'] - df_htc['1st effect brine temp']
+                        ready = d[['Date'] + h1_inputs + [
+                            'HTC1_dT1', 'HTC1_dT2', 'HTC1_LMTD', 'HTC1_Q_Steam',
+                            '1st Effect HTC', 'HTC1_Fouling', 'HTC1_Rf', 'Area_1st'
+                        ]].copy()
 
-                            area_overall = get_v('area_overall')
-                            area_1st = get_v('area_1st')
-                            q_overall = (df_htc['LP Steam consumption'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
-                            q_1st = q_overall
-                            cond_temp_raw = df_htc['condensate temp']
+                        n_bad = int(ready['1st Effect HTC'].isna().sum())
+                        st.success(f"Computed 1st Effect HTC for {len(ready) - n_bad} of {len(ready)} rows.")
+                        if n_bad:
+                            st.warning(f"{n_bad} row(s) left blank - missing one of: steam rate, vapor temp, "
+                                       f"brine temp, condensate temp, or Feed Temp (eff 4-7).")
+                        st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
 
-                            dt_ov_hot = df_htc['1st Effect Vapour Temp'] - df_htc['Brine Discharge Temp']
-                            dt_ov_cold = cond_temp_raw - df_htc['Feed Temp to Cold Group']
-                            valid_ov = dt_ov_hot.notna() & dt_ov_cold.notna() & (dt_ov_hot > 0) & (dt_ov_cold > 0) & (dt_ov_hot != dt_ov_cold)
-                            ratio_ov = np.where(valid_ov, dt_ov_hot / dt_ov_cold, 1.0)
-                            log_ov = np.log(np.where(ratio_ov > 0, ratio_ov, 1.0))
-                            lmtd_ov = np.where(valid_ov & (log_ov != 0), (dt_ov_hot - dt_ov_cold) / log_ov, 0)
-                            df_htc['Overall HTC'] = np.where((lmtd_ov > 0) & (area_overall > 0), q_overall / (area_overall * lmtd_ov), 0)
-
-                            dt_1st_hot = df_htc['Delta T']
-                            dt_1st_cold = cond_temp_raw - df_htc['Intermediate Effects Avg Brine Temp']
-                            valid_1st = dt_1st_hot.notna() & dt_1st_cold.notna() & (dt_1st_hot > 0) & (dt_1st_cold > 0) & (dt_1st_hot != dt_1st_cold)
-                            ratio_1st = np.where(valid_1st, dt_1st_hot / dt_1st_cold, 1.0)
-                            log_1st = np.log(np.where(ratio_1st > 0, ratio_1st, 1.0))
-                            lmtd_1st = np.where(valid_1st & (log_1st != 0), (dt_1st_hot - dt_1st_cold) / log_1st, 0)
-                            df_htc['1st Effect HTC'] = np.where((lmtd_1st > 0) & (area_1st > 0), q_1st / (area_1st * lmtd_1st), 0)
-
-                            htc_ready_dict = {
-                                "Date": df_htc['Date_Clean'], "LP Steam consumption": df_htc['LP Steam consumption'],
-                                "1st Effect Vapour Temp": df_htc['1st Effect Vapour Temp'], "condensate temp": df_htc['condensate temp'],
-                                "1st effect brine temp": df_htc['1st effect brine temp'],
-                                "Intermediate Effects Avg Brine Temp": df_htc['Intermediate Effects Avg Brine Temp'],
-                                "Brine Discharge Temp": df_htc['Brine Discharge Temp'], "Feed Temp to Cold Group": df_htc['Feed Temp to Cold Group'],
-                                "Delta T": df_htc['Delta T'],
-                                "1st effect vapour pressure": df_htc.get('1st effect vapour pressure', pd.Series(np.nan, index=df_htc.index)),
-                                "11th Effect Brine Temp": df_htc.get('11th Effect Brine Temp', pd.Series(np.nan, index=df_htc.index)),
-                                "Overall HTC": df_htc['Overall HTC'].round(2), "1st Effect HTC": df_htc['1st Effect HTC'].round(2),
-                                "Area_1st": area_1st, "Area_Overall": area_overall,
-                                "Remarks": df_htc.get('Remarks', pd.Series("", index=df_htc.index)).fillna(""),
-                            }
-                            htc_ready_df = pd.DataFrame(htc_ready_dict)
-                            n_zero_ov = int((htc_ready_df['Overall HTC'] == 0).sum())
-                            n_zero_1st = int((htc_ready_df['1st Effect HTC'] == 0).sum())
-                            st.success(f"Calculated HTC for {len(htc_ready_df)} rows.")
-                            if n_zero_ov or n_zero_1st:
-                                st.warning(f"Overall HTC is 0 for {n_zero_ov}/{len(htc_ready_df)} rows and 1st Effect HTC is 0 for {n_zero_1st}/{len(htc_ready_df)} rows - these rows are missing a required temperature reading in the source file.")
-                            st.dataframe(htc_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
-
-                            st.markdown("##### Save HTC Data")
-                            c_pwd, c_save = st.columns([2, 2])
-                            with c_pwd:
-                                pwd_htc = st.text_input("Master Password", type="password", key="pwd_htc_bulk", label_visibility="collapsed", placeholder="Enter Password to Sync")
-                            with c_save:
-                                if st.button("Update Database (HTC)", use_container_width=True, key="btn_htc_save"):
-                                    if pwd_htc == "12345678":
-                                        st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, htc_ready_df)
-                                        save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
-                                        st.success("HTC data synced - Operational and Water Quality data for these dates were left untouched.")
-                                        time.sleep(1.5)
-                                        st.rerun()
-                                    elif pwd_htc != "":
-                                        st.error("Incorrect Password.")
-                        else:
-                            st.error("No valid data found in CSV.")
+                        cp, cs = st.columns([2, 2])
+                        pw = cp.text_input("Password", type="password", key="pw_h1",
+                                           label_visibility="collapsed", placeholder="Master password to sync")
+                        if cs.button("Update Database (1st Effect HTC)", use_container_width=True, key="b_h1"):
+                            if pw == "12345678":
+                                st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
+                                save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                                st.success("1st Effect HTC synced. Operational, Overall HTC and Water Quality untouched.")
+                                time.sleep(1.2); st.rerun()
+                            elif pw != "":
+                                st.error("Incorrect password.")
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
 
-        # =======================================================================================
-        # C) WATER QUALITY DATA - Feed/Brine/Product lab analysis. Matches the plant's
-        #    'Feed & Brine Water Analysis' and 'Desal Analysis' sheets.
-        # =======================================================================================
+        # ===================================================================================
+        # C) OVERALL HTC  <-  'Overall-HTC ' sheet
+        # ===================================================================================
         with bulk_subtabs[2]:
-            st.markdown("Feed, brine and product lab analysis - pH, TDS, hardness, chlorides, sulphate, silica, etc. Matches your 'Feed & Brine Water Analysis' / 'Desal Analysis' sheets.")
-            wq_cols = ['Date'] + [details['db_col'] for cat in ['Feed', 'Product'] for param, details in WATER_SPECS[cat].items()] + ['Remarks']
-            wq_template = pd.DataFrame(columns=wq_cols)
-            st.download_button("Download Water Quality Template", data=wq_template.to_csv(index=False).encode('utf-8'), file_name='MED4_WaterQuality_Template.csv', mime='text/csv', key='dl_wq_template')
+            st.markdown(
+                "Source: **`Overall-HTC`** tab. Upload only columns **A-K** (the process inputs). "
+                "The calculator recomputes ΔT1, ΔT2, LMTD, Heat Duty, HTC and Fouling."
+            )
+            st.info(
+                "**Column meanings on this sheet** (they differ from the 1st-effect sheet):\n\n"
+                "- **Feed flow** = *total* seawater feed (~2062 m³/hr), tag Z711FIT424\n"
+                "- **Feed Temp** = *feed temp to the cold group* (~40 °C) - the cold-side reference\n"
+                "- **Brine discharge Temp** = ~42 °C, tag Z711TIT401\n"
+                "- **1st effect vapor temp** = ~69 °C, tag Z711TIT414\n"
+                "- **Condensate temperature** = ~75 °C\n"
+                "- **Heat Transfer Area** = 163,818 m² (11 × 12,950 × 1.15; leave blank to use this default)\n\n"
+                "ΔT1 = vapor − brine discharge · ΔT2 = condensate − Feed Temp(cold group)"
+            )
+            st.download_button(
+                "Download Overall HTC Template", key='dl_ho',
+                data=pd.DataFrame(columns=HTC_OVERALL_BULK_HEADERS).to_csv(index=False).encode('utf-8'),
+                file_name='MED4_Overall_HTC_Template.csv', mime='text/csv'
+            )
             st.divider()
-            wq_file = st.file_uploader("Upload Water Quality CSV", type=["csv"], key="wq_bulk_uploader")
+            ho_file = st.file_uploader("Upload Overall HTC CSV", type=["csv"], key="ho_up")
 
-            if wq_file is not None:
+            if ho_file is not None:
                 try:
-                    df_wq = pd.read_csv(wq_file)
-                    if 'Date' not in df_wq.columns:
-                        st.error("No 'Date' column found in the Water Quality file.")
+                    d = pd.read_csv(ho_file)
+                    first = d.columns[0]
+                    d = d[~d[first].astype(str).isin(['Unit ', 'Unit', 'Tag', 'Desigen', 'Design', 'SOR/  Base line'])]
+                    d.rename(columns={
+                        first: 'Date',
+                        'Feed flow': 'HTCO_Feed_Flow', 'Product flow ': 'HTCO_Product_Flow',
+                        'Product flow': 'HTCO_Product_Flow',
+                        'Condensate Flow ': 'HTCO_Cond_Flow', 'Condensate Flow': 'HTCO_Cond_Flow',
+                        'Steam consumption rate': 'HTCO_Steam_TPH',
+                        'Feed Temp': 'HTCO_Feed_Temp_ColdGrp',
+                        'Brine discharge Temp': 'HTCO_Brine_Disch_Temp',
+                        'Brine Discharge Temp': 'HTCO_Brine_Disch_Temp',
+                        '1st effect vapor temp': 'HTCO_Vapor_Temp',
+                        ' Condensate temperature': 'HTCO_Cond_Temp',
+                        'Condensate temperature': 'HTCO_Cond_Temp',
+                    }, inplace=True)
+                    # Area column header on this sheet carries the formula in its name, so match by prefix.
+                    for c in list(d.columns):
+                        if str(c).strip().startswith('Heat Transfer Area'):
+                            d.rename(columns={c: 'HTCO_Area'}, inplace=True)
+
+                    ho_inputs = ['HTCO_Feed_Flow', 'HTCO_Product_Flow', 'HTCO_Cond_Flow', 'HTCO_Steam_TPH',
+                                 'HTCO_Feed_Temp_ColdGrp', 'HTCO_Brine_Disch_Temp', 'HTCO_Vapor_Temp',
+                                 'HTCO_Cond_Temp', 'HTCO_Area']
+                    d = _clean_num(d, ho_inputs)
+                    d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
+                    d = d.dropna(subset=['Date'])
+
+                    if len(d) == 0:
+                        st.error("No valid dated rows found.")
                     else:
-                        df_wq = df_wq[~df_wq['Date'].astype(str).isin(['Design', 'Unit', 'TAG', 'Specified Limit'])]
-                        wq_data_cols = [details['db_col'] for cat in ['Feed', 'Product'] for param, details in WATER_SPECS[cat].items()]
-                        for col in wq_data_cols:
-                            if col not in df_wq.columns: df_wq[col] = np.nan
-                            df_wq[col] = pd.to_numeric(df_wq[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
+                        d['HTCO_Area'] = d['HTCO_Area'].fillna(HTC_OVERALL_AREA)
 
-                        df_wq['Date_Clean'] = standardize_dates(df_wq['Date']).dt.strftime('%Y-%m-%d')
-                        df_wq = df_wq.dropna(subset=['Date_Clean'])
+                        # ΔT1 = 1st effect vapor temp - brine discharge temp     (sheet col L)
+                        # ΔT2 = condensate temp - feed temp to cold group        (sheet col M)
+                        d['HTCO_dT1'] = d['HTCO_Vapor_Temp'] - d['HTCO_Brine_Disch_Temp']
+                        d['HTCO_dT2'] = d['HTCO_Cond_Temp'] - d['HTCO_Feed_Temp_ColdGrp']
+                        d['HTCO_LMTD'] = _lmtd(d['HTCO_dT1'], d['HTCO_dT2'])
 
-                        if len(df_wq) > 0:
-                            wq_ready_dict = {"Date": df_wq['Date_Clean']}
-                            for col in wq_data_cols:
-                                wq_ready_dict[col] = df_wq[col]
-                            wq_ready_dict["Remarks"] = df_wq.get('Remarks', pd.Series("", index=df_wq.index)).fillna("")
-                            wq_ready_df = pd.DataFrame(wq_ready_dict)
-                            st.success(f"Prepared Water Quality data for {len(wq_ready_df)} rows.")
-                            st.dataframe(wq_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
+                        d['HTCO_Q_Steam'] = (d['HTCO_Steam_TPH'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
 
-                            st.markdown("##### Save Water Quality Data")
-                            c_pwd, c_save = st.columns([2, 2])
-                            with c_pwd:
-                                pwd_wq = st.text_input("Master Password", type="password", key="pwd_wq_bulk", label_visibility="collapsed", placeholder="Enter Password to Sync")
-                            with c_save:
-                                if st.button("Update Database (Water Quality)", use_container_width=True, key="btn_wq_save"):
-                                    if pwd_wq == "12345678":
-                                        st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, wq_ready_df)
-                                        save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
-                                        st.success("Water Quality data synced - Operational and HTC data for these dates were left untouched.")
-                                        time.sleep(1.5)
-                                        st.rerun()
-                                    elif pwd_wq != "":
-                                        st.error("Incorrect Password.")
-                        else:
-                            st.error("No valid data found in CSV.")
+                        denom = d['HTCO_Area'] * d['HTCO_LMTD']
+                        d['Overall HTC'] = np.where(
+                            d['HTCO_Q_Steam'].notna() & pd.notna(denom) & (denom > 0),
+                            d['HTCO_Q_Steam'] / denom, np.nan
+                        )
+                        d['HTCO_Fouling'] = np.where(d['Overall HTC'] > 0, 1 / d['Overall HTC'], np.nan)
+                        d['HTCO_Rf'] = np.where(
+                            d['Overall HTC'] > 0,
+                            (1 / d['Overall HTC']) - (1 / HTC_OVERALL_U_SOR), np.nan
+                        )
+                        d['Area_Overall'] = d['HTCO_Area']
+
+                        ready = d[['Date'] + ho_inputs + [
+                            'HTCO_dT1', 'HTCO_dT2', 'HTCO_LMTD', 'HTCO_Q_Steam',
+                            'Overall HTC', 'HTCO_Fouling', 'HTCO_Rf', 'Area_Overall'
+                        ]].copy()
+
+                        n_bad = int(ready['Overall HTC'].isna().sum())
+                        st.success(f"Computed Overall HTC for {len(ready) - n_bad} of {len(ready)} rows.")
+                        if n_bad:
+                            st.warning(f"{n_bad} row(s) left blank - missing one of: steam rate, vapor temp, "
+                                       f"brine discharge temp, condensate temp, or Feed Temp (cold group).")
+                        st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
+
+                        cp, cs = st.columns([2, 2])
+                        pw = cp.text_input("Password", type="password", key="pw_ho",
+                                           label_visibility="collapsed", placeholder="Master password to sync")
+                        if cs.button("Update Database (Overall HTC)", use_container_width=True, key="b_ho"):
+                            if pw == "12345678":
+                                st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
+                                save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                                st.success("Overall HTC synced. Operational, 1st Effect HTC and Water Quality untouched.")
+                                time.sleep(1.2); st.rerun()
+                            elif pw != "":
+                                st.error("Incorrect password.")
                 except Exception as e:
                     st.error(f"Error processing file: {e}")
+
+        # ===================================================================================
+        # D) WATER QUALITY  <-  'Feed & Brine Water Analysis' + 'Desal Analysis' sheets
+        # ===================================================================================
+        with bulk_subtabs[3]:
+            st.markdown(
+                "Two separate lab sheets, uploaded independently. Both are pure lab readings - nothing is "
+                "derived from them, so they are stored exactly as supplied (`-` becomes blank, not 0)."
+            )
+
+            st.markdown("##### Feed & Brine Water Analysis")
+            st.download_button(
+                "Download Feed & Brine Template", key='dl_fb',
+                data=pd.DataFrame(columns=FEEDBRINE_BULK_HEADERS).to_csv(index=False).encode('utf-8'),
+                file_name='MED4_FeedBrine_Template.csv', mime='text/csv'
+            )
+            fb_file = st.file_uploader("Upload Feed & Brine Analysis CSV", type=["csv"], key="fb_up")
+
+            if fb_file is not None:
+                try:
+                    d = pd.read_csv(fb_file)
+                    first = d.columns[0]
+                    d = d[~d[first].astype(str).isin(['UOM', 'Specified Limit'])]
+                    fb_map = {
+                        first: 'Date',
+                        'pH': 'Feed_pH', 'Turbidity': 'Feed_Turbidity', 'TSS': 'Feed_TSS',
+                        'Conductivity': 'Feed_Cond', 'TDS': 'Feed_TDS',
+                        'Total Alkalinity': 'Feed_Alkalinity', 'Calcium Hardness': 'Feed_Calcium',
+                        'Mg Hardness': 'Feed_MgHardness', 'Total Hardness': 'Feed_TotalHardness',
+                        'Silica': 'Feed_Silica', 'Chloride ': 'Feed_Chlorides', 'Chloride': 'Feed_Chlorides',
+                        'Sulphate': 'Feed_Sulphate', 'Sulphide': 'Feed_Sulphide',
+                        'Brine pH': 'Brine_pH', 'Brine Turbidity': 'Brine_Turbidity',
+                        'Brine Conductivity': 'Brine_Cond', 'Brine TDS': 'Brine_TDS',
+                        'Brine Total Alkalinity': 'Brine_Alkalinity',
+                        'Brine Calcium Hardness': 'Brine_Calcium', 'Brine Mg Hardness': 'Brine_MgHardness',
+                        'Brine Total Hardness': 'Brine_TotalHardness', 'Brine Silica': 'Brine_Silica',
+                        'Brine Chloride': 'Brine_Chlorides',
+                        # Raw sheet exports the brine block with duplicate names, which pandas suffixes '.1'
+                        'pH.1': 'Brine_pH', 'Turbidity.1': 'Brine_Turbidity',
+                        'Conductivity.1': 'Brine_Cond', 'TDS.1': 'Brine_TDS',
+                        'Total Alkalinity.1': 'Brine_Alkalinity', 'Calcium Hardness.1': 'Brine_Calcium',
+                        'Mg Hardness.1': 'Brine_MgHardness', 'Total Hardness.1': 'Brine_TotalHardness',
+                        'Silica.1': 'Brine_Silica', 'Chloride .1': 'Brine_Chlorides',
+                        'Chloride.1': 'Brine_Chlorides',
+                        'REMARKS': 'Remarks',
+                    }
+                    d.rename(columns=fb_map, inplace=True)
+                    fb_cols = [c for c in dict.fromkeys(fb_map.values()) if c not in ('Date', 'Remarks')]
+                    d = _clean_num(d, fb_cols)
+                    d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
+                    d = d.dropna(subset=['Date'])
+
+                    if len(d) == 0:
+                        st.error("No valid dated rows found.")
+                    else:
+                        ready = d[['Date'] + fb_cols].copy()
+                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+                        st.success(f"Prepared Feed & Brine analysis for {len(ready)} rows.")
+                        st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
+
+                        cp, cs = st.columns([2, 2])
+                        pw = cp.text_input("Password", type="password", key="pw_fb",
+                                           label_visibility="collapsed", placeholder="Master password to sync")
+                        if cs.button("Update Database (Feed & Brine)", use_container_width=True, key="b_fb"):
+                            if pw == "12345678":
+                                st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
+                                save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                                st.success("Feed & Brine analysis synced.")
+                                time.sleep(1.2); st.rerun()
+                            elif pw != "":
+                                st.error("Incorrect password.")
+                except Exception as e:
+                    st.error(f"Error processing Feed & Brine file: {e}")
+
+            st.divider()
+            st.markdown("##### Desal (Product) Analysis")
+            st.download_button(
+                "Download Desal Analysis Template", key='dl_ds',
+                data=pd.DataFrame(columns=DESAL_BULK_HEADERS).to_csv(index=False).encode('utf-8'),
+                file_name='MED4_Desal_Template.csv', mime='text/csv'
+            )
+            ds_file = st.file_uploader("Upload Desal Analysis CSV", type=["csv"], key="ds_up")
+
+            if ds_file is not None:
+                try:
+                    d = pd.read_csv(ds_file)
+                    first = d.columns[0]
+                    d = d[~d[first].astype(str).isin(['UOM', 'Specified Limit'])]
+                    ds_map = {
+                        first: 'Date',
+                        'pH': 'Product_pH', 'Turbidity': 'Product_Turbidity',
+                        'Conductivity': 'Product_Cond', 'TDS': 'Product_TDS',
+                        'Total Alkalinity': 'Product_Alkalinity', 'Calcium Hardness': 'Product_Calcium',
+                        'Mg Hardness': 'Product_MgHardness', 'Total Hardness': 'Product_TotalHardness',
+                        'Chloride ': 'Product_Chlorides', 'Chloride': 'Product_Chlorides',
+                        'Total Iron ': 'Product_Iron', 'Total Iron': 'Product_Iron',
+                        'Silica': 'Product_Silica', 'Sulphate': 'Product_Sulphate',
+                        'REMARKS': 'Remarks',
+                    }
+                    d.rename(columns=ds_map, inplace=True)
+                    ds_cols = [c for c in dict.fromkeys(ds_map.values()) if c not in ('Date', 'Remarks')]
+                    d = _clean_num(d, ds_cols)
+                    d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
+                    d = d.dropna(subset=['Date'])
+
+                    if len(d) == 0:
+                        st.error("No valid dated rows found.")
+                    else:
+                        ready = d[['Date'] + ds_cols].copy()
+                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+                        st.success(f"Prepared Desal product analysis for {len(ready)} rows.")
+                        st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
+
+                        cp, cs = st.columns([2, 2])
+                        pw = cp.text_input("Password", type="password", key="pw_ds",
+                                           label_visibility="collapsed", placeholder="Master password to sync")
+                        if cs.button("Update Database (Desal Analysis)", use_container_width=True, key="b_ds"):
+                            if pw == "12345678":
+                                st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
+                                save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                                st.success("Desal product analysis synced.")
+                                time.sleep(1.2); st.rerun()
+                            elif pw != "":
+                                st.error("Incorrect password.")
+                except Exception as e:
+                    st.error(f"Error processing Desal file: {e}")
 
     render_chatbot()
