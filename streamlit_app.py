@@ -254,12 +254,52 @@ def render_chatbot():
             response = "**GOR (Gain Output Ratio)** is calculated as:\n`Gross Production (m³/h) / LP Steam (TPH)`\n\nIt represents the 'fuel economy' of the plant—how many tons of water are produced per ton of steam."
         elif "recovery" in p_lower: response = "**System Recovery** is calculated as:\n`(Gross Production / Total SW Feed) * 100` for MED, or `(Permeate Flow / Feed Flow) * 100` for RO."
         elif re.search(r'\blmtd\b', p_lower) or "log mean" in p_lower:
-            response = "**LMTD (Log Mean Temperature Difference)** is currently calculated using a **Simple Delta T** because the Vapor Outlet sensor is unavailable.\n\n* Overall ΔT = `1st Effect Vapor - Final Brine Temp`."
+            response = ("**LMTD (Log Mean Temperature Difference)** now uses the full log-mean formula, matching "
+                        "the plant's HTC sheets:\n\n`LMTD = (ΔT1 − ΔT2) / ln(ΔT1 / ΔT2)`\n\n"
+                        "The two driving forces ΔT1 and ΔT2 differ between the two HTC calculations — ask about "
+                        "**1st Effect HTC** or **Overall HTC** for the specifics.")
         elif "1st effect htc" in p_lower:
-            response = "**1st Effect HTC (U)** is calculated as:\n`(Q_1st / (Area_1st * ΔT_1st)) * 1000`\n\nWhere:\n* `Q_1st` = `1st Effect SW Feed * (1st Brine - Avg Brine 4 to 7) * 0.930`\n* `ΔT_1st` = `1st Vapor - 1st Brine`."
+            response = ("**1st Effect HTC (U)** uses the steam-condensation basis, mirroring the `1st effect-HTC` sheet:\n\n"
+                        "`U = Q / (A × LMTD)`\n\nWhere:\n"
+                        "* `Q` = `Steam(TPH) × 1000 × 2330 × 1000 / 3600` (W)\n"
+                        "* `A` = **12,950 m²** (1st effect tube bundle)\n"
+                        "* `ΔT1` = `1st Effect Vapour Temp − 1st Effect Brine Temp`\n"
+                        "* `ΔT2` = `Condensate Temp − Avg Brine Temp of Effects 4-5-6-7`\n"
+                        "* `LMTD` = `(ΔT1 − ΔT2) / ln(ΔT1/ΔT2)`\n\n"
+                        "Typical value ~330 W/m²K. Note ΔT2's reference is the effects 4-7 average, not a seawater temp.")
         elif "overall htc" in p_lower or "htc" in p_lower:
-            response = "**Overall HTC (U)** is calculated as:\n`(Q_overall / (Area_overall * ΔT_overall)) * 1000`\n\nWhere:\n* `Q_overall` = `Total SW Feed * (Final Brine - SW Cond I/L Temp) * 0.930`\n* `ΔT_overall` = `1st Vapor - Final Brine`."
-        elif "fouling factor" in p_lower: response = "**Fouling Factor** is calculated simply as:\n`1 / HTC`"
+            response = ("**Overall HTC (U)** uses the steam-condensation basis, mirroring the `Overall-HTC` sheet:\n\n"
+                        "`U = Q / (A × LMTD)`\n\nWhere:\n"
+                        "* `Q` = `Steam(TPH) × 1000 × 2330 × 1000 / 3600` (W)\n"
+                        "* `A` = **163,818 m²** (11 effects × 12,950 × 1.15)\n"
+                        "* `ΔT1` = `1st Effect Vapour Temp − Brine Discharge Temp`\n"
+                        "* `ΔT2` = `Condensate Temp − Feed Temp to Cold Group`\n"
+                        "* `LMTD` = `(ΔT1 − ΔT2) / ln(ΔT1/ΔT2)`\n\n"
+                        "Typical value ~9 W/m²K. The 'Feed Temp' here means the cold-group feed (~40 °C), which is a "
+                        "different measurement from the same-named column on the 1st-effect sheet.")
+        elif "fouling factor" in p_lower or re.search(r'\brf\b', p_lower):
+            response = ("**Fouling** is tracked two ways:\n\n"
+                        "* **Fouling Factor** = `1 / HTC`\n"
+                        "* **Fouling Resistance (Rf)** = `1/U_actual − 1/U_SOR_baseline`\n\n"
+                        "Rf rising over time means scale is building up on the tubes. The HTC tab charts both HTCs "
+                        "against their SOR baselines so you can watch the trend.")
+        elif "stec" in p_lower:
+            response = ("**STEC (Specific Thermal Energy Consumption)** is:\n"
+                        "`STEC = (Steam(TPH) × 1000 / 3600 × 2330) / Desal Production`\n\n"
+                        "It's the thermal energy in kWh consumed per tonne of distillate produced.")
+        elif "chemical" in p_lower or "antiscalant" in p_lower or "antifoam" in p_lower or "dosing" in p_lower or re.search(r'\bppm\b', p_lower):
+            response = ("**Chemical dosing** is derived from the daily tank-level drop, matching the Chemicals doses sheet:\n\n"
+                        "* `Level Drop` = `Initial + Top-up − Final`\n"
+                        "* `LPH` = `(Level Drop ÷ Hours) × 23`\n"
+                        "* `Antiscalant Kg/hr` = `LPH × 1.20` · `Antifoam Kg/hr` = `LPH × 0.02`\n"
+                        "* `PPM` = `Kg/hr × 1000 ÷ Seawater Feed`\n\n"
+                        "Upload the **Chemical Doses** sheet on the Bulk Uploads tab; the Chemicals tab then shows dose "
+                        "rates, residual PPM, MMC stock, and trends for both chemicals.")
+        elif "bulk" in p_lower or "upload" in p_lower:
+            response = ("The **Bulk Uploads** tab has five separate uploaders, one per source sheet: **Operational Data**, "
+                        "**1st Effect HTC**, **Overall HTC**, **Water Quality**, and **Chemical Doses**. Each recomputes "
+                        "its own KPIs and merges by date, so uploading one never overwrites another. Missing readings are "
+                        "left genuinely blank (shown as 0) rather than filled with a guessed value.")
         elif re.search(r'\bols\b', p_lower) or "linear regression" in p_lower:
             response = "**OLS (Ordinary Least Squares)** is the standard mathematical method used to draw a straight line of best fit through data points. It creates the 'Digital Twin' of the plant's clean physics."
         elif "xgboost" in p_lower or "random forest" in p_lower or "ai" in p_lower:
@@ -268,12 +308,12 @@ def render_chatbot():
             response = "**Residual** is calculated as:\n`Actual Production - Predicted Production`\n\nA negative residual means the plant is underperforming compared to its clean digital twin, indicating scale/fouling is blocking performance."
         elif "fouling" in p_lower or "alert" in p_lower or "status" in p_lower:
             response = "The software calculates a **% Difference**:\n`(Residual / Predicted) * 100`\n\n* **Better than -4%:** CLEAN\n* **-4% to -5%:** WARNING\n* **Worse than -5%:** FOULING DETECTED"
-        elif "bulk" in p_lower or "upload" in p_lower:
-            response = "In the **Bulk Uploads** tab, you can upload an entire month of logs using your exact Excel sequence. The software automatically calculates GOR, HTC, Predicted Production, and Residuals for every row, safely handling missing sensor data by borrowing from the 2014 baseline and averaging missing water quality parameters."
         elif "remarks" in p_lower or "observation" in p_lower:
             response = "You can add custom notes, TT errors, or shift observations in the **Remarks & Observations** box in the Reporting Tab. These automatically save to the database and print on the Daily Word Report!"
         else:
-            response = "I am the Chembond Water Assistant. I can explain the new formulas for **1st Effect HTC, Overall HTC, Remarks, GOR, RO Rejection, Recovery, Residuals, Fouling alerts, OLS**, and **AI Models**. What would you like to know?"
+            response = ("I am the Chembond Water Assistant. I can explain the current formulas for **1st Effect HTC, "
+                        "Overall HTC, LMTD, Fouling (Rf), GOR, STEC, Recovery, Chemical Dosing (antiscalant & antifoam), "
+                        "Residuals, Fouling alerts, OLS**, and **AI Models**. What would you like to know?")
 
         st.session_state.messages.append({"role": "assistant", "content": response})
         chat_container.chat_message("assistant").markdown(response)
