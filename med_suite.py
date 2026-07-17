@@ -159,6 +159,13 @@ EXACT_DB_COLUMNS = [
     "HTCO_Feed_Flow", "HTCO_Product_Flow", "HTCO_Cond_Flow", "HTCO_Steam_TPH",
     "HTCO_Feed_Temp_ColdGrp", "HTCO_Brine_Disch_Temp", "HTCO_Vapor_Temp", "HTCO_Cond_Temp",
     "HTCO_dT1", "HTCO_dT2", "HTCO_LMTD", "HTCO_Q_Steam", "HTCO_Fouling", "HTCO_Rf",
+    # --- Chemicals doses sheet: antiscalant (Kem Watreat r 3687) + antifoam (Kem Antifoam 1795).
+    #     Dosing derived from tank level drop: (Initial + Top-up - Final) over N hrs -> LPH -> Kg/hr -> PPM.
+    "AS_Initial", "AS_Topup", "AS_Final", "AS_LevelDrop", "AS_Hours", "AS_LPH", "AS_KgHr", "AS_PPM",
+    "AF_Initial", "AF_Topup", "AF_Final", "AF_LevelDrop", "AF_Hours", "AF_LPH", "AF_KgHr", "AF_PPM",
+    # MMC stock (KG): opening / received / consumed / closing for each chemical.
+    "AS_Stock_Open", "AS_Stock_Recd", "AS_Stock_Consumed", "AS_Stock_Close",
+    "AF_Stock_Open", "AF_Stock_Recd", "AF_Stock_Consumed", "AF_Stock_Close",
 ]
 for cat in ['Feed', 'Product']:
     for param, details in WATER_SPECS[cat].items(): 
@@ -215,6 +222,25 @@ DESAL_BULK_HEADERS = [
     'Date', 'pH', 'Turbidity', 'Conductivity', 'TDS', 'Total Alkalinity', 'Calcium Hardness',
     'Mg Hardness', 'Total Hardness', 'Chloride', 'Total Iron', 'Silica', 'Sulphate', 'REMARKS'
 ]
+
+# --- Chemical Doses template: mirrors the 'Chemicals doses' sheet. Only the raw INPUTS are uploaded
+# (tank initial/top-up/final levels, hours, and MMC stock movements). LPH, Kg/hr and PPM are recomputed.
+CHEM_BULK_HEADERS = [
+    'Date',
+    'AS Initial', 'AS Top-up', 'AS Final', 'AS Nos of Hrs',
+    'AF Initial', 'AF Top-up', 'AF Final', 'AF Nos of Hrs',
+    'AS Stock Opening', 'AS Stock Received', 'AS Stock Consumed', 'AS Stock Closing',
+    'AF Stock Opening', 'AF Stock Received', 'AF Stock Consumed', 'AF Stock Closing',
+    'Remarks'
+]
+# Physical constants, reverse-engineered exactly from the 'Chemicals doses' sheet's own ratios:
+#   LPH        = (level drop / hours) x 23      (tank litres per unit of level drop)
+#   AS kg/hr   = LPH x 1.20                     (Kem Watreat r 3687 density)
+#   AF kg/hr   = LPH x 0.02                     (Kem Antifoam 1795 effective density factor)
+#   PPM        = kg/hr x 1000 / feed(m3/hr)     (dose relative to seawater feed)
+LITRES_PER_LEVEL_UNIT = 23.0
+AS_DENSITY = 1.20
+AF_DENSITY = 0.02
 
 # --- Operational Data bulk template: throughput/production/chemicals only. Matches your existing
 # 'Operational data' sheet / DCS export format exactly, so your existing file works unmodified.
@@ -508,6 +534,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 db_to_var_mapping['mid_effects_temp'] = ['HTC1_Feed_Temp_Eff4to7', 'Intermediate Effects Avg Brine Temp']
                 db_to_var_mapping['htc1_feed_flow'] = ['HTC1_Feed_Flow']
                 db_to_var_mapping['steam_in_t'] = ['Steam Inlet Temp']
+                db_to_var_mapping['chem_anti_ppm'] = ['Anti_PPM', 'AS_PPM']
+                db_to_var_mapping['chem_foam_ppm'] = ['Foam_PPM', 'AF_PPM']
+                db_to_var_mapping['chem_anti_cons'] = ['Antiscalant (kg)', 'AS_KgHr']
+                db_to_var_mapping['chem_foam_cons'] = ['Antifoam (kg)', 'AF_KgHr']
 
                 loaded_vars = False
                 for var_key, col_names in db_to_var_mapping.items():
@@ -796,16 +826,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 st.text_area("Remarks", key="t0_remarks", on_change=sync_var, args=('remarks', 't0_remarks'), height=68,
                              help="Mirrors the Remarks box on the Reporting tab - edit either one.")
 
-                with st.expander("Effect-wise Temperature Cascade (optional)"):
-                    st.checkbox("Skip effect-wise temperatures today", key="in_skip_eff", on_change=sync_var, args=('skip_eff', 'in_skip_eff'))
-                    if not get_v('skip_eff'):
-                        e_df = st.data_editor(display_effect_df, key="in_effect_df", use_container_width=True, hide_index=True,
-                                              disabled=["Effect ID", "Base Vapor (°C)", "Base Brine (°C)", "Base HTC"])
-                        if not e_df[["Live Vapor (°C)", "Live Brine (°C)"]].equals(
-                                st.session_state.shared_effect_df[["Live Vapor (°C)", "Live Brine (°C)"]]):
-                            st.session_state.shared_effect_df["Live Vapor (°C)"] = e_df["Live Vapor (°C)"]
-                            st.session_state.shared_effect_df["Live Brine (°C)"] = e_df["Live Brine (°C)"]
-                            st.rerun()
+                # Effect-wise temperature cascade is no longer recorded by the team, so the input UI is
+                # hidden. skip_eff is forced True so any downstream logic treats it as intentionally absent.
+                if not get_v('skip_eff'):
+                    st.session_state.vars['skip_eff'] = True
 
             # ---------------------------------------------------------------- 2 · HTC 1st EFFECT
             with entry[1]:
@@ -999,7 +1023,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         df_b = pd.DataFrame([
             {"Parameter": "Total Flow (Thermocompressor + NCG)", "UOM": "Tonne/hr", "Design": "97.5", "SOR Base": 76.94, "Actual": ops_data['Steam'], "Difference": ops_data['Steam'] - 76.94},
             {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "3.5", "SOR Base": 4.3, "Actual": get_v('stm_press'), "Difference": get_v('stm_press') - 4.3},
-            {"Parameter": "Temp.", "UOM": "°C", "Design": "147", "SOR Base": 176.0, "Actual": get_v('mra_t1'), "Difference": get_v('mra_t1') - 176.0}
+            {"Parameter": "Steam Inlet Temp.", "UOM": "°C", "Design": "176", "SOR Base": 176.0, "Actual": get_v('steam_in_t'), "Difference": get_v('steam_in_t') - 176.0},
+            {"Parameter": "First Effect Vapour Temp.", "UOM": "°C", "Design": "69", "SOR Base": 68.47, "Actual": get_v('mra_t1'), "Difference": get_v('mra_t1') - 68.47}
         ])
         st.dataframe(df_b.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
 
@@ -1198,21 +1223,109 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     # --- TAB 4: CHEMICAL DOSING ---
     with tabs[4]:
         st.subheader("Chemical Treatment Monitoring")
-        st.number_input("Sea Water Feed (m³/h)", key="t4_sw_tot", on_change=sync_var, args=('sw_total', 't4_sw_tot'))
+        st.caption(
+            "Kem Watreat r 3687 (antiscalant) and Kem Antifoam 1795. Dosing is derived from the daily tank-level "
+            "drop uploaded on the Chemical Doses bulk tab; the figures below reflect the selected date's record."
+        )
+
+        # Pull this date's chemical record straight from the registry.
+        chem_row = {}
+        _logs = st.session_state.daily_logs
+        if _logs is not None and not _logs.empty and 'Date' in _logs.columns:
+            _lref = _logs.copy()
+            _lref['Date'] = standardize_dates(_lref['Date']).dt.strftime('%Y-%m-%d')
+            _match = _lref[_lref['Date'] == log_date_str]
+            if not _match.empty:
+                chem_row = _match.iloc[-1].to_dict()
+
+        def _cv(col, fallback=0.0):
+            try:
+                v = float(chem_row.get(col))
+                return v if pd.notna(v) else fallback
+            except (TypeError, ValueError):
+                return fallback
+
+        as_kghr, as_ppm, as_lph = _cv('AS_KgHr'), _cv('AS_PPM'), _cv('AS_LPH')
+        af_kghr, af_ppm, af_lph = _cv('AF_KgHr'), _cv('AF_PPM'), _cv('AF_LPH')
+        # Fall back to the manually-tracked residual PPM fields if the dosing record isn't present.
+        if as_ppm == 0: as_ppm = get_v('chem_anti_ppm')
+        if af_ppm == 0: af_ppm = get_v('chem_foam_ppm')
+
+        st.markdown("##### Dosing Snapshot")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Antiscalant Dose", f"{as_kghr:.2f} kg/hr", f"{as_ppm:.2f} ppm")
+        m2.metric("Antiscalant LPH", f"{as_lph:.2f} L/hr")
+        m3.metric("Antifoam Dose", f"{af_kghr:.3f} kg/hr", f"{af_ppm:.3f} ppm")
+        m4.metric("Antifoam LPH", f"{af_lph:.2f} L/hr")
+
+        if not chem_row or (as_kghr == 0 and af_kghr == 0):
+            st.info("No derived dosing record found for this date. Upload the Chemical Doses sheet on the Bulk Uploads tab to populate this.")
+
         st.divider()
         cc1, cc2 = st.columns(2)
         with cc1:
-            st.markdown("### Kem Watreat r 3687 (Antiscalant Evaluation)")
-            st.number_input("Target Dosing Level (PPM)", key="t4_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 't4_anti_ppm'))
-            theo_anti = (ops_data['SW Total'] * get_v('chem_anti_ppm')) / 1000
-            st.info(f"Theoretical Flow Target Requirements: {theo_anti:.2f} kg/hr")
-            st.number_input("Actual Consumption (kg/hr)", key="t4_anti_cons", on_change=sync_var, args=('chem_anti_cons', 't4_anti_cons'))
+            st.markdown("### Kem Watreat r 3687 — Antiscalant")
+            as_target = 10.5  # SOR baseline ppm
+            df_as = pd.DataFrame([
+                {"Metric": "Dose Rate (kg/hr)", "Value": as_kghr},
+                {"Metric": "Dose Rate (LPH)", "Value": as_lph},
+                {"Metric": "Residual (ppm)", "Value": as_ppm},
+                {"Metric": "SOR Target (ppm)", "Value": as_target},
+                {"Metric": "Deviation vs Target (ppm)", "Value": as_ppm - as_target},
+            ])
+            st.dataframe(df_as.style.format({"Value": "{:.3f}"}), use_container_width=True, hide_index=True)
+            st.markdown("**MMC Stock (kg)**")
+            st.dataframe(pd.DataFrame([{
+                "Opening": _cv('AS_Stock_Open'), "Received": _cv('AS_Stock_Recd'),
+                "Consumed": _cv('AS_Stock_Consumed'), "Closing": _cv('AS_Stock_Close')
+            }]).style.format("{:.1f}"), use_container_width=True, hide_index=True)
+
         with cc2:
-            st.markdown("### Kem Antifoam 1795 Performance")
-            st.number_input("Target Dosing Level (PPM)", key="t4_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 't4_foam_ppm'))
-            theo_foam = (ops_data['SW Total'] * get_v('chem_foam_ppm')) / 1000
-            st.info(f"Theoretical Flow Target Requirements: {theo_foam:.2f} kg/hr")
-            st.number_input("Actual Consumption (kg/hr)", key="t4_foam_cons", on_change=sync_var, args=('chem_foam_cons', 't4_foam_cons'))
+            st.markdown("### Kem Antifoam 1795 — Antifoam")
+            af_target = 0.16
+            df_af = pd.DataFrame([
+                {"Metric": "Dose Rate (kg/hr)", "Value": af_kghr},
+                {"Metric": "Dose Rate (LPH)", "Value": af_lph},
+                {"Metric": "Residual (ppm)", "Value": af_ppm},
+                {"Metric": "SOR Target (ppm)", "Value": af_target},
+                {"Metric": "Deviation vs Target (ppm)", "Value": af_ppm - af_target},
+            ])
+            st.dataframe(df_af.style.format({"Value": "{:.3f}"}), use_container_width=True, hide_index=True)
+            st.markdown("**MMC Stock (kg)**")
+            st.dataframe(pd.DataFrame([{
+                "Opening": _cv('AF_Stock_Open'), "Received": _cv('AF_Stock_Recd'),
+                "Consumed": _cv('AF_Stock_Consumed'), "Closing": _cv('AF_Stock_Close')
+            }]).style.format("{:.1f}"), use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.markdown("#### Dosing Trend")
+        if _logs is not None and not _logs.empty and 'Date' in _logs.columns:
+            tdf = _logs.copy()
+            tdf['Date'] = standardize_dates(tdf['Date'])
+            for c in ['AS_KgHr', 'AF_KgHr', 'AS_PPM', 'AF_PPM']:
+                tdf[c] = pd.to_numeric(tdf.get(c), errors='coerce')
+            tdf = tdf.dropna(subset=['Date']).sort_values('Date')
+            tdf = tdf[(tdf['AS_KgHr'].fillna(0) > 0) | (tdf['AF_KgHr'].fillna(0) > 0)]
+            if len(tdf) > 1:
+                g1, g2 = st.columns(2)
+                for col, metric, title, colr in (
+                    (g1, 'AS_KgHr', 'Antiscalant Dose (kg/hr)', '#1f77b4'),
+                    (g2, 'AF_KgHr', 'Antifoam Dose (kg/hr)', '#ff7f0e'),
+                ):
+                    sub = tdf[tdf[metric] > 0]
+                    if len(sub) > 1:
+                        ch = alt.Chart(sub).mark_line(point=True, color=colr).encode(
+                            x=alt.X('Date:T', title=None),
+                            y=alt.Y(f'{metric}:Q', scale=alt.Scale(zero=False), title='kg/hr'),
+                            tooltip=['Date:T', f'{metric}:Q'])
+                        col.markdown(f"**{title}**")
+                        col.altair_chart(ch, use_container_width=True)
+                    else:
+                        col.info(f"Not enough history for {title} yet.")
+            else:
+                st.info("No dosing history in the registry yet. Upload Chemical Doses data to build a trend.")
+        else:
+            st.info("No dosing history in the registry yet.")
 
     # --- TAB 5: MRA EVALUATION ENGINE ---
     with tabs[5]:
@@ -1739,7 +1852,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             return d, filled
 
         bulk_subtabs = st.tabs([
-            "A) Operational Data", "B) 1st Effect HTC", "C) Overall HTC", "D) Water Quality"
+            "A) Operational Data", "B) 1st Effect HTC", "C) Overall HTC", "D) Water Quality", "E) Chemical Doses"
         ])
 
         # ===================================================================================
@@ -2213,5 +2326,116 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 st.error("Incorrect password.")
                 except Exception as e:
                     st.error(f"Error processing Desal file: {e}")
+
+        # ===================================================================================
+        # E) CHEMICAL DOSES  <-  'Chemicals doses' sheet
+        # ===================================================================================
+        with bulk_subtabs[4]:
+            st.markdown(
+                "Source sheet: **Chemicals doses**. Upload the raw tank readings (initial / top-up / final "
+                "levels and hours) plus MMC stock movements. The calculator recomputes **LPH**, **Kg/hr** and "
+                "**PPM** for both antiscalant (Kem Watreat r 3687) and antifoam (Kem Antifoam 1795) exactly as "
+                "the sheet does."
+            )
+            st.caption(
+                "Level drop = Initial + Top-up − Final · LPH = (drop ÷ hrs) × 23 · "
+                "AS Kg/hr = LPH × 1.20 · AF Kg/hr = LPH × 0.02 · PPM = Kg/hr × 1000 ÷ seawater feed. "
+                "PPM uses the seawater feed already stored for that date from the Operational upload."
+            )
+            st.download_button(
+                "Download Chemical Doses Template", key='dl_chem',
+                data=pd.DataFrame(columns=CHEM_BULK_HEADERS).to_csv(index=False).encode('utf-8'),
+                file_name='MED4_ChemicalDoses_Template.csv', mime='text/csv'
+            )
+            st.divider()
+            chem_file = st.file_uploader("Upload Chemical Doses CSV", type=["csv"], key="chem_up")
+
+            if chem_file is not None:
+                try:
+                    d = pd.read_csv(chem_file)
+                    first = d.columns[0]
+                    d = d[~d[first].astype(str).isin(['Unit', 'UOM', 'Initail', 'Top-up', 'Final'])]
+                    d.rename(columns={
+                        first: 'Date',
+                        'AS Initial': 'AS_Initial', 'AS Top-up': 'AS_Topup', 'AS Final': 'AS_Final', 'AS Nos of Hrs': 'AS_Hours',
+                        'AF Initial': 'AF_Initial', 'AF Top-up': 'AF_Topup', 'AF Final': 'AF_Final', 'AF Nos of Hrs': 'AF_Hours',
+                        'AS Stock Opening': 'AS_Stock_Open', 'AS Stock Received': 'AS_Stock_Recd',
+                        'AS Stock Consumed': 'AS_Stock_Consumed', 'AS Stock Closing': 'AS_Stock_Close',
+                        'AF Stock Opening': 'AF_Stock_Open', 'AF Stock Received': 'AF_Stock_Recd',
+                        'AF Stock Consumed': 'AF_Stock_Consumed', 'AF Stock Closing': 'AF_Stock_Close',
+                    }, inplace=True)
+
+                    chem_num = ['AS_Initial', 'AS_Topup', 'AS_Final', 'AS_Hours',
+                                'AF_Initial', 'AF_Topup', 'AF_Final', 'AF_Hours',
+                                'AS_Stock_Open', 'AS_Stock_Recd', 'AS_Stock_Consumed', 'AS_Stock_Close',
+                                'AF_Stock_Open', 'AF_Stock_Recd', 'AF_Stock_Consumed', 'AF_Stock_Close']
+                    d = _clean_num(d, chem_num)
+                    d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
+                    d = d.dropna(subset=['Date'])
+
+                    if len(d) == 0:
+                        st.error("No valid dated rows found.")
+                    else:
+                        # Pull the seawater feed already stored for each date (from Operational upload)
+                        # so PPM is computed against the real feed rather than a guess.
+                        feed_map = {}
+                        logs = st.session_state.daily_logs
+                        if logs is not None and not logs.empty and 'Date' in logs.columns:
+                            ref = logs.copy()
+                            ref['Date'] = standardize_dates(ref['Date']).dt.strftime('%Y-%m-%d')
+                            ref = ref.dropna(subset=['Date']).drop_duplicates(subset=['Date'], keep='last').set_index('Date')
+                            if 'Sea Water Feed' in ref.columns:
+                                feed_map = pd.to_numeric(ref['Sea Water Feed'], errors='coerce').to_dict()
+                        feed = d['Date'].map(feed_map)
+
+                        # --- Antiscalant derivations ---
+                        d['AS_LevelDrop'] = d['AS_Initial'].fillna(0) + d['AS_Topup'].fillna(0) - d['AS_Final'].fillna(0)
+                        d['AS_LPH'] = np.where(d['AS_Hours'] > 0, (d['AS_LevelDrop'] / d['AS_Hours']) * LITRES_PER_LEVEL_UNIT, np.nan)
+                        d['AS_KgHr'] = d['AS_LPH'] * AS_DENSITY
+                        d['AS_PPM'] = np.where((feed > 0) & d['AS_KgHr'].notna(), d['AS_KgHr'] * 1000 / feed, np.nan)
+
+                        # --- Antifoam derivations ---
+                        d['AF_LevelDrop'] = d['AF_Initial'].fillna(0) + d['AF_Topup'].fillna(0) - d['AF_Final'].fillna(0)
+                        d['AF_LPH'] = np.where(d['AF_Hours'] > 0, (d['AF_LevelDrop'] / d['AF_Hours']) * LITRES_PER_LEVEL_UNIT, np.nan)
+                        d['AF_KgHr'] = d['AF_LPH'] * AF_DENSITY
+                        d['AF_PPM'] = np.where((feed > 0) & d['AF_KgHr'].notna(), d['AF_KgHr'] * 1000 / feed, np.nan)
+
+                        # Also feed the legacy KPI-tab fields so the Chemicals tab and SOR chem section populate.
+                        d['Anti_PPM'] = d['AS_PPM']
+                        d['Foam_PPM'] = d['AF_PPM']
+                        d['Antiscalant (kg)'] = d['AS_KgHr']
+                        d['Antifoam (kg)'] = d['AF_KgHr']
+
+                        keep = ['Date',
+                                'AS_Initial', 'AS_Topup', 'AS_Final', 'AS_LevelDrop', 'AS_Hours', 'AS_LPH', 'AS_KgHr', 'AS_PPM',
+                                'AF_Initial', 'AF_Topup', 'AF_Final', 'AF_LevelDrop', 'AF_Hours', 'AF_LPH', 'AF_KgHr', 'AF_PPM',
+                                'AS_Stock_Open', 'AS_Stock_Recd', 'AS_Stock_Consumed', 'AS_Stock_Close',
+                                'AF_Stock_Open', 'AF_Stock_Recd', 'AF_Stock_Consumed', 'AF_Stock_Close',
+                                'Anti_PPM', 'Foam_PPM', 'Antiscalant (kg)', 'Antifoam (kg)']
+                        ready = d[keep].copy()
+                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+
+                        n_nofeed = int(ready['AS_PPM'].isna().sum())
+                        st.success(f"Computed chemical dosing for {len(ready)} rows.")
+                        if n_nofeed:
+                            st.warning(f"PPM left blank for {n_nofeed} row(s) with no seawater feed stored yet - "
+                                       f"upload the matching Operational data first, then re-upload this file to fill PPM.")
+                        show_cols = ['Date', 'AS_LevelDrop', 'AS_LPH', 'AS_KgHr', 'AS_PPM',
+                                     'AF_LevelDrop', 'AF_LPH', 'AF_KgHr', 'AF_PPM', 'AS_Stock_Close', 'AF_Stock_Close']
+                        st.dataframe(ready[show_cols].style.format(precision=3), use_container_width=True, hide_index=True)
+
+                        cp, cs = st.columns([2, 2])
+                        pw = cp.text_input("Password", type="password", key="pw_chem",
+                                           label_visibility="collapsed", placeholder="Master password to sync")
+                        if cs.button("Update Database (Chemical Doses)", use_container_width=True, key="b_chem"):
+                            if pw == "12345678":
+                                st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
+                                save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                                st.success("Chemical dosing synced. Operational, HTC and Water Quality untouched.")
+                                time.sleep(1.2); st.rerun()
+                            elif pw != "":
+                                st.error("Incorrect password.")
+                except Exception as e:
+                    st.error(f"Error processing Chemical Doses file: {e}")
 
     render_chatbot()
