@@ -332,15 +332,13 @@ def main():
     if 'utility_choice' not in st.session_state:
         st.session_state.utility_choice = "Central Hub"
 
-    _sel = st.sidebar.selectbox(
+    # Bind the selectbox to utility_choice via its key so the two share ONE piece of state.
+    # Buttons elsewhere set st.session_state.utility_choice and rerun; because the selectbox reads
+    # its value from that same key, there's no separate widget value to override the button's choice.
+    st.sidebar.selectbox(
         "Select System", nav_options,
-        index=nav_options.index(st.session_state.utility_choice)
-        if st.session_state.utility_choice in nav_options else 0,
-        key="nav_selectbox"
+        key="utility_choice"
     )
-    if _sel != st.session_state.utility_choice:
-        st.session_state.utility_choice = _sel
-        st.rerun()
 
     utility_choice = st.session_state.utility_choice
 
@@ -354,7 +352,13 @@ def main():
         try:
             if not st.session_state.daily_logs.empty:
                 logs = st.session_state.daily_logs.copy()
-                logs['_d'] = pd.to_datetime(logs['Date'], errors='coerce', dayfirst=True)
+                # Registry dates are stored ISO (YYYY-MM-DD), so parse ISO first. Using dayfirst=True on
+                # an ISO string drops any day-of-month > 12 as NaT (which made 'latest' wrongly settle on
+                # the 12th) and swaps day/month for day <= 12. Only fall back to a dayfirst guess for any
+                # value that isn't already ISO.
+                _d = pd.to_datetime(logs['Date'], format='%Y-%m-%d', errors='coerce')
+                _d = _d.fillna(pd.to_datetime(logs['Date'], errors='coerce', dayfirst=True))
+                logs['_d'] = _d
                 logs = logs.dropna(subset=['_d']).sort_values('_d')
                 last = logs.iloc[-1]
 
@@ -767,7 +771,7 @@ def main():
                 st.markdown("#### Aggregated Monthly Performance Generator")
                 if not st.session_state.ro_daily_logs.empty:
                     df_logs = st.session_state.ro_daily_logs.copy()
-                    df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
+                    df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='%Y-%m-%d', errors='coerce').fillna(pd.to_datetime(df_logs['Date'], errors='coerce', dayfirst=True))
                     month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                     if not month_data.empty:
                         if st.button("Compile and Generate Monthly Summary (.docx)", use_container_width=True, key="ro_month_btn"):
@@ -777,7 +781,7 @@ def main():
             with rep_tabs[2]:
                 if not st.session_state.ro_daily_logs.empty:
                     df_logs = st.session_state.ro_daily_logs.copy()
-                    df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
+                    df_logs['Date'] = pd.to_datetime(df_logs['Date'], format='%Y-%m-%d', errors='coerce').fillna(pd.to_datetime(df_logs['Date'], errors='coerce', dayfirst=True))
                     
                     min_date = df_logs['Date'].min().date() if not df_logs['Date'].isnull().all() else datetime.date(2023, 1, 1)
                     max_date = df_logs['Date'].max().date() if not df_logs['Date'].isnull().all() else datetime.date.today()
@@ -806,7 +810,7 @@ def main():
                 st.markdown("#### Data Explorer")
                 if not st.session_state.ro_daily_logs.empty:
                     exp_df = st.session_state.ro_daily_logs.copy()
-                    exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
+                    exp_df['Date'] = pd.to_datetime(exp_df['Date'], format='%Y-%m-%d', errors='coerce').fillna(pd.to_datetime(exp_df['Date'], errors='coerce', dayfirst=True))
                     
                     min_date2 = exp_df['Date'].min().date() if not exp_df['Date'].isnull().all() else datetime.date(2023, 1, 1)
                     max_date2 = exp_df['Date'].max().date() if not exp_df['Date'].isnull().all() else datetime.date.today()
