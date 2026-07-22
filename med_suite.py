@@ -287,7 +287,7 @@ DEFAULTS = {
     # (correction factor). Previous defaults (1757.49 / 19332.0) were roughly 7-8x too small, which alone made HTC
     # numbers wrong by close to an order of magnitude regardless of anything else. See tube-geometry calc sheet.
     'skip_eff': False, 'skip_wq': False, 'remarks': "", 'area_1st': HTC_1ST_AREA, 'area_overall': HTC_OVERALL_AREA,
-    'sw_lower': 0.0, 'cond_flow': 0.0, 'cond_temp': 0.0, 'cond_cond': 3.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0, 'cw_flow': 2726.0
+    'sw_lower': 0.0, 'cond_flow': 0.0, 'cond_temp': 0.0, 'htc1_cond_temp': 0.0, 'htco_cond_temp': 0.0, 'cond_cond': 3.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0, 'cw_flow': 2726.0
 }
 
 SYNC_MAP = {
@@ -317,7 +317,7 @@ SYNC_MAP = {
     'chem_foam_ppm': ['in_foam_ppm', 't4_foam_ppm'], 'chem_foam_cons': ['in_foam_cons', 't4_foam_cons'],
     'remarks': ['in_remarks', 't0_remarks'],
     'area_1st': ['in_area_1st', 't2_area_1st'], 'area_overall': ['in_area_overall', 't2_area_overall'],
-    'sw_lower': ['in_sw_low'], 'cond_flow': ['in_cond_flow'], 'cond_temp': ['in_cond_temp'], 'cond_cond': ['in_cond_cond'],
+    'sw_lower': ['in_sw_low'], 'cond_flow': ['in_cond_flow'], 'cond_temp': ['in_cond_temp'], 'htc1_cond_temp': [], 'htco_cond_temp': [], 'cond_cond': ['in_cond_cond'],
     'sw_out_t': ['in_sw_out'], 'cw_supply': ['in_cw_supply'], 'cw_return': ['in_cw_return'], 'cw_flow': ['in_cw_flow']
 }
 
@@ -518,6 +518,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     'feed_cold': ['HTCO_Feed_Temp_ColdGrp', 'Feed Temp to Cold Group'],
                     'brine_out_t': ['HTCO_Brine_Disch_Temp', 'Brine Discharge Temp'],
                     'cond_temp': ['condensate temp', 'HTC1_Cond_Temp', 'HTCO_Cond_Temp'],
+                    # Each HTC calc gets its OWN condensate temp, preferring the value from that calc's own
+                    # HTC sheet, and only falling back to the shared Operational reading if the HTC sheet
+                    # didn't supply one. This is what keeps the live calculator in agreement with the stored
+                    # (graphed) HTC: the two source sheets can legitimately disagree on condensate temp
+                    # (e.g. the Overall-HTC sheet used 50C from Jun 11 while Operational still read ~76C),
+                    # and for HTC purposes the HTC sheet's own value is authoritative.
+                    'htc1_cond_temp': ['HTC1_Cond_Temp', 'condensate temp'],
+                    'htco_cond_temp': ['HTCO_Cond_Temp', 'condensate temp'],
                     'mra_t1': ['1st Effect Vapour Temp', 'HTC1_Vapor_Temp', 'HTCO_Vapor_Temp'],
                     'mra_bt1': ['1st effect brine temp', 'HTC1_Brine_Temp'],
                     'steam': ['LP Steam consumption', 'HTC1_Steam_TPH', 'HTCO_Steam_TPH'],
@@ -650,7 +658,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     #       NB: the sheet labels that column "Feed Temp", but its tag row reads "Avg of effects of
     #       7,6,5,4". It is NOT a seawater temperature.
     ops_data['dt_1st'] = get_v('mra_t1') - get_v('mra_bt1')
-    ops_data['dt2_1st'] = get_v('cond_temp') - get_v('mid_effects_temp')
+    _cond_1st = get_v('htc1_cond_temp') or get_v('cond_temp')
+    ops_data['dt2_1st'] = _cond_1st - get_v('mid_effects_temp')
     ops_data['lmtd_1st'] = _lmtd_scalar(ops_data['dt_1st'], ops_data['dt2_1st'])
     _a1 = get_v('area_1st')
     ops_data['htc_1st'] = (
@@ -669,7 +678,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     #       NB: this sheet ALSO labels its column "Feed Temp", but here it means the cold-group feed
     #       temp (~40 C) - a different measurement from the 1st-effect sheet's "Feed Temp" (~49 C).
     ops_data['dt1_overall'] = get_v('mra_t1') - get_v('brine_out_t')
-    ops_data['dt2_overall'] = get_v('cond_temp') - get_v('feed_cold')
+    _cond_ov = get_v('htco_cond_temp') or get_v('cond_temp')
+    ops_data['dt2_overall'] = _cond_ov - get_v('feed_cold')
     ops_data['lmtd_overall'] = _lmtd_scalar(ops_data['dt1_overall'], ops_data['dt2_overall'])
     _ao = get_v('area_overall')
     ops_data['htc_overall'] = (
