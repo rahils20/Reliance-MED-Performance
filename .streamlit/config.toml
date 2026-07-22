@@ -1,0 +1,17 @@
+# Chembond Water Technologies - brand theme
+# Colors sourced from chembondwater.com button styling:
+#   #00C6FF (cyan)  ->  #0072FF (royal blue) gradient
+# primaryColor uses the deeper #0072FF for better contrast on a data dashboard.
+# To match the website's brighter look, change primaryColor to "#00C6FF".
+ 
+[theme]
+primaryColor = "#0072FF"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#EAF6FF"
+textColor = "#1B2A38"
+font = "sans serif"
+ 
+[server]
+# Keeps the app tidy on Streamlit Cloud
+runOnSave = false
+ 
