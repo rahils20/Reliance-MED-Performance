@@ -331,13 +331,24 @@ def main():
     nav_options = ["Central Hub", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
     if 'utility_choice' not in st.session_state:
         st.session_state.utility_choice = "Central Hub"
+    # Seed the selectbox's own key once from utility_choice. After this the selectbox is driven purely
+    # by its key 'nav_select' (no index= param, which would clash with a pre-seeded widget key).
+    if 'nav_select' not in st.session_state:
+        st.session_state.nav_select = st.session_state.utility_choice
 
-    # Bind the selectbox to utility_choice via its key so the two share ONE piece of state.
-    # Buttons elsewhere set st.session_state.utility_choice and rerun; because the selectbox reads
-    # its value from that same key, there's no separate widget value to override the button's choice.
+    # utility_choice is a plain router variable the tile buttons write directly - it is NEVER a widget
+    # key, so those writes are always legal. The selectbox owns 'nav_select'; on_change syncs it into
+    # utility_choice, and the tile-button callback (_go_to) sets both so the two displays stay in step.
+    def _sync_nav():
+        st.session_state.utility_choice = st.session_state.nav_select
+
+    def _go_to(target):
+        st.session_state.utility_choice = target
+        st.session_state.nav_select = target
+
     st.sidebar.selectbox(
         "Select System", nav_options,
-        key="utility_choice"
+        key="nav_select", on_change=_sync_nav
     )
 
     utility_choice = st.session_state.utility_choice
@@ -455,9 +466,8 @@ def main():
                 band=_status_color(med_status), title="Multi-Effect Distillation (MED)",
                 subtitle=subtitle, status=med_status, body=body), unsafe_allow_html=True)
             st.write("")
-            if st.button("Open MED-4 Suite", use_container_width=True, key="open_med", type="primary"):
-                st.session_state.utility_choice = "Multi-Effect Distillation (MED)"
-                st.rerun()
+            st.button("Open MED-4 Suite", use_container_width=True, key="open_med", type="primary",
+                      on_click=_go_to, args=("Multi-Effect Distillation (MED)",))
 
         with col_ro:
             if ro_kpis:
@@ -474,9 +484,8 @@ def main():
                 band=_status_color(ro_status), title="Reverse Osmosis (RO)",
                 subtitle=subtitle, status=ro_status, body=body), unsafe_allow_html=True)
             st.write("")
-            if st.button("Open RO Suite", use_container_width=True, key="open_ro", type="primary"):
-                st.session_state.utility_choice = "RO Plant"
-                st.rerun()
+            st.button("Open RO Suite", use_container_width=True, key="open_ro", type="primary",
+                      on_click=_go_to, args=("RO Plant",))
 
         render_chatbot()
         return
