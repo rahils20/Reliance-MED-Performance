@@ -346,12 +346,11 @@ def main():
 
     if utility_choice == "Central Hub":
         st.title("Site Utility Management Suite")
+        st.markdown("Central monitoring platform for Reliance utility systems. Select a system to open its full interface.")
         st.markdown("---")
-        st.markdown("Central dashboard for plant performance monitoring at Reliance facilities. Select a system below to open its full interface.")
-        
-        # --- Pull the latest MED record and its key indicators from the registry ---
-        med_status = "No Data"
-        med_kpis = {}
+
+        # --- MED summary from the registry ---
+        med_status, med_kpis = "No Data", {}
         try:
             if not st.session_state.daily_logs.empty:
                 logs = st.session_state.daily_logs.copy()
@@ -359,7 +358,7 @@ def main():
                 logs = logs.dropna(subset=['_d']).sort_values('_d')
                 last = logs.iloc[-1]
 
-                def _num(col, default=0.0):
+                def _mnum(col, default=0.0):
                     try:
                         return float(str(last.get(col, default)).replace(',', '').strip() or default)
                     except (ValueError, TypeError):
@@ -367,61 +366,111 @@ def main():
 
                 med_kpis = {
                     "date": last['_d'].strftime('%d-%m-%Y'),
-                    "gross": _num('Gross production'),
-                    "gor": _num('GOR'),
-                    "htc_1st": _num('1st Effect HTC'),
-                    "htc_overall": _num('Overall HTC'),
-                    "recovery": _num('Recovery'),
+                    "gross": _mnum('Gross production'), "gor": _mnum('GOR'),
+                    "htc_overall": _mnum('Overall HTC'), "recovery": _mnum('Recovery'),
                 }
-                res_val = _num('Residual')
-                gross_val = _num('Gross production', 1) or 1.0
-                med_diff = (res_val / gross_val) * 100
-                if med_diff <= -5.0: med_status = "Attention Required"
-                elif med_diff <= -4.0: med_status = "Minor Deviation"
-                else: med_status = "Good Working Condition"
+                gross_val = _mnum('Gross production', 1) or 1.0
+                med_diff = (_mnum('Residual') / gross_val) * 100
+                med_status = ("Attention Required" if med_diff <= -5.0
+                              else "Minor Deviation" if med_diff <= -4.0
+                              else "Good Working Condition")
         except Exception:
             med_status = "Data Format Error"
 
-        ro_status = "No Data"
+        # --- RO summary from the registry ---
+        ro_status, ro_kpis = "No Data", {}
         try:
             if not st.session_state.ro_daily_logs.empty:
-                last_ro_row = st.session_state.ro_daily_logs.iloc[-1]
-                res_val = float(str(last_ro_row.get('Residual', 0)).replace(',', '').strip() or 0)
-                flow_val = float(str(last_ro_row.get('Permeate Flow', 1)).replace(',', '').strip() or 1) or 1.0
-                ro_diff = (res_val / flow_val) * 100
-                if ro_diff <= -5.0: ro_status = "Attention Required"
-                elif ro_diff <= -4.0: ro_status = "Minor Deviation"
-                else: ro_status = "Good Working Condition"
+                rlogs = st.session_state.ro_daily_logs.copy()
+                rlast = rlogs.iloc[-1]
+
+                def _rnum(col, default=0.0):
+                    try:
+                        return float(str(rlast.get(col, default)).replace(',', '').strip() or default)
+                    except (ValueError, TypeError):
+                        return default
+
+                ro_kpis = {
+                    "perm": _rnum('Permeate Flow'), "recovery": _rnum('Recovery'),
+                    "rejection": _rnum('Rejection'),
+                }
+                flow_val = _rnum('Permeate Flow', 1) or 1.0
+                ro_diff = (_rnum('Residual') / flow_val) * 100
+                ro_status = ("Attention Required" if ro_diff <= -5.0
+                             else "Minor Deviation" if ro_diff <= -4.0
+                             else "Good Working Condition")
         except Exception:
             ro_status = "Data Format Error"
 
-        st.subheader("MED-4 Latest Summary")
-        if med_kpis:
-            st.caption(f"As of {med_kpis['date']} - Status: {med_status}")
-            s1, s2, s3, s4, s5 = st.columns(5)
-            s1.metric("Gross Production", f"{med_kpis['gross']:.0f} m³/h")
-            s2.metric("GOR", f"{med_kpis['gor']:.2f}")
-            s3.metric("1st Effect HTC", f"{med_kpis['htc_1st']:.0f} W/m²K")
-            s4.metric("Overall HTC", f"{med_kpis['htc_overall']:.2f} W/m²K")
-            s5.metric("Recovery", f"{med_kpis['recovery']:.1f}%")
-        else:
-            st.info("No MED data loaded yet. Open the MED suite and upload plant data to populate the summary.")
+        # Map a status to a color for the tile's status band.
+        def _status_color(s):
+            if s == "Good Working Condition": return "#1F9D55"   # green
+            if s == "Minor Deviation": return "#D9822B"          # amber
+            if s == "Attention Required": return "#D64545"       # red
+            return "#7A8A99"                                      # grey (no data / error)
 
-        st.divider()
-        st.subheader("Open a System")
-        col_med, col_ro = st.columns(2)
+        tile_css = """
+        <div style="border:1px solid #D6E6F5; border-radius:12px; padding:0; overflow:hidden;
+                    background:#FFFFFF; box-shadow:0 1px 4px rgba(0,0,0,0.06); height:100%;">
+          <div style="background:{band}; color:#FFFFFF; padding:10px 18px; font-weight:600; font-size:15px;">
+            {title}
+          </div>
+          <div style="padding:16px 18px;">
+            <div style="font-size:13px; color:#5A6B7B; margin-bottom:4px;">{subtitle}</div>
+            <div style="font-size:15px; font-weight:600; color:{band}; margin-bottom:14px;">{status}</div>
+            {body}
+          </div>
+        </div>
+        """
+
+        def _kpi_row(pairs):
+            cells = "".join(
+                f'<div style="flex:1; min-width:90px;">'
+                f'<div style="font-size:20px; font-weight:700; color:#1B2A38;">{val}</div>'
+                f'<div style="font-size:11px; color:#7A8A99; text-transform:uppercase; letter-spacing:0.4px;">{lbl}</div>'
+                f'</div>'
+                for lbl, val in pairs
+            )
+            return f'<div style="display:flex; gap:14px; flex-wrap:wrap;">{cells}</div>'
+
+        col_med, col_ro = st.columns(2, gap="large")
+
         with col_med:
-            st.markdown("**Multi-Effect Distillation (MED)**")
-            st.markdown(f"Unit MED-4 - {med_status}")
-            st.caption("Thermal performance, heat transfer, water quality, chemical dosing and reporting.")
-            if st.button("Open MED-4 Suite", use_container_width=True, key="open_med"):
+            if med_kpis:
+                body = _kpi_row([
+                    ("Gross Prod.", f"{med_kpis['gross']:.0f} m³/h"),
+                    ("GOR", f"{med_kpis['gor']:.2f}"),
+                    ("Overall HTC", f"{med_kpis['htc_overall']:.1f}"),
+                    ("Recovery", f"{med_kpis['recovery']:.1f}%"),
+                ])
+                subtitle = f"Unit MED-4  ·  as of {med_kpis['date']}"
+            else:
+                body = '<div style="font-size:13px; color:#7A8A99;">No data loaded yet. Open the suite to upload plant data.</div>'
+                subtitle = "Unit MED-4"
+            st.markdown(tile_css.format(
+                band=_status_color(med_status), title="Multi-Effect Distillation (MED)",
+                subtitle=subtitle, status=med_status, body=body), unsafe_allow_html=True)
+            st.write("")
+            if st.button("Open MED-4 Suite", use_container_width=True, key="open_med", type="primary"):
                 st.session_state.utility_choice = "Multi-Effect Distillation (MED)"
                 st.rerun()
+
         with col_ro:
-            st.markdown("**Reverse Osmosis (RO)**")
-            st.markdown(f"HERO Plant - {ro_status}")
-            st.caption("Membrane performance, normalized flux and pressure tracking.")
-            if st.button("Open RO Suite", use_container_width=True, key="open_ro"):
+            if ro_kpis:
+                body = _kpi_row([
+                    ("Permeate", f"{ro_kpis['perm']:.0f} m³/h"),
+                    ("Recovery", f"{ro_kpis['recovery']:.1f}%"),
+                    ("Rejection", f"{ro_kpis['rejection']:.1f}%"),
+                ])
+                subtitle = "HERO Plant"
+            else:
+                body = '<div style="font-size:13px; color:#7A8A99;">No data loaded yet. Open the suite to upload plant data.</div>'
+                subtitle = "HERO Plant"
+            st.markdown(tile_css.format(
+                band=_status_color(ro_status), title="Reverse Osmosis (RO)",
+                subtitle=subtitle, status=ro_status, body=body), unsafe_allow_html=True)
+            st.write("")
+            if st.button("Open RO Suite", use_container_width=True, key="open_ro", type="primary"):
                 st.session_state.utility_choice = "RO Plant"
                 st.rerun()
 
