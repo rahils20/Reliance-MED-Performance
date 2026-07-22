@@ -453,7 +453,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     med_unit_choice = st.sidebar.selectbox("Select Active Unit Train", [f"MED-{unit_idx}" for unit_idx in range(1, 12)], index=3)
     if med_unit_choice != "MED-4":
-        st.title(f"{med_unit_choice} Diagnostic Interface")
+        st.title(f"{med_unit_choice}")
         st.info(f"System data hooks for {med_unit_choice} are under configuration. Diagnostic dashboard metrics will become available upon plant startup.")
         render_chatbot()
         return
@@ -597,9 +597,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     st.title("MED-4 Management Suite")
 
     tabs = st.tabs([
-        "0. Inputs", "1. SOR KPIs", "2. HTC", "3. Quality", 
-        "4. Chemicals", "5. MRA", "6. Reporting", 
-        "7. AI Model Select", "8. Bulk Uploads"
+        "Inputs", "Performance", "Heat Transfer", "Water Quality", 
+        "Chemicals", "Prediction", "Reports", 
+        "Model", "Bulk Upload"
     ])
 
     ops_data = {
@@ -996,7 +996,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     # --- TAB 1: FLOW KPIs & SOR MATRIX ---
     with tabs[1]:
-        st.subheader("System Operating Reference (SOR) Dashboard")
+        st.subheader("Performance Overview")
 
         anti_gm_m3 = (get_v('chem_anti_cons') / ops_data['SW Total']) * 1000 if ops_data['SW Total'] > 0 else 0
         foam_gm_m3 = (get_v('chem_foam_cons') / ops_data['SW Total']) * 1000 if ops_data['SW Total'] > 0 else 0
@@ -1021,7 +1021,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             except:
                 return ''
 
-        st.markdown("### A) SEA WATER")
+        st.markdown("#### Sea Water")
         df_a = pd.DataFrame([
             {"Parameter": "Temp.", "UOM": "°C", "Design": "19-35", "SOR Base": 29.0, "Actual": get_v('sw_in_t'), "Difference": get_v('sw_in_t') - 29.0},
             {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "2.5", "SOR Base": 1.7, "Actual": get_v('sw_press'), "Difference": get_v('sw_press') - 1.7},
@@ -1029,7 +1029,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_a.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### B) LP STEAM")
+        st.markdown("#### LP Steam")
         df_b = pd.DataFrame([
             {"Parameter": "Total Flow (Thermocompressor + NCG)", "UOM": "Tonne/hr", "Design": "97.5", "SOR Base": 76.94, "Actual": ops_data['Steam'], "Difference": ops_data['Steam'] - 76.94},
             {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "3.5", "SOR Base": 4.3, "Actual": get_v('stm_press'), "Difference": get_v('stm_press') - 4.3},
@@ -1038,7 +1038,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_b.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### C) COOLING WATER")
+        st.markdown("#### Cooling Water")
         df_c = pd.DataFrame([
             {"Parameter": "Flow", "UOM": "m3/hr", "Design": "4200", "SOR Base": 2726.0, "Actual": get_v('cw_flow'), "Difference": get_v('cw_flow') - 2726.0},
             {"Parameter": "Cooling Water Supply Temp", "UOM": "°C", "Design": "32", "SOR Base": 31.9, "Actual": get_v('cw_supply'), "Difference": get_v('cw_supply') - 31.9},
@@ -1046,14 +1046,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_c.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### D) DESALINATED WATER")
+        st.markdown("#### Desalinated Water")
         df_d = pd.DataFrame([
             {"Parameter": "Desal water production", "UOM": "m3/hr", "Design": "1000", "SOR Base": 824.0, "Actual": ops_data['Desal'], "Difference": ops_data['Desal'] - 824.0},
             {"Parameter": "Conductivity", "UOM": "microS/cm", "Design": "<15", "SOR Base": 2.5, "Actual": get_v('p_cond'), "Difference": get_v('p_cond') - 2.5}
         ])
         st.dataframe(df_d.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### E) BRINE DISCHARGE")
+        st.markdown("#### Brine Discharge")
         df_e = pd.DataFrame([
             {"Parameter": "Flow", "UOM": "m3/hr", "Design": "1400", "SOR Base": 1315.0, "Actual": ops_data['Brine Return'], "Difference": ops_data['Brine Return'] - 1315.0},
             {"Parameter": "Temp.", "UOM": "°C", "Design": "43.5", "SOR Base": 40.5, "Actual": ops_data['Brine Out_overall'], "Difference": ops_data['Brine Out_overall'] - 40.5},
@@ -1061,7 +1061,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_e.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### F) CONDENSATE RETURN")
+        st.markdown("#### Condensate Return")
         df_f = pd.DataFrame([
             {"Parameter": "Quantity", "UOM": "m3/hr", "Design": "100", "SOR Base": 127.0, "Actual": get_v('cond_flow'), "Difference": get_v('cond_flow') - 127.0},
             {"Parameter": "Temp.", "UOM": "°C", "Design": "70", "SOR Base": 71.0, "Actual": get_v('cond_temp'), "Difference": get_v('cond_temp') - 71.0},
@@ -1069,7 +1069,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_f.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### H) PLANT CAPACITY DETAILS")
+        st.markdown("#### Plant Capacity Details")
         df_h = pd.DataFrame([
             {"Parameter": "Gross desal water production", "UOM": "tph", "Design": "1000", "SOR Base": 873.0, "Actual": ops_data['Gross Prod'], "Difference": ops_data['Gross Prod'] - 873.0},
             {"Parameter": "Conversion (Product to Feed)", "UOM": "%", "Design": "41.6", "SOR Base": 41.4, "Actual": ops_data['Conversion'] * 100, "Difference": (ops_data['Conversion'] * 100) - 41.4},
@@ -1085,7 +1085,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_h.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.3f}", "Actual": "{:.3f}", "Difference": "{:+.3f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("### I) CHEMICAL DOSING & RESIDUAL")
+        st.markdown("#### Chemical Dosing & Residual")
         st.caption("Dosing rate (gm/m³) needs a logged kg-consumption figure for the day; residual PPM comes from lab analysis and is tracked independently.")
         df_i = pd.DataFrame([
             {"Parameter": "Antiscalant (ID204)/IN-204AS", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5,
@@ -1104,15 +1104,15 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.info(f"No {' or '.join(missing_chem)} consumption (kg) is logged for this date, so the gm/m³ dosing rate can't be calculated - only the PPM residual is shown. Log daily kg consumption on the Chemical Dosing tab to enable this.")
         
         sor_export_dfs = {
-            "A) SEA WATER": df_a, "B) LP STEAM": df_b, "C) COOLING WATER": df_c, 
-            "D) DESALINATED WATER": df_d, "E) BRINE DISCHARGE": df_e, 
-            "F) CONDENSATE RETURN": df_f, "H) PLANT CAPACITY DETAILS": df_h, 
-            "I) CHEMICAL CONSUMPTION": df_i
+            "Sea Water": df_a, "LP Steam": df_b, "Cooling Water": df_c, 
+            "Desalinated Water": df_d, "Brine Discharge": df_e, 
+            "Condensate Return": df_f, "Plant Capacity Details": df_h, 
+            "Chemical Consumption": df_i
         }
 
     # --- TAB 2: OVERALL HTC ---
     with tabs[2]:
-        st.subheader("Thermal Integrity & Fouling Analysis")
+        st.subheader("Heat Transfer & Fouling")
         st.caption(
             "Both calculations use the steam-condensation basis: **U = Q / (A × LMTD)**, with "
             "**LMTD = (ΔT1 − ΔT2) / ln(ΔT1/ΔT2)**. They differ in which temperatures define ΔT1 and ΔT2, "
@@ -1212,7 +1212,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     # --- TAB 3: WATER ANALYSIS TAB ---
     with tabs[3]:
-        st.subheader("Laboratory Analysis Evaluation")
+        st.subheader("Water Quality Analysis")
         if not get_v('skip_wq'):
             w_col1, w_col2 = st.columns(2)
             with w_col1:
@@ -1339,7 +1339,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     # --- TAB 5: MRA EVALUATION ENGINE ---
     with tabs[5]:
-        st.subheader("Multi-Variable Normalization Predictor")
+        st.subheader("Production Prediction")
         st.markdown("Modify process inputs to execute 'What-If' scenarios. Input limits dynamically unbind to prevent system crashes.")
         controls_col, calc_col = st.columns([1, 2])
         
@@ -1371,7 +1371,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     # --- TAB 6: REPORTING & ANALYTICS ---
     with tabs[6]:
-        st.subheader("Central Data Logging & Historical Analytics")
+        st.subheader("Reports & Historical Data")
         rep_tabs = st.tabs(["Daily Execution Dashboard", "Master Historical Database", "Long-Term Performance Trends", "Interactive Explorer"])
         
         with rep_tabs[0]:
@@ -1685,7 +1685,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
     # --- TAB 7: AI MODEL SELECTOR ---
     with tabs[7]:
-        st.subheader("Machine Learning & OLS Calibration Suite")
+        st.subheader("Prediction Model Setup")
         if not SKLEARN_INSTALLED:
             st.error("Mathematical package 'scikit-learn' is missing from file dependencies.")
         else:
