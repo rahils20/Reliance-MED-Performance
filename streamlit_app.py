@@ -236,7 +236,7 @@ if "messages" not in st.session_state:
 
 def render_chatbot():
     st.sidebar.divider()
-    st.sidebar.markdown("### 💬 Chembond Water Assistant")
+    st.sidebar.markdown("### Chembond Water Assistant")
     
     chat_container = st.sidebar.container(height=350)
     for message in st.session_state.messages:
@@ -323,68 +323,108 @@ def render_chatbot():
 # ==========================================
 def main():
     try: st.sidebar.image("chembond_logo.png", use_container_width=True)
-    except: st.sidebar.markdown("### 🔹 CHEMBOND WATER TECHNOLOGIES LIMITED") 
+    except: st.sidebar.markdown("### CHEMBOND WATER TECHNOLOGIES LIMITED") 
         
     st.sidebar.divider()
-    st.sidebar.markdown("### 🌍 Utility Network Dashboard")
-    
-    # ------------------------------------------
-    # LANDING PAGE ROUTER
-    # ------------------------------------------
-    utility_choice = st.sidebar.selectbox(
-        "Select Utility System",
-        ["-- Central Hub --", "Cooling Towers", "Boilers", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
-    )
+    st.sidebar.markdown("### Utility Network")
 
-    if utility_choice == "-- Central Hub --":
-        st.title("🏭 Centralized Site Utility Management Suite")
+    nav_options = ["Central Hub", "RO Plant", "Multi-Effect Distillation (MED)", "Projection Engine"]
+    if 'utility_choice' not in st.session_state:
+        st.session_state.utility_choice = "Central Hub"
+
+    _sel = st.sidebar.selectbox(
+        "Select System", nav_options,
+        index=nav_options.index(st.session_state.utility_choice)
+        if st.session_state.utility_choice in nav_options else 0,
+        key="nav_selectbox"
+    )
+    if _sel != st.session_state.utility_choice:
+        st.session_state.utility_choice = _sel
+        st.rerun()
+
+    utility_choice = st.session_state.utility_choice
+
+    if utility_choice == "Central Hub":
+        st.title("Site Utility Management Suite")
         st.markdown("---")
-        st.markdown("Welcome to the centralized plant health network configured for Reliance facilities. Use the left navigation panel to monitor plant efficiencies, evaluate heat exchanger health parameters, and access machine-learning normalization predictors.")
+        st.markdown("Central dashboard for plant performance monitoring at Reliance facilities. Select a system below to open its full interface.")
         
-        # Calculate Live Status for Landing Page
+        # --- Pull the latest MED record and its key indicators from the registry ---
         med_status = "No Data"
-        ro_status = "No Data"
-        
+        med_kpis = {}
         try:
             if not st.session_state.daily_logs.empty:
-                last_med_row = st.session_state.daily_logs.iloc[-1]
-                res_val = float(str(last_med_row.get('Residual', 0)).replace(',', '').strip() or 0)
-                gross_val = float(str(last_med_row.get('Gross production', 1)).replace(',', '').strip() or 1)
-                if gross_val == 0: gross_val = 1.0
-                
-                med_diff = (res_val / gross_val) * 100
-                if med_diff <= -5.0: med_status = "🔴 Please Check Plant"
-                elif med_diff <= -4.0: med_status = "🟡 Warning: Deviation Detected"
-                else: med_status = "🟢 Good Working Condition"
-        except Exception:
-            med_status = "🟠 CSV Data Format Error"
+                logs = st.session_state.daily_logs.copy()
+                logs['_d'] = pd.to_datetime(logs['Date'], errors='coerce', dayfirst=True)
+                logs = logs.dropna(subset=['_d']).sort_values('_d')
+                last = logs.iloc[-1]
 
+                def _num(col, default=0.0):
+                    try:
+                        return float(str(last.get(col, default)).replace(',', '').strip() or default)
+                    except (ValueError, TypeError):
+                        return default
+
+                med_kpis = {
+                    "date": last['_d'].strftime('%d-%m-%Y'),
+                    "gross": _num('Gross production'),
+                    "gor": _num('GOR'),
+                    "htc_1st": _num('1st Effect HTC'),
+                    "htc_overall": _num('Overall HTC'),
+                    "recovery": _num('Recovery'),
+                }
+                res_val = _num('Residual')
+                gross_val = _num('Gross production', 1) or 1.0
+                med_diff = (res_val / gross_val) * 100
+                if med_diff <= -5.0: med_status = "Attention Required"
+                elif med_diff <= -4.0: med_status = "Minor Deviation"
+                else: med_status = "Good Working Condition"
+        except Exception:
+            med_status = "Data Format Error"
+
+        ro_status = "No Data"
         try:
             if not st.session_state.ro_daily_logs.empty:
                 last_ro_row = st.session_state.ro_daily_logs.iloc[-1]
                 res_val = float(str(last_ro_row.get('Residual', 0)).replace(',', '').strip() or 0)
-                flow_val = float(str(last_ro_row.get('Permeate Flow', 1)).replace(',', '').strip() or 1)
-                if flow_val == 0: flow_val = 1.0
-                
+                flow_val = float(str(last_ro_row.get('Permeate Flow', 1)).replace(',', '').strip() or 1) or 1.0
                 ro_diff = (res_val / flow_val) * 100
-                if ro_diff <= -5.0: ro_status = "🔴 Please Check Plant"
-                elif ro_diff <= -4.0: ro_status = "🟡 Warning: Deviation Detected"
-                else: ro_status = "🟢 Good Working Condition"
+                if ro_diff <= -5.0: ro_status = "Attention Required"
+                elif ro_diff <= -4.0: ro_status = "Minor Deviation"
+                else: ro_status = "Good Working Condition"
         except Exception:
-            ro_status = "🟠 CSV Data Format Error"
+            ro_status = "Data Format Error"
 
-        c_layout1, c_layout2 = st.columns(2)
-        with c_layout1:
-            st.info("### ❄️ Cooling Towers\nMonitor real-time system concentration cycles, calculated thermal approach limits, and active biocidal inventory parameters.\n\n*Status: Hidden from menu during updates*")
-        with c_layout2:
-            st.error("### 🔥 Industrial Boiler Infrastructure\nTrack steam header drum pressures, automated surface continuous blowdown rates, and reserve chemical levels.\n\n*Status: Hidden from menu during updates*")
-            
-        c_layout3, c_layout4 = st.columns(2)
-        with c_layout3:
-            st.success(f"### 💧 High Pressure RO Plants\nEvaluate membrane permeate flux decay rates, normalized cartridge delta pressures, and specific power consumption benchmarks.\n\n*Status: HERO Plant Configured*\n\n**Latest Performance:** {ro_status}")
-        with c_layout4:
-            st.warning(f"### 🌊 Multi-Effect Distillation (MED)\nAccess advanced baseline multi-variable regression analysis, thermal heat transfer evaluation, and active antiscalant tracking.\n\n*Status: Unit MED-4 Online & Verified*\n\n**Latest Performance:** {med_status}")
-            
+        st.subheader("MED-4 Latest Summary")
+        if med_kpis:
+            st.caption(f"As of {med_kpis['date']} - Status: {med_status}")
+            s1, s2, s3, s4, s5 = st.columns(5)
+            s1.metric("Gross Production", f"{med_kpis['gross']:.0f} m³/h")
+            s2.metric("GOR", f"{med_kpis['gor']:.2f}")
+            s3.metric("1st Effect HTC", f"{med_kpis['htc_1st']:.0f} W/m²K")
+            s4.metric("Overall HTC", f"{med_kpis['htc_overall']:.2f} W/m²K")
+            s5.metric("Recovery", f"{med_kpis['recovery']:.1f}%")
+        else:
+            st.info("No MED data loaded yet. Open the MED suite and upload plant data to populate the summary.")
+
+        st.divider()
+        st.subheader("Open a System")
+        col_med, col_ro = st.columns(2)
+        with col_med:
+            st.markdown("**Multi-Effect Distillation (MED)**")
+            st.markdown(f"Unit MED-4 - {med_status}")
+            st.caption("Thermal performance, heat transfer, water quality, chemical dosing and reporting.")
+            if st.button("Open MED-4 Suite", use_container_width=True, key="open_med"):
+                st.session_state.utility_choice = "Multi-Effect Distillation (MED)"
+                st.rerun()
+        with col_ro:
+            st.markdown("**Reverse Osmosis (RO)**")
+            st.markdown(f"HERO Plant - {ro_status}")
+            st.caption("Membrane performance, normalized flux and pressure tracking.")
+            if st.button("Open RO Suite", use_container_width=True, key="open_ro"):
+                st.session_state.utility_choice = "RO Plant"
+                st.rerun()
+
         render_chatbot()
         return
 
@@ -393,12 +433,6 @@ def main():
         engine.render_engine()
         return 
 
-    elif utility_choice in ["Cooling Towers", "Boilers"]:
-        st.title(f"🏭 {utility_choice} Diagnostic Interface")
-        st.info(f"🚧 **Work in Progress:** The specialized tracking network for {utility_choice} is currently undergoing structural file mapping. Features will go live shortly.")
-        render_chatbot()
-        return
-        
     elif utility_choice == "Multi-Effect Distillation (MED)":
         # Pass necessary backend hooks into the isolated MED suite file
         render_med_suite(
@@ -419,7 +453,7 @@ def main():
     # RO PLANT ENGINE (HERO)
     # ------------------------------------------
     elif utility_choice == "RO Plant":
-        st.title("🏭 High Efficiency Reverse Osmosis (HERO) Suite")
+        st.title("Reverse Osmosis (HERO) Suite")
         st.markdown("Monitor high-recovery RO metrics, pretreatment guarantees, and antiscalant/coagulant dosing for the SEZ RO facility.")
         
         log_date = st.sidebar.date_input("Date", datetime.date.today(), format="DD/MM/YYYY")
@@ -467,7 +501,7 @@ def main():
                                     else: st.session_state[var_key] = float(val_str.replace(',', ''))
                                     loaded_vars = True
                             except: pass 
-                    if loaded_vars: st.sidebar.success(f"📅 Auto-loaded historical RO data for {log_date.strftime('%d/%m/%Y')}")
+                    if loaded_vars: st.sidebar.success(f"Loaded RO data for {log_date.strftime('%d-%m-%Y')}")
 
         # --- RO MRA CALCULATION ---
         ro_mra_data = {}
@@ -508,7 +542,7 @@ def main():
         ro_mra_data['Variance_DF'] = pd.DataFrame(ro_var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (m³/h)"])
 
         # --- THE FIX: MERGED RO TABS ---
-        ro_tabs = st.tabs(["📥 System Inputs", "🌊 KPIs & Quality Guarantees", "🛢️ Chemical Dosing", "🧠 Normalization MRA", "📂 Reporting & Logbook", "🤖 AI Model Select", "📤 Bulk Uploads"])
+        ro_tabs = st.tabs(["Inputs", "Performance", "Chemical Dosing", "Prediction", "Reports", "Model", "Bulk Upload"])
         
         with ro_tabs[0]:
             st.subheader("HERO Plant Inputs")
@@ -546,7 +580,7 @@ def main():
             k3.metric("Permeate TDS", f"{st.session_state.ro_perm_tds:.1f} ppm", delta="Target: <150 ppm", delta_color="off")
             
             st.divider()
-            st.subheader("Guaranteed Treatment Parameters Check")
+            st.subheader("Treatment Parameter Check")
             guarantees = [
                 ("Clarifier Outlet TSS", st.session_state.ro_clarifier_tss, "< 10 ppm", 10.0),
                 ("PDMF Outlet TSS", st.session_state.ro_pdmf_tss, "< 3 ppm", 3.0),
@@ -561,15 +595,15 @@ def main():
                 col_name.write(f"**{name}**")
                 col_val.write(f"{val}")
                 col_target.write(target_text)
-                if val < limit: col_status.success("✅ Pass")
-                else: col_status.error("🚨 Fail")
+                if val < limit: col_status.success("Pass")
+                else: col_status.error("Fail")
                     
             c_name, c_val, c_target, c_status = st.columns([2, 1, 1, 1])
             c_name.write("**RO Permeate pH**")
             c_val.write(f"{st.session_state.ro_perm_ph}")
             c_target.write("7.0 - 7.5")
-            if 7.0 <= st.session_state.ro_perm_ph <= 7.5: c_status.success("✅ Pass")
-            else: c_status.error("🚨 Fail")
+            if 7.0 <= st.session_state.ro_perm_ph <= 7.5: c_status.success("Pass")
+            else: c_status.error("Fail")
                 
         with ro_tabs[2]:
             st.subheader("Chemical Dosing Control")
@@ -589,7 +623,7 @@ def main():
                 st.info(f"**Requirement:** {(st.session_state.ro_feed_flow * st.session_state.ro_smbs_ppm) / 1000:.2f} kg/hr")
 
         with ro_tabs[3]:
-            st.subheader("Permeate Normalization Predictor (MRA)")
+            st.subheader("Production Prediction")
             st.markdown("Modify process inputs to execute 'What-If' scenarios and check for membrane fouling.")
             controls_col, calc_col = st.columns([1, 2])
             
@@ -609,12 +643,12 @@ def main():
                 elif ro_diff_pct <= -4.0: k3.warning(f"Residual: {ro_mra_data['Residual']:.1f} m³/h ({ro_diff_pct:.1f}%) - Warning: Scaling detected")
                 else: k3.success(f"Residual: {ro_mra_data['Residual']:.1f} m³/h ({ro_diff_pct:.1f}%) - CLEAN")
                     
-                if ro_model_type != "OLS": st.info("ℹ️ **AI Model Active:** Variance Impact breakdown is only available for purely linear OLS models.")
+                if ro_model_type != "OLS": st.info("AI model active. Variance breakdown is only available for OLS models.")
                 st.dataframe(ro_mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (m³/h)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
         with ro_tabs[4]:
             st.subheader("Reporting & Data Logging")
-            rep_tabs = st.tabs(["📅 Daily Execution Dashboard", "📆 Master Historical Database", "📊 Long-Term Performance Trends", "📈 Interactive Explorer"])
+            rep_tabs = st.tabs(["Daily Dashboard", "Historical Database", "Performance Trends", "Data Explorer"])
             
             with rep_tabs[0]:
                 m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -632,11 +666,11 @@ def main():
                 st.divider()
                 st.text_area("Remarks & Performance Observations", key="ro_in_remarks", placeholder="Record operational shift anomalies, CEB/CIP clean notes here...")
                 
-                st.markdown("### 💾 Record and Commit Log Payload")
+                st.markdown("### Save Daily Record")
                 c_pwd, c_save, c_export, c_csv = st.columns([1.5, 1, 1, 1])
-                with c_pwd: pwd_append = st.text_input("Security Key Access", type="password", key="ro_pwd_append", label_visibility="collapsed", placeholder="🔑 Enter Master Security Password to Commit")
+                with c_pwd: pwd_append = st.text_input("Master Password", type="password", key="ro_pwd_append", label_visibility="collapsed", placeholder="Enter master password to save")
                 with c_save:
-                    if st.button("💾 Save Operational Record", use_container_width=True):
+                    if st.button("Save Operational Record", use_container_width=True):
                         if pwd_append == "12345678":
                             db_dict = {
                                 "Date": [log_date_str], 
@@ -655,41 +689,41 @@ def main():
                             new_log = pd.DataFrame(db_dict)
                             st.session_state.ro_daily_logs = pd.concat([st.session_state.ro_daily_logs, new_log], ignore_index=True)
                             save_database(db_conn, st.session_state.ro_daily_logs, RO_LOCAL_DB_FILE)
-                            st.success("✅ Operational record successfully integrated into file engine!")
-                        elif pwd_append != "": st.error("❌ Master verification credential failed.")
+                            st.success("Record saved.")
+                        elif pwd_append != "": st.error("Incorrect password.")
                 with c_export:
                     word_file = generate_ro_comprehensive_report(log_date, st.session_state, ro_mra_data)
-                    st.download_button("📄 Export Word Document (.docx)", data=word_file, file_name=f"RO_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                    st.download_button("Export Word Document (.docx)", data=word_file, file_name=f"RO_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
                 with c_csv:
                     csv_file = generate_ro_daily_csv(log_date, st.session_state, ro_mra_data)
-                    st.download_button("📊 Export Tabular Values (.csv)", data=csv_file, file_name=f"RO_DataRecord_{log_date_str}.csv", mime="text/csv", use_container_width=True)
+                    st.download_button("Export Tabular Values (.csv)", data=csv_file, file_name=f"RO_DataRecord_{log_date_str}.csv", mime="text/csv", use_container_width=True)
 
             with rep_tabs[1]:
-                st.markdown("#### 📆 Master System Registry Database")
+                st.markdown("#### Master System Registry Database")
                 display_cols = [c for c in RO_EXACT_DB_COLUMNS if c in st.session_state.ro_daily_logs.columns]
                 edited_db = st.data_editor(st.session_state.ro_daily_logs[display_cols] if not st.session_state.ro_daily_logs.empty else st.session_state.ro_daily_logs, num_rows="dynamic", use_container_width=True)
                 c_sync_pwd, c_sync, c_dl = st.columns([2, 1, 1])
-                with c_sync_pwd: pwd_sync = st.text_input("Database Write-Access Password", type="password", key="ro_pwd_sync", label_visibility="collapsed", placeholder="🔑 Enter Database Master Password to Save Modifications")
+                with c_sync_pwd: pwd_sync = st.text_input("Master Password", type="password", key="ro_pwd_sync", label_visibility="collapsed", placeholder="Enter master password to save")
                 with c_sync:
-                    if st.button("☁️ Synchronize Registry", use_container_width=True, key="ro_sync_btn"):
+                    if st.button("Synchronize Registry", use_container_width=True, key="ro_sync_btn"):
                         if pwd_sync == "12345678":
                             st.session_state.ro_daily_logs = edited_db
                             save_database(db_conn, st.session_state.ro_daily_logs, RO_LOCAL_DB_FILE)
-                            st.success("✅ Master registry records updated successfully!")
-                        else: st.error("❌ System modification credentials failed.")
+                            st.success("Database updated.")
+                        else: st.error("Incorrect password.")
                 with c_dl:
-                    st.download_button("📥 Download Database Offline Backup", data=st.session_state.ro_daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"RO_MasterRegistry_Backup.csv", mime='text/csv', use_container_width=True, key="ro_dl_btn")
+                    st.download_button("Download Database Offline Backup", data=st.session_state.ro_daily_logs.to_csv(index=False).encode('utf-8'), file_name=f"RO_MasterRegistry_Backup.csv", mime='text/csv', use_container_width=True, key="ro_dl_btn")
 
                 st.divider()
-                st.markdown("#### 📊 Aggregated Monthly Performance Generator")
+                st.markdown("#### Aggregated Monthly Performance Generator")
                 if not st.session_state.ro_daily_logs.empty:
                     df_logs = st.session_state.ro_daily_logs.copy()
                     df_logs['Date'] = pd.to_datetime(df_logs['Date'], dayfirst=True, errors='coerce')
                     month_data = df_logs[(df_logs['Date'].dt.month == log_date.month) & (df_logs['Date'].dt.year == log_date.year)].copy()
                     if not month_data.empty:
-                        if st.button("📄 Compile and Generate Monthly Summary (.docx)", use_container_width=True, key="ro_month_btn"):
+                        if st.button("Compile and Generate Monthly Summary (.docx)", use_container_width=True, key="ro_month_btn"):
                             monthly_doc = generate_ro_monthly_report(month_data, log_date.strftime('%B'), str(log_date.year))
-                            st.download_button("📥 Download Monthly Briefing Document", data=monthly_doc, file_name=f"RO_MonthlySummary_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="ro_dl_month")
+                            st.download_button("Download Monthly Briefing Document", data=monthly_doc, file_name=f"RO_MonthlySummary_{log_date.strftime('%b_%Y')}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key="ro_dl_month")
 
             with rep_tabs[2]:
                 if not st.session_state.ro_daily_logs.empty:
@@ -699,7 +733,7 @@ def main():
                     min_date = df_logs['Date'].min().date() if not df_logs['Date'].isnull().all() else datetime.date(2023, 1, 1)
                     max_date = df_logs['Date'].max().date() if not df_logs['Date'].isnull().all() else datetime.date.today()
                     
-                    st.markdown("##### 📅 Performance Evaluation Horizon Filter")
+                    st.markdown("##### Date Range")
                     d_col1, d_col2 = st.columns(2)
                     with d_col1: start_date = st.date_input("Start Threshold Date", min_date, key="ro_start_d1")
                     with d_col2: end_date = st.date_input("End Threshold Date", max_date, key="ro_end_d1")
@@ -709,18 +743,18 @@ def main():
                     
                     q_col1, q_col2 = st.columns(2)
                     with q_col1:
-                        st.markdown("#### 📉 Performance Recovery Trend")
+                        st.markdown("#### Performance Recovery Trend")
                         if len(df_filtered) > 1:
                             rec_chart = alt.Chart(df_filtered).mark_circle().encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Recovery:Q', scale=alt.Scale(zero=False)))
                             st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery').mark_line(color='red'), use_container_width=True)
                     with q_col2:
-                        st.markdown("#### 🌡️ Membrane Normalization Gap (Residual)")
+                        st.markdown("#### Normalized Performance Gap")
                         if len(df_filtered) > 1:
                             htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Residual:Q', scale=alt.Scale(zero=False), title="Fouling Residual (m³/h)"))
                             st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Residual').mark_line(color='black'), use_container_width=True)
 
             with rep_tabs[3]:
-                st.markdown("#### 📈 Multivariable Cross-Correlation Explorer")
+                st.markdown("#### Data Explorer")
                 if not st.session_state.ro_daily_logs.empty:
                     exp_df = st.session_state.ro_daily_logs.copy()
                     exp_df['Date'] = pd.to_datetime(exp_df['Date'], dayfirst=True, errors='coerce')
@@ -749,42 +783,42 @@ def main():
                     st.info("No active historical registry values detected to perform correlation modeling.")
 
         with ro_tabs[5]:
-            st.subheader("🤖 Machine Learning & OLS Calibration Suite")
+            st.subheader("Prediction Model Setup")
             if not SKLEARN_INSTALLED:
-                st.error("🚨 Mathematical package 'scikit-learn' is missing from file dependencies.")
+                st.error("The scikit-learn package is not installed.")
             else:
-                st.markdown("### 💾 Manage Baseline Evaluation Multipliers")
-                st.markdown(f"**Current Evaluator Logic Subroutine:** `{ro_model_type}`")
+                st.markdown("### Baseline Coefficients")
+                st.markdown(f"**Active Model:** `{ro_model_type}`")
                 c_reset, _ = st.columns([1, 1])
                 with c_reset:
-                    if st.button("🔄 Execute Subroutine Calibration Factory Reset", use_container_width=True, key="ro_factory_reset"):
+                    if st.button("Reset to Default Coefficients", use_container_width=True, key="ro_factory_reset"):
                         st.session_state.ro_mra_coef = RO_MRA_COEF_BASE.copy()
                         save_config(db_conn, st.session_state.ro_mra_coef, RO_LOCAL_CONFIG_FILE)
-                        st.success("✅ Baseline parameters successfully reverted back to original OLS multipliers!")
+                        st.success("Coefficients reset to defaults.")
                         time.sleep(1.5)
                         st.rerun()
 
                 st.divider()
-                st.markdown("### 📊 Multi-Variable Predictive Optimization Logic Model Builder")
+                st.markdown("### Multi-Variable Predictive Optimization Logic Model Builder")
                 
                 req_cols = ["Date", "Permeate Flow", "Feed Flow", "Feed TDS", "Coagulant PPM", "SMBS PPM"]
                 template_df = pd.DataFrame(columns=req_cols)
-                st.download_button(label="1️⃣ Download Standard Structural Training Template File", data=template_df.to_csv(index=False).encode('utf-8'), file_name='RO_ML_CalibrationTemplate.csv', mime='text/csv', key="ro_train_dl")
+                st.download_button(label="Download Training Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='RO_ML_CalibrationTemplate.csv', mime='text/csv', key="ro_train_dl")
                 
                 st.divider()
-                uploaded_file = st.file_uploader("2️⃣ Inject Completed Optimization Dataset", type=["csv"], key="ro_mra_trainer")
+                uploaded_file = st.file_uploader("Upload Training Data", type=["csv"], key="ro_mra_trainer")
                 
                 if uploaded_file is not None:
                     try:
                         df_train = pd.read_csv(uploaded_file)
-                        if not all(col in df_train.columns for col in req_cols): st.error(f"❌ Structural training template verification failed due to parameter column omissions.")
+                        if not all(col in df_train.columns for col in req_cols): st.error(f"Training file is missing required columns.")
                         else:
                             for col in req_cols:
                                 if col != "Date":
                                     if df_train[col].dtype == object: df_train[col] = pd.to_numeric(df_train[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                             
                             df_train = df_train.dropna(subset=[c for c in req_cols if c != "Date"])
-                            st.success(f"✅ Training Initialized successfully utilizing {len(df_train)} localized validation rows.")
+                            st.success(f"Training complete using {len(df_train)} rows.")
                             
                             if len(df_train) > 0:
                                 X = df_train[["Feed Flow", "Feed TDS", "Coagulant PPM", "SMBS PPM"]]
@@ -800,7 +834,7 @@ def main():
                                     model_xgb = xgb.XGBRegressor(n_estimators=100, random_state=42).fit(X, Y)
                                     r2_xgb = r2_score(Y, model_xgb.predict(X))
                                 
-                                st.markdown("### 🏆 Algorithm Accuracy Evaluation Matrix")
+                                st.markdown("### Model Accuracy")
                                 m1, m2, m3 = st.columns(3)
                                 m1.metric("1. Linear OLS Fit (R² Coefficient)", f"{r2_ols * 100:.2f}%")
                                 m2.metric("2. Random Forest Tree Logic (R²)", f"{r2_rf * 100:.2f}%")
@@ -816,12 +850,12 @@ def main():
                                 if XGB_INSTALLED: comp_dict["XGBoost (Importance %)"] = np.round(model_xgb.feature_importances_ * 100, 2)
                                 st.dataframe(pd.DataFrame(comp_dict).style.format(precision=4), use_container_width=True, hide_index=True)
                                 
-                                st.markdown("### 💾 Commit & Lock Mathematical Subroutine Target")
+                                st.markdown("### Select Active Model")
                                 opts = ["OLS (Linear)", "Random Forest"]
                                 if XGB_INSTALLED: opts.append("XGBoost")
                                 selected_model = st.radio("Configure Active Live Prediction Logic Block:", opts, key="ro_model_radio")
                                 
-                                if st.button("🔥 Confirm and Hardlock Active Operational Subroutine", type="primary", use_container_width=True, key="ro_model_lock"):
+                                if st.button("Confirm & Activate Model", type="primary", use_container_width=True, key="ro_model_lock"):
                                     if selected_model == "OLS (Linear)":
                                         new_coefs = {
                                             "model_type": "OLS", "Intercept": float(model_ols.intercept_),
@@ -841,21 +875,21 @@ def main():
                                         st.session_state.ro_mra_coef = ai_coefs
                                         save_config(db_conn, ai_coefs, RO_LOCAL_CONFIG_FILE)
                                         
-                                    st.success(f"✅ System evaluation subroutine locked into {selected_model} logic sequence.")
+                                    st.success(f"{selected_model} model activated.")
                                     time.sleep(1.5)
                                     st.rerun()
-                            else: st.error("🚨 Structural data parsing produced empty float ranges inside parameters.")
-                    except Exception as e: st.error(f"Structural data matrix crash: {e}")
+                            else: st.error("Uploaded data produced no valid values.")
+                    except Exception as e: st.error(f"Error processing data: {e}")
 
         with ro_tabs[6]:
-            st.subheader("📤 Batch Log Matrix Ingestion Subroutine")
+            st.subheader("Bulk Data Upload")
             st.markdown("Download the target spreadsheet schema file. Copy/pasting raw values in the exact historical Excel configuration is fully supported.")
             
             bulk_template = pd.DataFrame(columns=RO_EXACT_DB_COLUMNS)
-            st.download_button(label="1️⃣ Download Schema Verification Template File", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='RO_BulkMatrixInletSchema.csv', mime='text/csv', key="ro_bulk_dl")
+            st.download_button(label="Download Template", data=bulk_template.to_csv(index=False).encode('utf-8'), file_name='RO_BulkMatrixInletSchema.csv', mime='text/csv', key="ro_bulk_dl")
             
             st.divider()
-            bulk_file = st.file_uploader("2️⃣ Ingest Completed System Batch File (.csv)", type=["csv"], key="ro_bulk_uploader")
+            bulk_file = st.file_uploader("Upload Batch File (.csv)", type=["csv"], key="ro_bulk_uploader")
             
             if bulk_file is not None:
                 try:
@@ -863,7 +897,7 @@ def main():
                     
                     missing = [c for c in RO_EXACT_DB_COLUMNS if c not in df_bulk.columns]
                     if missing:
-                        st.warning(f"⚠️ Omissions detected inside uploaded parameters. Empty slots will auto-fill utilizing historical parameter baseline means. Missing: {', '.join(missing)}")
+                        st.warning(f"Some columns are missing and will be filled with baseline values: {', '.join(missing)}")
                         for c in missing: df_bulk[c] = np.nan
                     
                     num_cols = [c for c in RO_EXACT_DB_COLUMNS if c not in ["Date", "Remarks"]]
@@ -919,24 +953,24 @@ def main():
                                 
                         db_ready_df = pd.DataFrame(db_ready_dict)
                         
-                        st.success(f"✅ Dynamic verification evaluation complete for {len(db_ready_df)} matrix rows.")
+                        st.success(f"Processed {len(db_ready_df)} rows.")
                         st.dataframe(db_ready_df.style.format(precision=2), use_container_width=True, hide_index=True)
                         
-                        st.markdown("### 💾 Append Transferred Batch Elements")
+                        st.markdown("### Append Transferred Batch Elements")
                         c_pwd, c_save = st.columns([2, 2])
-                        with c_pwd: pwd_bulk = st.text_input("Security Key Verification Entry", type="password", key="ro_pwd_bulk", label_visibility="collapsed", placeholder="🔑 Enter Master Security Password to Commit Batch Ingestion")
+                        with c_pwd: pwd_bulk = st.text_input("Master Password", type="password", key="ro_pwd_bulk", label_visibility="collapsed", placeholder="Enter master password to save")
                         with c_save:
-                            if st.button("🔄 Append Ingested Records into Registry", use_container_width=True, key="ro_bulk_save"):
+                            if st.button("Save Records to Database", use_container_width=True, key="ro_bulk_save"):
                                 if pwd_bulk == "12345678":
                                     st.session_state.ro_daily_logs = pd.concat([st.session_state.ro_daily_logs, db_ready_df], ignore_index=True)
                                     st.session_state.ro_daily_logs = st.session_state.ro_daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
                                     save_database(db_conn, st.session_state.ro_daily_logs, RO_LOCAL_DB_FILE)
-                                    st.success("✅ Batch matrix rows integrated securely within master registry file!")
+                                    st.success("Records saved to database.")
                                     time.sleep(1.5)
                                     st.rerun()
-                                elif pwd_bulk != "": st.error("❌ Identification credentials mismatched.")
-                    else: st.error("🚨 Data matrix parse sequence returned zero active rows.")
-                except Exception as e: st.error(f"Structural verification crash during upload parsing: {e}")
+                                elif pwd_bulk != "": st.error("Incorrect password.")
+                    else: st.error("No valid rows found in file.")
+                except Exception as e: st.error(f"Error processing upload: {e}")
         
         render_chatbot()
         return
