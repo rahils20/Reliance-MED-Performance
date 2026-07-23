@@ -424,7 +424,9 @@ def generate_monthly_report(df_month, month_str, year_str):
     return bio.getvalue()
 
 
-def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, save_database, save_config, render_chatbot, SKLEARN_INSTALLED, XGB_INSTALLED, PIL_INSTALLED):
+def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, save_database, save_config,
+                     render_chatbot, SKLEARN_INSTALLED, XGB_INSTALLED, PIL_INSTALLED,
+                     save_model_blob=None, load_model_blob=None):
     
     # MED Internal State Setup
     if 'vars' not in st.session_state: st.session_state.vars = DEFAULTS.copy()
@@ -712,12 +714,48 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             (coefs.get("Anti_PPM", MRA_COEF_2014["Anti_PPM"]) * live_input_arr[6])
         )
     else:
+        # The trained RF/XGB model is a .pkl on the LOCAL disk, which Streamlit Cloud wipes on every
+        # container restart. The calibration coefficients now persist in the Google Sheet, so
+        # model_type correctly survives as "Random Forest"/"XGBoost" while the model file itself does
+        # not. Previously a bare except swallowed that and silently returned 0. Now we fall back to the
+        # OLS formula so a real number is still produced, and flag that the model needs retraining.
+        mra_data['model_missing'] = False
+        active_model = None
         try:
             active_model = joblib.load(AI_MODEL_FILE)
-            live_df = pd.DataFrame([live_input_arr], columns=["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Anti_PPM"])
-            mra_data['Predicted'] = float(active_model.predict(live_df)[0])
-        except: 
-            mra_data['Predicted'] = 0.0
+        except Exception:
+            # Local .pkl is gone (ephemeral disk). Rebuild it from the copy kept in the sheet.
+            if load_model_blob is not None:
+                try:
+                    active_model = load_model_blob(db_conn, LOCAL_CONFIG_FILE)
+                    if active_model is not None:
+                        try:
+                            joblib.dump(active_model, AI_MODEL_FILE)  # re-cache locally for this session
+                        except Exception:
+                            pass
+                except Exception:
+                    active_model = None
+        if active_model is not None:
+            try:
+                live_df = pd.DataFrame([live_input_arr], columns=["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Anti_PPM"])
+                mra_data['Predicted'] = float(active_model.predict(live_df)[0])
+            except Exception:
+                active_model = None
+        if active_model is None:
+            # Fall back to the CALIBRATED OLS block that is always stored alongside the AI selection,
+            # and only drop to the factory baseline if even that is absent.
+            mra_data['model_missing'] = True
+            _b = {k: coefs.get(k, MRA_COEF_2014.get(k, 0.0)) for k in MRA_COEF_2014}
+            mra_data['Predicted'] = (
+                _b["Intercept"]
+                + (_b["Press_1st"] * live_input_arr[0])
+                + (_b["Temp_1st"] * live_input_arr[1])
+                + (_b["SW_Upper"] * live_input_arr[2])
+                + (_b["Brine_Temp_1st"] * live_input_arr[3])
+                + (_b["Brine_Flow"] * live_input_arr[4])
+                + (_b["LP_Steam"] * live_input_arr[5])
+                + (_b["Anti_PPM"] * live_input_arr[6])
+            )
             
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
@@ -1353,9 +1391,16 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.number_input("Antiscalant PPM", key="t5_anti", on_change=sync_var, args=('chem_anti_ppm', 't5_anti'))
 
         with calc_col:
+            if mra_data.get('model_missing'):
+                st.warning(
+                    f"The trained {model_type} model file is not available on this server (it is stored on "
+                    "local disk, which resets when the app restarts). The prediction below is using the "
+                    "baseline OLS formula instead. Retrain the model on the Model tab to restore it."
+                )
             k1, k2, k3 = st.columns(3)
             k1.metric("Actual Gross SCADA", f"{mra_data['Actual']:.1f} m³/h")
-            k2.metric(f"Predicted Twin Mode ({model_type})", f"{mra_data['Predicted']:.1f} m³/h")
+            _pred_label = "OLS fallback" if mra_data.get('model_missing') else model_type
+            k2.metric(f"Predicted ({_pred_label})", f"{mra_data['Predicted']:.1f} m³/h")
             
             diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
             if diff_pct <= -5.0: 
@@ -1709,21 +1754,106 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.rerun()
 
             st.divider()
-            st.markdown("### Multi-Variable Predictive Optimization Logic Model Builder")
-            st.markdown("Upload plant calibration verification matrices to evaluate structural variations between standard linear regression loops and active tree configurations.")
-            
+            st.markdown("### Prediction Model Builder")
+            st.markdown(
+                "Calibrate the prediction model against a period of known-good operation. Anchoring to a "
+                "cleaning date means the baseline represents this plant when clean, so later deviations "
+                "measure real fouling rather than drift from a generic design assumption."
+            )
+
             req_cols = ["Date", "Gross production", "1st effect vapour pressure", "1st Effect Vapour Temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Anti_PPM"]
-            template_df = pd.DataFrame(columns=req_cols)
-            st.download_button(label="Download Standard Structural Training Template File", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_CalibrationTemplate.csv', mime='text/csv')
-            
-            st.divider()
-            uploaded_file = st.file_uploader("Inject Completed Optimization Dataset", type=["csv"], key="mra_trainer")
+            N_PREDICTORS = 7  # the model fits 7 inputs; used for the rows-per-parameter check below
+
+            calib_src = st.radio(
+                "Calibration data source",
+                ["Historical data after a cleaning", "Upload a CSV"],
+                horizontal=True, key="calib_source"
+            )
+
+            uploaded_file = None
+
+            if calib_src == "Historical data after a cleaning":
+                cc1, cc2 = st.columns([2, 1])
+                with cc1:
+                    clean_date = st.date_input(
+                        "Last cleaning date", value=datetime.date.today() - datetime.timedelta(days=90),
+                        format="DD/MM/YYYY", key="calib_clean_date",
+                        help="Calibration uses operating data starting the day after this cleaning."
+                    )
+                with cc2:
+                    window_days = st.selectbox(
+                        "Window", [30, 60, 90], index=1, key="calib_window",
+                        help="Days of post-cleaning data to calibrate on. Longer windows support more "
+                             "parameters and give a more stable fit."
+                    )
+
+                hist = st.session_state.daily_logs
+                if hist is None or hist.empty or 'Date' not in hist.columns:
+                    st.info("No historical data in the registry yet.")
+                else:
+                    h = hist.copy()
+                    h['_d'] = standardize_dates(h['Date'])
+                    start = pd.Timestamp(clean_date)
+                    end = start + pd.Timedelta(days=int(window_days))
+                    h = h.dropna(subset=['_d'])
+                    h = h[(h['_d'] > start) & (h['_d'] <= end)]
+
+                    missing_cols = [c for c in req_cols if c != "Date" and c not in h.columns]
+                    if missing_cols:
+                        st.error(f"The registry is missing required columns: {', '.join(missing_cols)}")
+                    else:
+                        sel = h[['_d'] + [c for c in req_cols if c != "Date"]].copy()
+                        sel.rename(columns={'_d': 'Date'}, inplace=True)
+                        for c in req_cols:
+                            if c != "Date":
+                                sel[c] = pd.to_numeric(sel[c], errors='coerce')
+                        # A logged-but-empty row is stored as 0; those are not real operating points
+                        # and would drag the regression toward the origin, so drop them.
+                        sel = sel.dropna(subset=[c for c in req_cols if c != "Date"])
+                        sel = sel[(sel['Gross production'] > 0) & (sel['LP Steam consumption'] > 0)]
+
+                        n_rows = len(sel)
+                        ratio = n_rows / N_PREDICTORS if N_PREDICTORS else 0
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Usable rows", n_rows)
+                        m2.metric("Parameters fitted", N_PREDICTORS)
+                        m3.metric("Rows per parameter", f"{ratio:.1f}")
+
+                        if n_rows == 0:
+                            st.warning("No usable rows in that window. Check the cleaning date, or upload data for this period first.")
+                        elif ratio < 5:
+                            st.error(
+                                f"Only {ratio:.1f} rows per parameter. This is far too few - the model would "
+                                "memorise noise instead of learning plant behaviour, and later predictions would "
+                                "drift unpredictably. Use a longer window or a period with more complete logging."
+                            )
+                        elif ratio < 10:
+                            st.warning(
+                                f"{ratio:.1f} rows per parameter is on the low side (10+ is comfortable). The fit "
+                                "may look better than it really is. Prefer a longer window if the plant stayed "
+                                "clean, and treat a very high R² here with suspicion."
+                            )
+                        else:
+                            st.success(f"{n_rows} usable rows covering {window_days} days after cleaning.")
+
+                        if n_rows > 0:
+                            sel['Date'] = sel['Date'].dt.strftime('%Y-%m-%d')
+                            with st.expander("Preview calibration data"):
+                                st.dataframe(sel, use_container_width=True, hide_index=True)
+                            # Hand the selected slice to the existing training pipeline as an in-memory CSV,
+                            # so the upload path and this path share identical validation and fitting code.
+                            uploaded_file = io.StringIO(sel.to_csv(index=False))
+            else:
+                template_df = pd.DataFrame(columns=req_cols)
+                st.download_button(label="Download Training Template", data=template_df.to_csv(index=False).encode('utf-8'), file_name='MED4_ML_CalibrationTemplate.csv', mime='text/csv')
+                st.divider()
+                uploaded_file = st.file_uploader("Upload Training Data", type=["csv"], key="mra_trainer")
             
             if uploaded_file is not None:
                 try:
                     df_train = pd.read_csv(uploaded_file)
                     if not all(col in df_train.columns for col in req_cols): 
-                        st.error(f"Structural training template verification failed due to parameter column omissions.")
+                        st.error("The data is missing one or more required columns.")
                     else:
                         for col in req_cols:
                             if col != "Date":
@@ -1731,7 +1861,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                     df_train[col] = pd.to_numeric(df_train[col].astype(str).str.replace(',', '', regex=False), errors='coerce')
                         
                         df_train = df_train.dropna(subset=[c for c in req_cols if c != "Date"])
-                        st.success(f"Training Initialized successfully utilizing {len(df_train)} localized validation rows.")
+                        st.caption(f"Fitting models on {len(df_train)} rows.")
                         
                         if len(df_train) > 0:
                             X = df_train[["1st effect vapour pressure", "1st Effect Vapour Temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Anti_PPM"]]
@@ -1775,34 +1905,44 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 
                             selected_model = st.radio("Configure Active Live Prediction Logic Block:", opts)
                             
-                            if st.button("Confirm and Hardlock Active Operational Subroutine", type="primary", use_container_width=True):
+                            if st.button("Confirm & Activate Model", type="primary", use_container_width=True):
+                                # The OLS fit is always available here, so persist it EVERY time regardless
+                                # of which model is selected. That guarantees a real calibrated fallback
+                                # exists if an AI model is ever unavailable - previously selecting an AI
+                                # model wiped the OLS coefficients and left only the factory baseline.
+                                ols_block = {
+                                    "Intercept": float(model_ols.intercept_),
+                                    "Press_1st": float(model_ols.coef_[0]), "Temp_1st": float(model_ols.coef_[1]),
+                                    "SW_Upper": float(model_ols.coef_[2]), "Brine_Temp_1st": float(model_ols.coef_[3]),
+                                    "Brine_Flow": float(model_ols.coef_[4]), "LP_Steam": float(model_ols.coef_[5]),
+                                    "Anti_PPM": float(model_ols.coef_[6])
+                                }
+                                _blob_ok = True
                                 if selected_model == "OLS (Linear)":
-                                    new_coefs = {
-                                        "model_type": "OLS", "Intercept": float(model_ols.intercept_),
-                                        "Press_1st": float(model_ols.coef_[0]), "Temp_1st": float(model_ols.coef_[1]), 
-                                        "SW_Upper": float(model_ols.coef_[2]), "Brine_Temp_1st": float(model_ols.coef_[3]), 
-                                        "Brine_Flow": float(model_ols.coef_[4]), "LP_Steam": float(model_ols.coef_[5]), 
-                                        "Anti_PPM": float(model_ols.coef_[6])
-                                    }
+                                    new_coefs = dict(ols_block); new_coefs["model_type"] = "OLS"
                                     st.session_state.mra_coef = new_coefs
                                     _ok = save_config(db_conn, new_coefs, LOCAL_CONFIG_FILE)
                                 else:
                                     target_m = model_rf if selected_model == "Random Forest" else model_xgb
-                                    joblib.dump(target_m, AI_MODEL_FILE)
-                                    ai_coefs = {
-                                        "model_type": selected_model,
-                                        "Press_1st": float(target_m.feature_importances_[0]), "Temp_1st": float(target_m.feature_importances_[1]), 
-                                        "SW_Upper": float(target_m.feature_importances_[2]), "Brine_Temp_1st": float(target_m.feature_importances_[3]), 
-                                        "Brine_Flow": float(target_m.feature_importances_[4]), "LP_Steam": float(target_m.feature_importances_[5]), 
-                                        "Anti_PPM": float(target_m.feature_importances_[6])
-                                    }
+                                    # Feature importances are a DIFFERENT quantity from regression
+                                    # coefficients, so they are stored under AI_-prefixed keys. Reusing the
+                                    # plain names would silently corrupt the OLS block.
+                                    ai_coefs = dict(ols_block)
+                                    ai_coefs["model_type"] = selected_model
+                                    for _i, _n in enumerate(["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st",
+                                                             "Brine_Flow", "LP_Steam", "Anti_PPM"]):
+                                        ai_coefs[f"AI_{_n}"] = float(target_m.feature_importances_[_i])
                                     st.session_state.mra_coef = ai_coefs
                                     _ok = save_config(db_conn, ai_coefs, LOCAL_CONFIG_FILE)
+                                    # Persist the fitted model itself so it survives container restarts.
+                                    _blob_ok = save_model_blob(db_conn, target_m, LOCAL_CONFIG_FILE, AI_MODEL_FILE)
 
-                                if _ok:
-                                    st.success(f"{selected_model} model activated and calibration saved to the cloud sheet.")
+                                if _ok and _blob_ok:
+                                    st.success(f"{selected_model} activated. Calibration and model saved to the cloud sheet.")
+                                elif _ok and not _blob_ok:
+                                    st.warning(f"{selected_model} activated and calibration saved, but the model file could not be stored in the sheet - it may need retraining after a restart.")
                                 else:
-                                    st.warning(f"{selected_model} model activated, but the cloud sheet was unreachable - calibration saved locally only and may reset on restart.")
+                                    st.warning(f"{selected_model} activated, but the cloud sheet was unreachable - saved locally only and may reset on restart.")
                                 time.sleep(1.5)
                                 st.rerun()
                         else: 
