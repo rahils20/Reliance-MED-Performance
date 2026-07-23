@@ -1698,10 +1698,13 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.markdown(f"**Current Evaluator Logic Subroutine:** `{model_type}`")
             c_reset, _ = st.columns([1, 1])
             with c_reset:
-                if st.button("Execute Subroutine Calibration Factory Reset", use_container_width=True):
+                if st.button("Reset to Default Coefficients", use_container_width=True):
                     st.session_state.mra_coef = MRA_COEF_2014.copy()
-                    save_config(db_conn, st.session_state.mra_coef, LOCAL_CONFIG_FILE)
-                    st.success("Baseline parameters successfully reverted back to original OLS multipliers!")
+                    _ok = save_config(db_conn, st.session_state.mra_coef, LOCAL_CONFIG_FILE)
+                    if _ok:
+                        st.success("Coefficients reset and saved to the cloud sheet.")
+                    else:
+                        st.warning("Coefficients reset, but the cloud sheet was unreachable - saved locally only.")
                     time.sleep(1.5)
                     st.rerun()
 
@@ -1782,7 +1785,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                         "Anti_PPM": float(model_ols.coef_[6])
                                     }
                                     st.session_state.mra_coef = new_coefs
-                                    save_config(db_conn, new_coefs, LOCAL_CONFIG_FILE)
+                                    _ok = save_config(db_conn, new_coefs, LOCAL_CONFIG_FILE)
                                 else:
                                     target_m = model_rf if selected_model == "Random Forest" else model_xgb
                                     joblib.dump(target_m, AI_MODEL_FILE)
@@ -1794,9 +1797,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                         "Anti_PPM": float(target_m.feature_importances_[6])
                                     }
                                     st.session_state.mra_coef = ai_coefs
-                                    save_config(db_conn, ai_coefs, LOCAL_CONFIG_FILE)
-                                    
-                                st.success(f"System evaluation subroutine locked into {selected_model} logic sequence.")
+                                    _ok = save_config(db_conn, ai_coefs, LOCAL_CONFIG_FILE)
+
+                                if _ok:
+                                    st.success(f"{selected_model} model activated and calibration saved to the cloud sheet.")
+                                else:
+                                    st.warning(f"{selected_model} model activated, but the cloud sheet was unreachable - calibration saved locally only and may reset on restart.")
                                 time.sleep(1.5)
                                 st.rerun()
                         else: 
