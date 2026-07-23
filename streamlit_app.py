@@ -73,7 +73,7 @@ RO_MRA_BASELINE = {
 @st.cache_resource(ttl=600)
 def init_db_connection():
     if not GSPREAD_INSTALLED: 
-        return {"type": "local", "client": None}
+        return {"type": "local", "client": None, "spreadsheet": None}
     if "gcp_service_account" in st.secrets:
         try:
             scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -82,9 +82,12 @@ def init_db_connection():
                 creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
             client = gspread.authorize(creds)
-            return {"type": "cloud", "client": client.open(GOOGLE_SHEET_NAME).sheet1}
+            book = client.open(GOOGLE_SHEET_NAME)
+            # 'client' stays as sheet1 so all existing data code is untouched. 'spreadsheet' is the whole
+            # workbook, which is what lets us read/write additional tabs (e.g. the calibration config tab).
+            return {"type": "cloud", "client": book.sheet1, "spreadsheet": book}
         except: pass
-    return {"type": "local", "client": None}
+    return {"type": "local", "client": None, "spreadsheet": None}
 
 def load_database(db, target_file=LOCAL_DB_FILE):
     if db["type"] == "cloud" and target_file == LOCAL_DB_FILE:
@@ -118,16 +121,83 @@ def save_database(db, df, target_file=LOCAL_DB_FILE):
     df.to_csv(target_file, index=False)
     return True
 
+# Each config file maps to its own tab in the Google Sheet workbook.
+CONFIG_TAB_NAMES = {
+    LOCAL_CONFIG_FILE: "MED_Calibration",
+    RO_LOCAL_CONFIG_FILE: "RO_Calibration",
+}
+
+def _get_config_tab(db, target_file, create=False):
+    """Return the worksheet tab holding this config, or None if unavailable.
+
+    Streamlit Cloud's local filesystem is EPHEMERAL - it is wiped whenever the container restarts
+    (every few days, on redeploy, or after inactivity). That is why calibration saved to a local
+    JSON file kept reverting to the hardcoded baseline. The Google Sheet is the only persistent
+    store the app already talks to, so the calibration lives there now.
+    """
+    if db.get("type") != "cloud" or db.get("spreadsheet") is None:
+        return None
+    tab_name = CONFIG_TAB_NAMES.get(target_file)
+    if not tab_name:
+        return None
+    book = db["spreadsheet"]
+    try:
+        return book.worksheet(tab_name)
+    except Exception:
+        if not create:
+            return None
+        try:
+            return book.add_worksheet(title=tab_name, rows=100, cols=3)
+        except Exception:
+            return None
+
 def load_config(db, target_file=LOCAL_CONFIG_FILE, baseline_dict=MRA_COEF_2014):
+    # 1) Preferred: the persistent tab in the Google Sheet.
+    ws = _get_config_tab(db, target_file)
+    if ws is not None:
+        try:
+            records = ws.get_all_records()
+            if records:
+                cfg = {}
+                for row in records:
+                    key = str(row.get("Parameter", "")).strip()
+                    if not key:
+                        continue
+                    raw = row.get("Value", "")
+                    try:
+                        cfg[key] = float(str(raw).replace(",", "").strip())
+                    except (ValueError, TypeError):
+                        cfg[key] = raw  # non-numeric entries such as model_type stay as text
+                if cfg:
+                    return cfg
+        except Exception:
+            pass
+    # 2) Fallback: local cache file (works for local runs; on Cloud it may have been wiped).
     if os.path.exists(target_file):
         try:
             with open(target_file, "r") as f: 
                 return json.load(f)
         except: pass
+    # 3) Last resort: the hardcoded baseline.
     return baseline_dict.copy()
 
 def save_config(db, coef_dict, target_file=LOCAL_CONFIG_FILE):
-    with open(target_file, "w") as f: json.dump(coef_dict, f)
+    saved_to_cloud = False
+    ws = _get_config_tab(db, target_file, create=True)
+    if ws is not None:
+        try:
+            rows = [["Parameter", "Value"]] + [[str(k), str(v)] for k, v in coef_dict.items()]
+            ws.clear()
+            ws.update(rows)
+            saved_to_cloud = True
+        except Exception:
+            saved_to_cloud = False
+    # Always keep the local copy too - it is a fast cache and a fallback if the sheet is unreachable.
+    try:
+        with open(target_file, "w") as f: json.dump(coef_dict, f)
+    except Exception:
+        pass
+    return saved_to_cloud
 
 db_conn = init_db_connection()
 
