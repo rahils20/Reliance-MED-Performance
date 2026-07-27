@@ -2111,8 +2111,21 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     elif pwd_append != "": 
                         st.error("Master verification credential failed.")
             with c_export:
-                word_file = generate_comprehensive_report(log_date, ops_data, sor_export_dfs, water_data, chem_data, mra_data, get_v('skip_wq'), get_v('remarks'))
-                st.download_button("Export Word Document (.docx)", data=word_file, file_name=f"MED4_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                # Generate only on demand. st.download_button needs its data upfront, so calling the
+                # report generator inline rebuilt the entire Word document on EVERY script rerun -
+                # i.e. on every keystroke while this tab was open. That was the single heaviest
+                # per-interaction cost in the app and a direct contributor to CPU throttling.
+                if st.button("Generate Word Report (.docx)", use_container_width=True, key="gen_daily_docx"):
+                    with st.spinner("Building report..."):
+                        st.session_state.daily_docx = generate_comprehensive_report(
+                            log_date, ops_data, sor_export_dfs, water_data, chem_data,
+                            mra_data, get_v('skip_wq'), get_v('remarks'))
+                        st.session_state.daily_docx_date = log_date_str
+                if st.session_state.get('daily_docx') and st.session_state.get('daily_docx_date') == log_date_str:
+                    st.download_button("Download Word Report", data=st.session_state.daily_docx,
+                                       file_name=f"MED4_ExecutiveReport_{log_date_str}.docx",
+                                       mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                       use_container_width=True)
                 st.caption(f"Report engine {REPORT_VERSION}")
             
             with c_csv:
