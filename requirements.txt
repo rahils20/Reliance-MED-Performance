@@ -10,3 +10,4 @@ joblib
 plotly.express
 fpdf
 kaleido
+matplotlib
