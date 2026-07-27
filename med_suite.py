@@ -482,6 +482,24 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     if log_date_str != st.session_state.last_selected_date:
         st.session_state.last_selected_date = log_date_str
         date_found = False
+
+        # ALWAYS clear every measured field first, then overlay whatever this date's record actually
+        # contains. Resetting only when no row exists was unsafe: a row that existed but was blank or
+        # only partly filled set date_found=True, skipped the reset, loaded nothing, and left the
+        # PREVIOUS date's readings on screen looking like real data for the selected day.
+        # Plant CONSTANTS are excluded - the heat transfer areas are fixed equipment geometry, not
+        # daily readings, and zeroing them would force HTC to 0 even once valid data is entered.
+        PLANT_CONSTANTS = ('area_1st', 'area_overall')
+        for var_key, default_val in DEFAULTS.items():
+            if var_key in PLANT_CONSTANTS:
+                continue
+            zero_val = 0.0 if isinstance(default_val, (int, float)) and not isinstance(default_val, bool) else default_val
+            if var_key in ('remarks',): zero_val = ""
+            if var_key in ('skip_eff', 'skip_wq'): zero_val = False
+            st.session_state.vars[var_key] = zero_val
+            for tk in SYNC_MAP.get(var_key, []):
+                st.session_state[tk] = zero_val
+
         if not st.session_state.daily_logs.empty and 'Date' in st.session_state.daily_logs.columns:
             # CORE FIX: Standardize all registry dates right now, extract as safe strings
             db_dates_parsed = standardize_dates(st.session_state.daily_logs['Date'])
@@ -550,6 +568,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 db_to_var_mapping['chem_foam_cons'] = ['Antifoam (kg)', 'AF_KgHr']
 
                 loaded_vars = False
+                n_loaded = 0
                 for var_key, col_names in db_to_var_mapping.items():
                     for col_name in col_names:
                         if col_name in row.index and pd.notna(row[col_name]):
@@ -569,34 +588,41 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                     for tk in SYNC_MAP.get(var_key, []): 
                                         st.session_state[tk] = val
                                     loaded_vars = True
+                                    n_loaded += 1
                                 break
                             except: 
                                 pass 
                 if loaded_vars: 
-                    st.sidebar.success(f"Auto-loaded historical data for {log_date.strftime('%d-%m-%Y')}")
-                    st.rerun() 
+                    st.session_state.date_status = ('partial' if n_loaded < 12 else 'full')
+                    st.session_state.date_status_n = n_loaded
+                else:
+                    # The date row exists but every mapped field is blank - treat it as no data at all,
+                    # which is exactly the case that used to leave another date's readings on screen.
+                    st.session_state.date_status = 'blank'
+                    st.session_state.date_status_n = 0
+                st.rerun()
 
         if not date_found:
-            # No record exists for this date at all - reset every MEASURED field to 0 rather than leaving
-            # whatever values were on screen from the last date viewed. Showing stale/default numbers
-            # for a day with no actual log entry makes it look like real data exists when it doesn't.
-            # Plant CONSTANTS are excluded: the heat transfer areas are fixed equipment geometry, not
-            # daily readings, and zeroing them would force HTC to 0 even after valid data is entered.
-            PLANT_CONSTANTS = ('area_1st', 'area_overall')
-            for var_key, default_val in DEFAULTS.items():
-                if var_key in PLANT_CONSTANTS:
-                    continue
-                zero_val = 0.0 if isinstance(default_val, (int, float)) and not isinstance(default_val, bool) else default_val
-                if var_key in ('remarks',): zero_val = ""
-                if var_key in ('skip_eff', 'skip_wq'): zero_val = False
-                st.session_state.vars[var_key] = zero_val
-                for tk in SYNC_MAP.get(var_key, []):
-                    st.session_state[tk] = zero_val
-            st.sidebar.info(f"No record found for {log_date.strftime('%d-%m-%Y')} - measured fields reset to 0.")
+            st.session_state.date_status = 'none'
+            st.session_state.date_status_n = 0
             st.rerun()
 
     # Display MED-4 Title
     st.title("MED-4 Management Suite")
+
+    # State plainly what the selected date actually holds. Every field was cleared before loading, so
+    # anything not supplied by this date's record reads 0 rather than carrying over from another day.
+    _ds = st.session_state.get('date_status', 'none')
+    _dn = st.session_state.get('date_status_n', 0)
+    _dstr = log_date.strftime('%d-%m-%Y')
+    if _ds == 'full':
+        st.success(f"Showing logged data for {_dstr} ({_dn} fields).")
+    elif _ds == 'partial':
+        st.warning(f"Only partial data was logged for {_dstr} ({_dn} fields). Everything not logged that day is shown as 0, not carried over from another date.")
+    elif _ds == 'blank':
+        st.error(f"A record exists for {_dstr} but it contains no readings. All values are shown as 0 - nothing here is measured data.")
+    else:
+        st.error(f"No data was logged for {_dstr}. All values are shown as 0 - nothing here is measured data.")
 
     tabs = st.tabs([
         "Inputs", "Performance", "Heat Transfer", "Water Quality", 
