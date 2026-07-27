@@ -351,74 +351,594 @@ def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
     df = pd.DataFrame([data_dict])
     return df.to_csv(index=False).encode('utf-8')
 
+# =====================================================================================
+# REPORTING ENGINE
+# Reports are the deliverable Reliance actually reads, so they must explain WHY the plant
+# performed as it did - not just dump numbers. Everything below is built around that:
+# consistent rounding, deliberate page breaks, and a narrative layer that interprets
+# variance from SOR, assesses fouling, and recommends action.
+# =====================================================================================
+
+# Stamped into every generated report so it is immediately obvious which build produced a file.
+# If a downloaded report does not show this version in its footer, the app is running older code.
+REPORT_VERSION = "v2.0 (analysis + charts)"
+
+# SOR reference values used for variance analysis and interpretation.
+SOR_REF = {
+    'GOR': 11.4,
+    'Steam_TPH': 76.94,
+    'Steam_Press': 4.3,
+    'Steam_Inlet_Temp': 176.0,
+    'Vapour_Temp_1st': 68.47,
+    'Anti_PPM': 10.5,
+    'Foam_PPM': 0.16,
+}
+
+
+def _num(v, dp=1, dash_if_zero=False):
+    """Format a number for a report. Raw floats like 795.3299999999999 are unreadable in a
+    client document, so every printed value goes through here."""
+    try:
+        f = float(v)
+        if pd.isna(f):
+            return "-"
+        if dash_if_zero and f == 0:
+            return "-"
+        return f"{f:,.{dp}f}"
+    except (ValueError, TypeError):
+        s = str(v).strip()
+        return s if s else "-"
+
+
+def _safe_pct(actual, ref):
+    """Percentage deviation of actual from a reference, or None if not computable."""
+    try:
+        a, r = float(actual), float(ref)
+        if r == 0 or pd.isna(a) or pd.isna(r):
+            return None
+        return (a - r) / r * 100.0
+    except (ValueError, TypeError):
+        return None
+
+
+def _para(doc, text, bold=False, italic=False, size=None, color=None, align=None):
+    p = doc.add_paragraph()
+    run = p.add_run(text)
+    run.bold = bold
+    run.italic = italic
+    if size:
+        run.font.size = Pt(size)
+    if color:
+        run.font.color.rgb = color
+    if align is not None:
+        p.alignment = align
+    return p
+
+
+def _table(doc, headers, rows, widths=None):
+    """Build a Table Grid with a bolded header row."""
+    t = doc.add_table(rows=1, cols=len(headers))
+    t.style = 'Table Grid'
+    for i, h in enumerate(headers):
+        cell = t.rows[0].cells[i]
+        cell.text = ""
+        r = cell.paragraphs[0].add_run(str(h))
+        r.bold = True
+    for row in rows:
+        rc = t.add_row().cells
+        for i, val in enumerate(row):
+            rc[i].text = str(val)
+    if widths:
+        for r_ in t.rows:
+            for i, w in enumerate(widths):
+                if i < len(r_.cells):
+                    r_.cells[i].width = Inches(w)
+    return t
+
+
+def _chart(plot_fn, figsize=(7.2, 2.9)):
+    """Render a matplotlib chart to PNG bytes for embedding. Returns None on any failure so a
+    charting problem can never prevent the report itself from being produced."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=figsize, dpi=150)
+        plot_fn(ax, plt)
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
+
+# -------------------------------------------------------------------------------------
+# INTERPRETATION ENGINE
+# -------------------------------------------------------------------------------------
+def build_interpretation(ops, mra, chem_ppm=None):
+    """Turn the day's numbers into engineering findings, variance explanations and actions.
+
+    Returns a dict with: status, headline, variance (list), fouling (dict), actions (list).
+    Kept separate from document formatting so the daily and monthly reports, and the on-screen
+    view, all describe the plant the same way.
+    """
+    out = {'variance': [], 'actions': [], 'fouling': {}, 'status': 'normal', 'headline': ''}
+
+    gor = float(ops.get('GOR') or 0)
+    steam = float(ops.get('Steam') or 0)
+    gross = float(ops.get('Gross Prod') or 0)
+    htc_o = float(ops.get('htc_overall') or 0)
+    htc_1 = float(ops.get('htc_1st') or 0)
+    recovery = float(ops.get('Recovery') or 0)
+
+    # ---- Efficiency vs SOR ----
+    gor_dev = _safe_pct(gor, SOR_REF['GOR'])
+    steam_dev = _safe_pct(steam, SOR_REF['Steam_TPH'])
+
+    if gor > 0 and gor_dev is not None:
+        if gor_dev < -5:
+            out['variance'].append(
+                f"Gain Output Ratio was {gor:.2f} against an SOR baseline of {SOR_REF['GOR']:.2f} "
+                f"({gor_dev:+.1f}%). GOR is distillate produced per unit of steam, so a shortfall here "
+                f"is a thermal efficiency loss rather than a throughput limitation - the unit consumed "
+                f"more steam than it should have for the water it made."
+            )
+        elif gor_dev > 2:
+            out['variance'].append(
+                f"Gain Output Ratio was {gor:.2f} against an SOR baseline of {SOR_REF['GOR']:.2f} "
+                f"({gor_dev:+.1f}%), indicating the unit converted steam to distillate more efficiently "
+                f"than the reference condition."
+            )
+        else:
+            out['variance'].append(
+                f"Gain Output Ratio was {gor:.2f} against an SOR baseline of {SOR_REF['GOR']:.2f} "
+                f"({gor_dev:+.1f}%), essentially in line with the reference condition."
+            )
+
+    # ---- Throughput: separate a steam-supply constraint from an efficiency loss ----
+    if steam > 0 and steam_dev is not None and steam_dev < -5:
+        implied = abs(steam_dev) / 100.0 * SOR_REF['Steam_TPH'] * (gor if gor > 0 else SOR_REF['GOR'])
+        out['variance'].append(
+            f"LP steam consumption was {steam:.1f} TPH against an SOR of {SOR_REF['Steam_TPH']:.1f} TPH "
+            f"({steam_dev:+.1f}%). At the GOR achieved, this reduced steam input alone accounts for "
+            f"approximately {implied:.0f} m³/h of the production shortfall. Production below SOR on this "
+            f"day is therefore primarily a steam availability constraint, not a fault in the unit."
+        )
+    elif steam > 0 and steam_dev is not None and steam_dev > 5:
+        out['variance'].append(
+            f"LP steam consumption was {steam:.1f} TPH against an SOR of {SOR_REF['Steam_TPH']:.1f} TPH "
+            f"({steam_dev:+.1f}%). Steam input above the reference with production at or below SOR points "
+            f"to reduced heat transfer efficiency rather than a supply limitation."
+        )
+
+    if recovery > 0:
+        out['variance'].append(
+            f"Recovery was {recovery:.1f}% of seawater feed converted to product."
+        )
+
+    # ---- Fouling assessment: HTC drop against the SOR-clean baseline ----
+    d_o = _safe_pct(htc_o, HTC_OVERALL_U_SOR) if htc_o > 0 else None
+    d_1 = _safe_pct(htc_1, HTC_1ST_U_SOR) if htc_1 > 0 else None
+    out['fouling'] = {'overall_dev': d_o, 'first_dev': d_1, 'htc_overall': htc_o, 'htc_1st': htc_1}
+
+    worst = min([x for x in (d_o, d_1) if x is not None], default=None)
+    if worst is None:
+        out['fouling']['verdict'] = "Heat transfer coefficients were not calculable for this day, so no fouling assessment can be made."
+        out['fouling']['tier'] = 'unknown'
+    elif worst >= -5:
+        out['fouling']['verdict'] = (
+            "Heat transfer coefficients are within 5% of the post-clean SOR baseline. The tube surfaces "
+            "are effectively clean and no chemical or mechanical intervention is indicated."
+        )
+        out['fouling']['tier'] = 'clean'
+    elif worst >= -15:
+        out['fouling']['verdict'] = (
+            "Heat transfer coefficients have declined between 5% and 15% from the post-clean SOR baseline. "
+            "This is the signature of early-stage scale formation. It is recoverable at this stage through "
+            "dosing control and does not yet warrant taking the unit offline."
+        )
+        out['fouling']['tier'] = 'early'
+    else:
+        out['fouling']['verdict'] = (
+            "Heat transfer coefficients have declined more than 15% from the post-clean SOR baseline. This "
+            "represents established scale on the heat transfer surfaces, which will continue to depress "
+            "output and raise specific energy consumption until it is removed."
+        )
+        out['fouling']['tier'] = 'significant'
+
+    # ---- MRA: measured output against what the calibrated model expects ----
+    pred = float(mra.get('Predicted') or 0)
+    resid = float(mra.get('Residual') or 0)
+    diff_pct = (resid / pred * 100.0) if pred > 0 else 0.0
+    out['mra_diff_pct'] = diff_pct
+    if pred > 0:
+        out['mra_text'] = (
+            f"The Multiple Regression Analysis model, calibrated on this unit's own historical operation, "
+            f"predicted {pred:.1f} m³/h under the day's operating conditions against an actual "
+            f"{float(mra.get('Actual') or 0):.1f} m³/h - a deviation of {diff_pct:+.1f}%. Because the model "
+            f"already accounts for steam rate, seawater temperature, pressure and dosing, a persistent "
+            f"negative deviation isolates performance loss that operating conditions do not explain, which "
+            f"in a thermal desalination unit is characteristically scale."
+        )
+    else:
+        out['mra_text'] = "The MRA model did not return a valid prediction for this day, so no model-based fouling assessment is available."
+
+    # ---- Overall status ----
+    if diff_pct <= -5.0 or out['fouling'].get('tier') == 'significant':
+        out['status'] = 'action'
+        out['headline'] = "Cleaning intervention recommended"
+    elif diff_pct <= -4.0 or out['fouling'].get('tier') == 'early':
+        out['status'] = 'watch'
+        out['headline'] = "Early performance deviation - corrective dosing advised"
+    else:
+        out['status'] = 'normal'
+        out['headline'] = "Operating within expected performance envelope"
+
+    # ---- Recommendations ----
+    if out['status'] == 'action':
+        out['actions'].append(
+            "Schedule a chemical (acid) clean of the heat transfer surfaces at the next available "
+            "production window. The combined HTC decline and MRA deviation indicate scale that dosing "
+            "alone will not reverse."
+        )
+        out['actions'].append(
+            "Until cleaning is carried out, expect elevated specific energy consumption; steam demand per "
+            "m³ of product will remain above the SOR reference."
+        )
+    elif out['status'] == 'watch':
+        out['actions'].append(
+            "Increase antiscalant dosing toward the SOR target and hold it there while monitoring HTC daily. "
+            "Early-stage scale is normally reversible at this point without taking the unit offline."
+        )
+        out['actions'].append(
+            "Re-assess after seven days. If HTC continues to decline, plan a cleaning window rather than "
+            "continuing to increase chemical dosage."
+        )
+    else:
+        out['actions'].append(
+            "Continue current operating and dosing regime. No intervention is indicated."
+        )
+
+    if chem_ppm is not None:
+        try:
+            ppm = float(chem_ppm)
+            if 0 < ppm < SOR_REF['Anti_PPM'] * 0.8:
+                out['actions'].append(
+                    f"Antiscalant residual measured {ppm:.2f} ppm against an SOR target of "
+                    f"{SOR_REF['Anti_PPM']:.2f} ppm. Under-dosing at this level materially raises scaling "
+                    f"risk on the first effect and should be corrected irrespective of current HTC."
+                )
+            elif ppm > SOR_REF['Anti_PPM'] * 1.3:
+                out['actions'].append(
+                    f"Antiscalant residual measured {ppm:.2f} ppm against an SOR target of "
+                    f"{SOR_REF['Anti_PPM']:.2f} ppm. Dosing above requirement adds chemical cost without "
+                    f"proportional scale protection and can be trimmed."
+                )
+        except (ValueError, TypeError):
+            pass
+
+    return out
+
+
+# -------------------------------------------------------------------------------------
+# DAILY REPORT
+# -------------------------------------------------------------------------------------
 def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, skip_wq, remarks):
     doc = Document()
-    doc.add_heading('MED-4 Daily Operational & Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p = doc.add_paragraph()
-    p.add_run('Prepared by: ').bold = True
-    p.add_run('Chembond Water Technologies Limited\n')
-    p.add_run('Date: ').bold = True
-    p.add_run(date.strftime('%d-%m-%Y'))
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    for s in doc.sections:
+        s.left_margin = Inches(0.8); s.right_margin = Inches(0.8)
+        s.top_margin = Inches(0.7); s.bottom_margin = Inches(0.7)
 
+    interp = build_interpretation(ops, mra, chem_data.get('anti_ppm') if isinstance(chem_data, dict) else None)
+
+    # ---- Cover block ----
+    doc.add_heading('MED-4 Daily Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _para(doc, 'Reliance Industries Limited  |  Multi-Effect Distillation Unit 4',
+          size=11, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _para(doc, f"Reporting date: {date.strftime('%d %B %Y')}", bold=True, size=11,
+          align=WD_ALIGN_PARAGRAPH.CENTER)
+    _para(doc, 'Prepared by Chembond Water Technologies Limited', italic=True, size=10,
+          align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    color = {'normal': RGBColor(0, 128, 0), 'watch': RGBColor(216, 130, 43), 'action': RGBColor(200, 40, 40)}[interp['status']]
+    _para(doc, f"Assessment: {interp['headline']}", bold=True, size=12, color=color,
+          align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    # ---- 1. Executive summary ----
     doc.add_heading('1. Executive Summary', level=1)
-    doc.add_paragraph(f"On {date.strftime('%d-%m-%Y')}, the MED-4 unit achieved a Gross Production of {ops['Gross Prod']} m³/h and a Gain Output Ratio (GOR) of {ops['GOR']:.2f}:1. The Specific Thermal Energy Consumption (STEC) was {ops['STEC']:.2f} kWh/ton with a system recovery of {ops['Recovery']:.1f}%.")
+    doc.add_paragraph(
+        f"On {date.strftime('%d %B %Y')} the MED-4 unit produced {_num(ops.get('Gross Prod'))} m³/h gross, "
+        f"at a Gain Output Ratio of {_num(ops.get('GOR'), 2)} and a specific thermal energy consumption of "
+        f"{_num(ops.get('STEC'))} kWh per tonne of distillate. Recovery from seawater feed was "
+        f"{_num(ops.get('Recovery'))}%. Overall plant heat transfer coefficient was "
+        f"{_num(ops.get('htc_overall'), 2)} W/m²K and first effect heat transfer coefficient "
+        f"{_num(ops.get('htc_1st'))} W/m²K."
+    )
+    doc.add_paragraph(interp['fouling'].get('verdict', ''))
 
-    doc.add_heading('2. SOR Performance Matrix', level=1)
+    doc.add_heading('Key indicators', level=2)
+    _table(doc,
+           ['Indicator', 'Value', 'SOR Reference', 'Deviation'],
+           [
+               ['Gross production (m³/h)', _num(ops.get('Gross Prod')), '-', '-'],
+               ['Gain Output Ratio', _num(ops.get('GOR'), 2), f"{SOR_REF['GOR']:.2f}",
+                f"{_safe_pct(ops.get('GOR'), SOR_REF['GOR']):+.1f}%" if _safe_pct(ops.get('GOR'), SOR_REF['GOR']) is not None else '-'],
+               ['STEC (kWh/tonne)', _num(ops.get('STEC')), '-', '-'],
+               ['Overall HTC (W/m²K)', _num(ops.get('htc_overall'), 2), f"{HTC_OVERALL_U_SOR:.2f}",
+                f"{interp['fouling']['overall_dev']:+.1f}%" if interp['fouling'].get('overall_dev') is not None else '-'],
+               ['1st Effect HTC (W/m²K)', _num(ops.get('htc_1st')), f"{HTC_1ST_U_SOR:.1f}",
+                f"{interp['fouling']['first_dev']:+.1f}%" if interp['fouling'].get('first_dev') is not None else '-'],
+               ['Recovery (%)', _num(ops.get('Recovery')), '-', '-'],
+           ],
+           widths=[2.6, 1.3, 1.3, 1.2])
+
+    # ---- 2. Performance interpretation (the part that was missing entirely) ----
+    doc.add_heading('2. Performance Analysis', level=1)
+    doc.add_paragraph(
+        "The following explains how the unit performed relative to its System Operating Reference (SOR) "
+        "baseline, and what accounts for any deviation."
+    )
+    for line in interp['variance']:
+        doc.add_paragraph(line, style='List Bullet')
+
+    doc.add_heading('Thermal integrity and fouling', level=2)
+    doc.add_paragraph(interp['fouling'].get('verdict', ''))
+    _table(doc,
+           ['Heat exchanger', 'Measured (W/m²K)', 'Post-clean SOR', 'Deviation'],
+           [
+               ['First effect', _num(ops.get('htc_1st')), f"{HTC_1ST_U_SOR:.1f}",
+                f"{interp['fouling']['first_dev']:+.1f}%" if interp['fouling'].get('first_dev') is not None else '-'],
+               ['Overall plant', _num(ops.get('htc_overall'), 2), f"{HTC_OVERALL_U_SOR:.2f}",
+                f"{interp['fouling']['overall_dev']:+.1f}%" if interp['fouling'].get('overall_dev') is not None else '-'],
+           ],
+           widths=[1.8, 1.7, 1.5, 1.4])
+    doc.add_paragraph(
+        "Heat transfer coefficient is calculated on the steam condensation basis, U = Q / (A x LMTD), using "
+        "the log mean temperature difference across each exchanger. A falling coefficient at constant duty "
+        "indicates an increasing resistance on the tube surface, which is the direct physical signature of scale."
+    )
+
+    doc.add_heading('Model-based assessment (MRA)', level=2)
+    doc.add_paragraph(interp['mra_text'])
+
+    doc.add_heading('3. Recommendations', level=1)
+    for i, a in enumerate(interp['actions'], 1):
+        doc.add_paragraph(f"{i}. {a}")
+
+    # ---- 4. SOR matrix (reference detail, moved onto its own page) ----
+    doc.add_page_break()
+    doc.add_heading('4. SOR Performance Matrix', level=1)
+    doc.add_paragraph(
+        "Full parameter-by-parameter comparison against the System Operating Reference. Positive deviations "
+        "indicate operation above the reference condition."
+    )
     for section_name, df in sor_dfs.items():
-        doc.add_heading(section_name, level=2)
-        t_ops = doc.add_table(rows=1, cols=6); t_ops.style = 'Table Grid'
-        for i, h in enumerate(['Parameter', 'UOM', 'Design', 'SOR Base', 'Actual', 'Diff']): t_ops.rows[0].cells[i].text = h
-        
-        for index, row in df.iterrows():
-            rc = t_ops.add_row().cells
-            rc[0].text = str(row['Parameter'])
-            rc[1].text = str(row['UOM'])
-            rc[2].text = str(row['Design'])
-            rc[3].text = str(row['SOR Base'])
-            rc[4].text = str(row['Actual'])
-            rc[5].text = str(row['Difference'])
+        doc.add_heading(str(section_name), level=2)
+        rows = []
+        for _, row in df.iterrows():
+            rows.append([
+                str(row.get('Parameter', '')),
+                str(row.get('UOM', '')),
+                str(row.get('Design', '')),
+                _num(row.get('SOR Base'), 2),
+                _num(row.get('Actual'), 2),
+                _num(row.get('Difference'), 2),
+            ])
+        _table(doc, ['Parameter', 'UOM', 'Design', 'SOR Base', 'Actual', 'Deviation'], rows,
+               widths=[2.2, 1.0, 0.9, 0.9, 0.9, 0.9])
 
-    doc.add_heading('3. Thermal Integrity (HTC)', level=1)
-    doc.add_paragraph(f"Overall Plant HTC: {ops['htc_overall']:.2f} W/m²K | 1st Effect HTC: {ops['htc_1st']:.2f} W/m²K")
-    
-    doc.add_heading('4. Water Quality', level=1)
-    if skip_wq: doc.add_paragraph("NOTE: Laboratory water quality parameters were not recorded for this operational day.", style='BodyText')
+    # ---- 5. Water quality ----
+    doc.add_page_break()
+    doc.add_heading('5. Water Quality', level=1)
+    if skip_wq:
+        doc.add_paragraph("Laboratory water quality parameters were not recorded for this operational day.")
     else:
-        t_wq = doc.add_table(rows=1, cols=4); t_wq.style = 'Table Grid'
-        for i, h in enumerate(['Parameter', 'Stream', 'Limit/Spec', 'Actual']): t_wq.rows[0].cells[i].text = h
-        for param, data in w_data['Feed'].items():
-            rc = t_wq.add_row().cells
-            rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Sea Water Feed', f"{data['min']}-{data['max']}", str(data['val'])
-        for param, data in w_data['Product'].items():
-            rc = t_wq.add_row().cells
-            rc[0].text, rc[1].text, rc[2].text, rc[3].text = str(param), 'Desal Product', f"{data['min']}-{data['max']}", str(data['val'])
+        rows, exceedances = [], []
+        for stream_label, key in (('Sea Water Feed', 'Feed'), ('Desal Product', 'Product')):
+            for param, data in w_data.get(key, {}).items():
+                val = data.get('val')
+                lo, hi = data.get('min'), data.get('max')
+                ok = True
+                try:
+                    if val is not None and float(val) != 0:
+                        ok = float(lo) <= float(val) <= float(hi)
+                except (ValueError, TypeError):
+                    ok = True
+                if not ok:
+                    exceedances.append(f"{stream_label} {param} ({_num(val, 2)} against {_num(lo, 2)}-{_num(hi, 2)})")
+                rows.append([str(param), stream_label, f"{_num(lo, 2)} - {_num(hi, 2)}",
+                             _num(val, 2, dash_if_zero=True), 'Within spec' if ok else 'Out of spec'])
+        _table(doc, ['Parameter', 'Stream', 'Specification', 'Result', 'Status'], rows,
+               widths=[1.8, 1.4, 1.5, 1.0, 1.1])
+        if exceedances:
+            doc.add_paragraph(
+                "The following parameters fell outside specification: " + "; ".join(exceedances) +
+                ". Feed side exceedances raise scaling risk and should be reviewed against pretreatment "
+                "performance; product side exceedances affect downstream water quality directly."
+            )
+        else:
+            doc.add_paragraph("All recorded parameters were within specification.")
 
-    doc.add_heading('5. MRA Fouling Indicator', level=1)
-    diff_pct = (mra['Residual'] / mra['Predicted']) * 100 if mra['Predicted'] > 0 else 0
-    doc.add_paragraph(f"Actual Gross: {mra['Actual']:.1f} m³/h | MRA Predicted: {mra['Predicted']:.1f} m³/h | Difference: {diff_pct:.1f}%")
-    if diff_pct <= -5.0: doc.add_paragraph(f"STATUS: FOULING DETECTED ({diff_pct:.1f}% loss). Please clean the machine.").runs[0].font.color.rgb = RGBColor(255, 0, 0)
-    elif diff_pct <= -4.0: doc.add_paragraph(f"STATUS: WARNING ({diff_pct:.1f}% loss). Increase antiscalant dosing.").runs[0].font.color.rgb = RGBColor(255, 140, 0)
-    else: doc.add_paragraph(f"STATUS: CLEAN ({diff_pct:.1f}% loss). System operating normally.").runs[0].font.color.rgb = RGBColor(0, 128, 0)
-    
-    if remarks and str(remarks).strip() != "":
-        doc.add_heading('6. Remarks & Observations', level=1)
+    if remarks and str(remarks).strip():
+        doc.add_heading('6. Operator Remarks', level=1)
         doc.add_paragraph(str(remarks))
+
+    _para(doc, f"Report generated by the Chembond MED Performance Monitoring System  |  Report engine {REPORT_VERSION}",
+          italic=True, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
 
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
 
+
+# -------------------------------------------------------------------------------------
+# MONTHLY REPORT
+# -------------------------------------------------------------------------------------
 def generate_monthly_report(df_month, month_str, year_str):
     doc = Document()
-    doc.add_heading(f'MED-4 Monthly Performance Summary: {month_str} {year_str}', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_heading('1. Monthly Aggregation', level=1)
-    t_agg = doc.add_table(rows=1, cols=4); t_agg.style = 'Table Grid'
-    for i, h in enumerate(['Metric', 'Minimum', 'Maximum', 'Average']): t_agg.rows[0].cells[i].text = h
-    metrics = [("Gross production (m³/h)", df_month['Gross production']), ("Gain Output Ratio (GOR)", df_month['GOR']), ("Specific Thermal Energy Consumption (STEC, kWh/ton)", df_month.get('STEC', pd.Series(np.nan, index=df_month.index))), ("Overall HTC (W/m²K)", df_month['Overall HTC']), ("1st Effect HTC", df_month['1st Effect HTC'])]
-    for name, series in metrics:
-        rc = t_agg.add_row().cells
-        rc[0].text, rc[1].text, rc[2].text, rc[3].text = name, f"{pd.to_numeric(series, errors='coerce').min():.2f}", f"{pd.to_numeric(series, errors='coerce').max():.2f}", f"{pd.to_numeric(series, errors='coerce').mean():.2f}"
+    for s in doc.sections:
+        s.left_margin = Inches(0.8); s.right_margin = Inches(0.8)
+        s.top_margin = Inches(0.7); s.bottom_margin = Inches(0.7)
+
+    d = df_month.copy()
+    for c in ['Gross production', 'GOR', 'STEC', 'Overall HTC', '1st Effect HTC', 'Desal production',
+              'LP Steam consumption', 'Recovery', 'Anti_PPM']:
+        if c in d.columns:
+            d[c] = pd.to_numeric(d[c], errors='coerce')
+        else:
+            d[c] = np.nan
+    if 'Date' in d.columns:
+        d['_d'] = standardize_dates(d['Date'])
+        d = d.dropna(subset=['_d']).sort_values('_d')
+
+    # Only days the unit actually ran should shape the averages.
+    run = d[d['Gross production'].fillna(0) > 0]
+    n_days = len(run)
+    period = ""
+    if '_d' in d.columns and not d.empty:
+        period = f"{d['_d'].min().strftime('%d %B %Y')} to {d['_d'].max().strftime('%d %B %Y')}"
+
+    # ---- Cover: the month is now unmistakable ----
+    doc.add_heading(f'MED-4 Monthly Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _para(doc, f"{month_str} {year_str}", bold=True, size=20, align=WD_ALIGN_PARAGRAPH.CENTER)
+    _para(doc, 'Reliance Industries Limited  |  Multi-Effect Distillation Unit 4', size=11,
+          align=WD_ALIGN_PARAGRAPH.CENTER)
+    if period:
+        _para(doc, f"Period covered: {period}  ({n_days} operating days)", size=10,
+              align=WD_ALIGN_PARAGRAPH.CENTER)
+    _para(doc, 'Prepared by Chembond Water Technologies Limited', italic=True, size=10,
+          align=WD_ALIGN_PARAGRAPH.CENTER)
+
+    if n_days == 0:
+        doc.add_paragraph("No operating days with recorded production were found for this month.")
+        bio = io.BytesIO(); doc.save(bio); return bio.getvalue()
+
+    avg = lambda c: run[c].mean()
+    gor_m, htc_o_m, htc_1_m = avg('GOR'), avg('Overall HTC'), avg('1st Effect HTC')
+
+    # Trend across the month: compare first third against last third.
+    trend_txt = ""
+    if n_days >= 6:
+        k = max(2, n_days // 3)
+        for label, col, ref in (('Overall HTC', 'Overall HTC', HTC_OVERALL_U_SOR),
+                                ('First effect HTC', '1st Effect HTC', HTC_1ST_U_SOR)):
+            a, b = run[col].head(k).mean(), run[col].tail(k).mean()
+            if pd.notna(a) and pd.notna(b) and a > 0:
+                ch = (b - a) / a * 100
+                direction = "declined" if ch < -1 else "improved" if ch > 1 else "held steady"
+                trend_txt += (f"{label} {direction} across the month, averaging {a:.2f} in the opening days "
+                              f"against {b:.2f} in the closing days ({ch:+.1f}%). ")
+
+    doc.add_heading('1. Executive Summary', level=1)
+    doc.add_paragraph(
+        f"Over {n_days} operating days in {month_str} {year_str}, MED-4 averaged "
+        f"{_num(avg('Gross production'))} m³/h gross production at a Gain Output Ratio of "
+        f"{_num(gor_m, 2)} against an SOR reference of {SOR_REF['GOR']:.2f}. Average specific thermal "
+        f"energy consumption was {_num(avg('STEC'))} kWh per tonne. Heat transfer coefficients averaged "
+        f"{_num(htc_o_m, 2)} W/m²K overall and {_num(htc_1_m)} W/m²K on the first effect."
+    )
+    if trend_txt:
+        doc.add_paragraph(trend_txt.strip())
+
+    interp_m = build_interpretation(
+        {'GOR': gor_m, 'Steam': avg('LP Steam consumption'), 'Gross Prod': avg('Gross production'),
+         'htc_overall': htc_o_m, 'htc_1st': htc_1_m, 'Recovery': avg('Recovery'), 'STEC': avg('STEC')},
+        {'Predicted': 0, 'Residual': 0, 'Actual': 0},
+        avg('Anti_PPM') if pd.notna(avg('Anti_PPM')) else None
+    )
+    doc.add_paragraph(interp_m['fouling'].get('verdict', ''))
+
+    # ---- 2. Aggregate table ----
+    doc.add_heading('2. Monthly Aggregates', level=1)
+    rows = []
+    for name, col, dp in (
+        ('Gross production (m³/h)', 'Gross production', 1),
+        ('Desal production (m³/h)', 'Desal production', 1),
+        ('LP steam consumption (TPH)', 'LP Steam consumption', 1),
+        ('Gain Output Ratio', 'GOR', 2),
+        ('STEC (kWh/tonne)', 'STEC', 1),
+        ('Overall HTC (W/m²K)', 'Overall HTC', 2),
+        ('1st Effect HTC (W/m²K)', '1st Effect HTC', 1),
+        ('Recovery (%)', 'Recovery', 1),
+    ):
+        s = run[col].dropna()
+        if s.empty:
+            rows.append([name, '-', '-', '-', '-'])
+        else:
+            rows.append([name, _num(s.min(), dp), _num(s.mean(), dp), _num(s.max(), dp), _num(s.std(), dp)])
+    _table(doc, ['Metric', 'Minimum', 'Average', 'Maximum', 'Std Dev'], rows,
+           widths=[2.4, 1.1, 1.1, 1.1, 1.1])
+
+    # ---- 3. Charts ----
+    doc.add_page_break()
+    doc.add_heading('3. Performance Trends', level=1)
+    doc.add_paragraph(
+        "The charts below show how the unit behaved across the month. Dashed red lines mark the System "
+        "Operating Reference, which represents the unit's expected performance in clean condition."
+    )
+    x = run['_d'] if '_d' in run.columns else range(len(run))
+
+    def _prod(ax, plt):
+        ax.plot(x, run['Gross production'], marker='o', ms=3, lw=1.4, color='#0072FF', label='Gross production')
+        ax.set_ylabel('m³/h'); ax.set_title('Gross Production', fontsize=10)
+        ax.grid(alpha=.3); ax.tick_params(labelsize=7)
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+    def _gor(ax, plt):
+        ax.plot(x, run['GOR'], marker='o', ms=3, lw=1.4, color='#00A06A', label='GOR')
+        ax.axhline(SOR_REF['GOR'], ls='--', color='red', lw=1, label=f"SOR {SOR_REF['GOR']}")
+        ax.set_ylabel('GOR'); ax.set_title('Gain Output Ratio vs SOR', fontsize=10)
+        ax.grid(alpha=.3); ax.legend(fontsize=7); ax.tick_params(labelsize=7)
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+    def _htco(ax, plt):
+        ax.plot(x, run['Overall HTC'], marker='o', ms=3, lw=1.4, color='#0072FF')
+        ax.axhline(HTC_OVERALL_U_SOR, ls='--', color='red', lw=1, label=f"SOR {HTC_OVERALL_U_SOR:.2f}")
+        ax.set_ylabel('W/m²K'); ax.set_title('Overall HTC vs SOR (fouling indicator)', fontsize=10)
+        ax.grid(alpha=.3); ax.legend(fontsize=7); ax.tick_params(labelsize=7)
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+    def _htc1(ax, plt):
+        ax.plot(x, run['1st Effect HTC'], marker='o', ms=3, lw=1.4, color='#D9822B')
+        ax.axhline(HTC_1ST_U_SOR, ls='--', color='red', lw=1, label=f"SOR {HTC_1ST_U_SOR:.0f}")
+        ax.set_ylabel('W/m²K'); ax.set_title('First Effect HTC vs SOR (fouling indicator)', fontsize=10)
+        ax.grid(alpha=.3); ax.legend(fontsize=7); ax.tick_params(labelsize=7)
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+
+    any_chart = False
+    for fn, caption in ((_prod, "Daily gross production."),
+                        (_gor, "Thermal efficiency against the SOR reference."),
+                        (_htco, "Overall heat transfer coefficient. A sustained downward slope indicates scale."),
+                        (_htc1, "First effect heat transfer coefficient, the earliest indicator of scaling.")):
+        buf = _chart(fn)
+        if buf:
+            doc.add_picture(buf, width=Inches(6.4))
+            _para(doc, caption, italic=True, size=8)
+            any_chart = True
+    if not any_chart:
+        doc.add_paragraph("Charts could not be rendered in this environment; the tabulated values above carry the same information.")
+
+    # ---- 4. Assessment and recommendations ----
+    doc.add_page_break()
+    doc.add_heading('4. Assessment and Recommendations', level=1)
+    for line in interp_m['variance']:
+        doc.add_paragraph(line, style='List Bullet')
+    doc.add_heading('Recommended actions', level=2)
+    for i, a in enumerate(interp_m['actions'], 1):
+        doc.add_paragraph(f"{i}. {a}")
+
+    doc.add_heading('Chembond scope', level=2)
+    doc.add_paragraph(
+        "Chembond Water Technologies maintains continuous performance monitoring of MED-4, covering thermal "
+        "efficiency, heat transfer integrity, water chemistry and antiscalant programme effectiveness. The "
+        "analysis above is generated from the unit's own operating data and calibrated against its "
+        "post-cleaning reference condition, enabling scale formation to be identified and corrected before "
+        "it materially affects output."
+    )
+
+    _para(doc, f"Report generated by the Chembond MED Performance Monitoring System  |  Report engine {REPORT_VERSION}",
+          italic=True, size=8, align=WD_ALIGN_PARAGRAPH.CENTER)
+
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
@@ -1593,6 +2113,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             with c_export:
                 word_file = generate_comprehensive_report(log_date, ops_data, sor_export_dfs, water_data, chem_data, mra_data, get_v('skip_wq'), get_v('remarks'))
                 st.download_button("Export Word Document (.docx)", data=word_file, file_name=f"MED4_ExecutiveReport_{log_date_str}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+                st.caption(f"Report engine {REPORT_VERSION}")
             
             with c_csv:
                 csv_file = generate_daily_csv(log_date, ops_data, water_data, chem_data, mra_data, st.session_state.vars)
