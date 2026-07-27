@@ -1,4 +1,4 @@
-# requirements: pandas, numpy, python-docx, altair, gspread, oauth2client, scikit-learn, xgboost, joblib, Pillow
+# requirements: pandas, numpy, python-docx, altair, gspread, oauth2client, scikit-learn, xgboost, joblib, Pillow, matplotlib
 import streamlit as st
 import datetime
 import pandas as pd
