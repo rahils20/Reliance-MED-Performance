@@ -9,6 +9,9 @@ import time
 import altair as alt
 import joblib
 import re
+import gzip
+import base64
+import pickle
 from calculator_tab import show_matrix_calculator
 from projection_engine import UtilityProjectionEngine
 from med_suite import render_med_suite
@@ -182,22 +185,119 @@ def load_config(db, target_file=LOCAL_CONFIG_FILE, baseline_dict=MRA_COEF_2014):
     return baseline_dict.copy()
 
 def save_config(db, coef_dict, target_file=LOCAL_CONFIG_FILE):
-    saved_to_cloud = False
+    """Persist calibration, MERGING into whatever is already stored.
+
+    This must never blindly overwrite. The AI (RF/XGBoost) calibration dict contains model_type plus
+    feature importances and has NO Intercept, so a clear-and-replace write would erase a previously
+    calibrated OLS baseline. Then if the AI .pkl were lost on a container restart there would be
+    neither an AI model nor a calibrated OLS to fall back to, and every prediction would silently
+    revert to the hardcoded factory baseline. Merging keeps both calibrations side by side.
+    """
+    merged = {}
     ws = _get_config_tab(db, target_file, create=True)
     if ws is not None:
         try:
-            rows = [["Parameter", "Value"]] + [[str(k), str(v)] for k, v in coef_dict.items()]
+            for row in ws.get_all_records():
+                key = str(row.get("Parameter", "")).strip()
+                if not key:
+                    continue
+                raw = row.get("Value", "")
+                try:
+                    merged[key] = float(str(raw).replace(",", "").strip())
+                except (ValueError, TypeError):
+                    merged[key] = raw
+        except Exception:
+            merged = {}
+    if not merged and os.path.exists(target_file):
+        try:
+            with open(target_file, "r") as f:
+                merged = json.load(f)
+        except Exception:
+            merged = {}
+
+    merged.update(coef_dict)
+
+    saved_to_cloud = False
+    if ws is not None:
+        try:
+            rows = [["Parameter", "Value"]] + [[str(k), str(v)] for k, v in merged.items()]
             ws.clear()
             ws.update(rows)
             saved_to_cloud = True
         except Exception:
             saved_to_cloud = False
-    # Always keep the local copy too - it is a fast cache and a fallback if the sheet is unreachable.
     try:
-        with open(target_file, "w") as f: json.dump(coef_dict, f)
+        with open(target_file, "w") as f: json.dump(merged, f)
     except Exception:
         pass
     return saved_to_cloud
+
+
+# --- Trained AI model persistence -------------------------------------------------------------
+# A fitted RandomForest/XGBoost model is a binary object, so it cannot live in a normal cell. It is
+# gzip-compressed, base64-encoded and split across rows of its own tab. Google Sheets caps a cell at
+# ~50k characters, so chunks stay well under that. This is what lets the AI models actually be used:
+# without it the .pkl sat on Streamlit Cloud's ephemeral disk and vanished on every restart.
+MODEL_TAB_NAMES = {
+    LOCAL_CONFIG_FILE: "MED_Model_Store",
+    RO_LOCAL_CONFIG_FILE: "RO_Model_Store",
+}
+_MODEL_CHUNK = 40000
+
+def _get_model_tab(db, target_file, create=False):
+    if db.get("type") != "cloud" or db.get("spreadsheet") is None:
+        return None
+    tab_name = MODEL_TAB_NAMES.get(target_file)
+    if not tab_name:
+        return None
+    book = db["spreadsheet"]
+    try:
+        return book.worksheet(tab_name)
+    except Exception:
+        if not create:
+            return None
+        try:
+            return book.add_worksheet(title=tab_name, rows=200, cols=2)
+        except Exception:
+            return None
+
+def save_model_blob(db, model_obj, target_file=LOCAL_CONFIG_FILE, model_file=None):
+    """Serialize a fitted model to the sheet. Returns True if it reached the cloud."""
+    if model_file:
+        try:
+            joblib.dump(model_obj, model_file)
+        except Exception:
+            pass
+    ws = _get_model_tab(db, target_file, create=True)
+    if ws is None:
+        return False
+    try:
+        raw = pickle.dumps(model_obj, protocol=4)
+        blob = base64.b64encode(gzip.compress(raw)).decode("ascii")
+        chunks = [blob[i:i + _MODEL_CHUNK] for i in range(0, len(blob), _MODEL_CHUNK)]
+        rows = [["Chunk", "Data"]] + [[str(i), c] for i, c in enumerate(chunks)]
+        ws.clear()
+        ws.update(rows)
+        return True
+    except Exception:
+        return False
+
+def load_model_blob(db, target_file=LOCAL_CONFIG_FILE):
+    """Rebuild a fitted model from the sheet. Returns None if unavailable."""
+    ws = _get_model_tab(db, target_file)
+    if ws is None:
+        return None
+    try:
+        records = ws.get_all_records()
+        if not records:
+            return None
+        ordered = sorted(records, key=lambda r: int(r.get("Chunk", 0)))
+        blob = "".join(str(r.get("Data", "")) for r in ordered)
+        if not blob:
+            return None
+        return pickle.loads(gzip.decompress(base64.b64decode(blob)))
+    except Exception:
+        return None
 
 db_conn = init_db_connection()
 
@@ -577,7 +677,9 @@ def main():
             render_chatbot=render_chatbot,
             SKLEARN_INSTALLED=SKLEARN_INSTALLED,
             XGB_INSTALLED=XGB_INSTALLED,
-            PIL_INSTALLED=PIL_INSTALLED
+            PIL_INSTALLED=PIL_INSTALLED,
+            save_model_blob=save_model_blob,
+            load_model_blob=load_model_blob
         )
         return
 
@@ -606,24 +708,34 @@ def main():
 
         if log_date_str != st.session_state.ro_last_selected_date:
             st.session_state.ro_last_selected_date = log_date_str
+
+            db_to_var_mapping = {
+                'ro_feed_flow': 'Feed Flow', 'ro_perm_flow': 'Permeate Flow',
+                'ro_feed_tds': 'Feed TDS', 'ro_perm_tds': 'Permeate TDS',
+                'ro_clarifier_tss': 'Clarifier TSS', 'ro_pdmf_tss': 'PDMF TSS',
+                'ro_sdmf_tss': 'SDMF TSS', 'ro_soft_hard': 'Softener Hardness',
+                'ro_hru_hard': 'HRU Hardness', 'ro_sdi': 'Cartridge SDI',
+                'ro_perm_ph': 'Permeate pH', 'ro_perm_cod': 'Permeate COD',
+                'ro_coag_ppm': 'Coagulant PPM', 'ro_floc_ppm': 'Flocculant PPM',
+                'ro_smbs_ppm': 'SMBS PPM', 'ro_remarks': 'Remarks'
+            }
+
+            # Clear every field first, then overlay only what this date's record actually holds.
+            # Without this, selecting a date with no record (or a blank/partial one) silently kept the
+            # previously viewed date's readings on screen as though they belonged to the new date.
+            for var_key in db_to_var_mapping:
+                st.session_state[var_key] = "" if var_key == 'ro_remarks' else 0.0
+
+            n_loaded, ro_found = 0, False
             if not st.session_state.ro_daily_logs.empty and 'Date' in st.session_state.ro_daily_logs.columns:
-                db_dates = pd.to_datetime(st.session_state.ro_daily_logs['Date'], errors='coerce').dt.strftime('%Y-%m-%d').values
+                _rd = pd.to_datetime(st.session_state.ro_daily_logs['Date'], format='%Y-%m-%d', errors='coerce')
+                _rd = _rd.fillna(pd.to_datetime(st.session_state.ro_daily_logs['Date'], errors='coerce', dayfirst=True))
+                db_dates = _rd.dt.strftime('%Y-%m-%d').values
                 if log_date_str in db_dates:
-                    row_idx = np.where(db_dates == log_date_str)[0][0]
+                    ro_found = True
+                    row_idx = np.where(db_dates == log_date_str)[0][-1]
                     row = st.session_state.ro_daily_logs.iloc[row_idx]
-                    
-                    db_to_var_mapping = {
-                        'ro_feed_flow': 'Feed Flow', 'ro_perm_flow': 'Permeate Flow',
-                        'ro_feed_tds': 'Feed TDS', 'ro_perm_tds': 'Permeate TDS',
-                        'ro_clarifier_tss': 'Clarifier TSS', 'ro_pdmf_tss': 'PDMF TSS',
-                        'ro_sdmf_tss': 'SDMF TSS', 'ro_soft_hard': 'Softener Hardness',
-                        'ro_hru_hard': 'HRU Hardness', 'ro_sdi': 'Cartridge SDI',
-                        'ro_perm_ph': 'Permeate pH', 'ro_perm_cod': 'Permeate COD',
-                        'ro_coag_ppm': 'Coagulant PPM', 'ro_floc_ppm': 'Flocculant PPM',
-                        'ro_smbs_ppm': 'SMBS PPM', 'ro_remarks': 'Remarks'
-                    }
-                    
-                    loaded_vars = False
+
                     for var_key, col_name in db_to_var_mapping.items():
                         if col_name in row.index and pd.notna(row[col_name]):
                             try:
@@ -631,9 +743,14 @@ def main():
                                 if val_str and val_str.lower() not in ['nan', 'none', 'null', 'na']:
                                     if var_key == 'ro_remarks': st.session_state[var_key] = val_str
                                     else: st.session_state[var_key] = float(val_str.replace(',', ''))
-                                    loaded_vars = True
-                            except: pass 
-                    if loaded_vars: st.sidebar.success(f"Loaded RO data for {log_date.strftime('%d-%m-%Y')}")
+                                    n_loaded += 1
+                            except: pass
+
+            st.session_state.ro_date_status = (
+                'full' if n_loaded >= 8 else 'partial' if n_loaded > 0
+                else 'blank' if ro_found else 'none'
+            )
+            st.session_state.ro_date_status_n = n_loaded
 
         # --- RO MRA CALCULATION ---
         ro_mra_data = {}
@@ -674,6 +791,20 @@ def main():
         ro_mra_data['Variance_DF'] = pd.DataFrame(ro_var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (m³/h)"])
 
         # --- THE FIX: MERGED RO TABS ---
+        # State plainly what the selected date holds. All fields were cleared before loading, so
+        # anything not supplied by this date's record reads 0 rather than carrying over.
+        _rs = st.session_state.get('ro_date_status', 'none')
+        _rn = st.session_state.get('ro_date_status_n', 0)
+        _rstr = log_date.strftime('%d-%m-%Y')
+        if _rs == 'full':
+            st.success(f"Showing logged data for {_rstr} ({_rn} fields).")
+        elif _rs == 'partial':
+            st.warning(f"Only partial data was logged for {_rstr} ({_rn} fields). Everything not logged that day is shown as 0, not carried over from another date.")
+        elif _rs == 'blank':
+            st.error(f"A record exists for {_rstr} but it contains no readings. All values are shown as 0 - nothing here is measured data.")
+        else:
+            st.error(f"No data was logged for {_rstr}. All values are shown as 0 - nothing here is measured data.")
+
         ro_tabs = st.tabs(["Inputs", "Performance", "Chemical Dosing", "Prediction", "Reports", "Model", "Bulk Upload"])
         
         with ro_tabs[0]:
