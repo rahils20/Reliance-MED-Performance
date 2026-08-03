@@ -1,0 +1,37 @@
+name: Build Desktop Executable
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Allows manual trigger from the Actions tab
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller streamlit-desktop-app
+
+    - name: Build Executable with PyInstaller
+      run: |
+        # Creates a standalone executable using streamlit-desktop-app
+        python -m streamlit_desktop_app build streamlit_app.py --name "RO_Projection_Engine"
+
+    - name: Upload Executable Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: RO_Projection_Engine_Windows
+        path: dist/*.exe
