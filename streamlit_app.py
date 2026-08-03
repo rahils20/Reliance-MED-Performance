@@ -57,12 +57,13 @@ RO_LOCAL_DB_FILE = "RO_Master_Database.csv"
 RO_LOCAL_CONFIG_FILE = "ro_mra_config.json"
 RO_AI_MODEL_FILE = "ro_mra_ai_model.pkl"
 
-MRA_COEF_2014 = {
-    "model_type": "OLS",
-    "Intercept": -161.5638, "Press_1st": 0.6136, "Temp_1st": 3.6392, 
-    "SW_Upper": 0.8111, "Brine_Temp_1st": -7.6638, "Brine_Flow": -0.2329, 
-    "LP_Steam": 8.2539, "Steam_Temp": 2.1924, "Anti_PPM": -7.0301
-}
+# The MED coefficient defaults now live in med_suite.py alongside the predictor specification they
+# belong to, so there is ONE definition of what the MED model expects. This module previously kept
+# its own copy, which had already drifted (it carried a "Steam_Temp" term the MED suite never used).
+# A stale copy here would be loaded straight into session state as the fallback config and silently
+# feed the wrong predictor set into the live prediction.
+from med_suite import MED_MRA_COEF_DEFAULT
+MRA_COEF_2014 = MED_MRA_COEF_DEFAULT
 
 RO_MRA_COEF_BASE = {
     "model_type": "OLS", "Intercept": 50.0, "Feed_Flow": 0.85, 
