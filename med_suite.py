@@ -777,13 +777,21 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
 # -------------------------------------------------------------------------------------
 # MONTHLY REPORT
 # -------------------------------------------------------------------------------------
-def generate_monthly_report(df_month, month_str, year_str):
+def generate_period_report(df_period, period_label, period_kind="Period"):
+    """Build the aggregate performance report for ANY span of days.
+
+    Previously this was hard-wired to a calendar month (it took a month name and a year and printed
+    "Monthly" throughout). Reliance asked to be able to pull a report for an arbitrary start/end date,
+    so the period is now passed in as a ready-made label and the wording adapts: 'Monthly' when a whole
+    calendar month was selected, otherwise 'Period'. Nothing about the underlying maths changed - it
+    always operated on whatever rows it was handed.
+    """
     doc = Document()
     for s in doc.sections:
         s.left_margin = Inches(0.8); s.right_margin = Inches(0.8)
         s.top_margin = Inches(0.7); s.bottom_margin = Inches(0.7)
 
-    d = df_month.copy()
+    d = df_period.copy()
     for c in ['Gross production', 'GOR', 'STEC', 'Overall HTC', '1st Effect HTC', 'Desal production',
               'LP Steam consumption', 'Recovery', 'Anti_PPM']:
         if c in d.columns:
@@ -802,8 +810,8 @@ def generate_monthly_report(df_month, month_str, year_str):
         period = f"{d['_d'].min().strftime('%d %B %Y')} to {d['_d'].max().strftime('%d %B %Y')}"
 
     # ---- Cover: the month is now unmistakable ----
-    doc.add_heading(f'MED-4 Monthly Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
-    _para(doc, f"{month_str} {year_str}", bold=True, size=20, align=WD_ALIGN_PARAGRAPH.CENTER)
+    doc.add_heading(f'MED-4 {period_kind} Performance Report', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+    _para(doc, period_label, bold=True, size=20, align=WD_ALIGN_PARAGRAPH.CENTER)
     _para(doc, 'Reliance Industries Limited  |  Multi-Effect Distillation Unit 4', size=11,
           align=WD_ALIGN_PARAGRAPH.CENTER)
     if period:
@@ -813,7 +821,7 @@ def generate_monthly_report(df_month, month_str, year_str):
           align=WD_ALIGN_PARAGRAPH.CENTER)
 
     if n_days == 0:
-        doc.add_paragraph("No operating days with recorded production were found for this month.")
+        doc.add_paragraph(f"No operating days with recorded production were found in {period_label}.")
         bio = io.BytesIO(); doc.save(bio); return bio.getvalue()
 
     avg = lambda c: run[c].mean()
@@ -829,12 +837,12 @@ def generate_monthly_report(df_month, month_str, year_str):
             if pd.notna(a) and pd.notna(b) and a > 0:
                 ch = (b - a) / a * 100
                 direction = "declined" if ch < -1 else "improved" if ch > 1 else "held steady"
-                trend_txt += (f"{label} {direction} across the month, averaging {a:.2f} in the opening days "
+                trend_txt += (f"{label} {direction} across the period, averaging {a:.2f} in the opening days "
                               f"against {b:.2f} in the closing days ({ch:+.1f}%). ")
 
     doc.add_heading('1. Executive Summary', level=1)
     doc.add_paragraph(
-        f"Over {n_days} operating days in {month_str} {year_str}, MED-4 averaged "
+        f"Over {n_days} operating days across {period_label}, MED-4 averaged "
         f"{_num(avg('Gross production'))} m³/h gross production at a Gain Output Ratio of "
         f"{_num(gor_m, 2)} against an SOR reference of {SOR_REF['GOR']:.2f}. Average specific thermal "
         f"energy consumption was {_num(avg('STEC'))} kWh per tonne. Heat transfer coefficients averaged "
@@ -852,7 +860,7 @@ def generate_monthly_report(df_month, month_str, year_str):
     doc.add_paragraph(interp_m['fouling'].get('verdict', ''))
 
     # ---- 2. Aggregate table ----
-    doc.add_heading('2. Monthly Aggregates', level=1)
+    doc.add_heading(f'2. {period_kind} Aggregates', level=1)
     rows = []
     for name, col, dp in (
         ('Gross production (m³/h)', 'Gross production', 1),
@@ -876,7 +884,7 @@ def generate_monthly_report(df_month, month_str, year_str):
     doc.add_page_break()
     doc.add_heading('3. Performance Trends', level=1)
     doc.add_paragraph(
-        "The charts below show how the unit behaved across the month. Dashed red lines mark the System "
+        "The charts below show how the unit behaved across the reporting period. Dashed red lines mark the System "
         "Operating Reference, which represents the unit's expected performance in clean condition."
     )
     x = run['_d'] if '_d' in run.columns else range(len(run))
@@ -942,6 +950,11 @@ def generate_monthly_report(df_month, month_str, year_str):
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
+
+
+def generate_monthly_report(df_month, month_str, year_str):
+    """Thin wrapper kept so the existing calendar-month button keeps its exact previous behaviour."""
+    return generate_period_report(df_month, f"{month_str} {year_str}", period_kind="Monthly")
 
 
 def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, save_database, save_config,
@@ -1354,7 +1367,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 "2 · HTC — 1st Effect",
                 "3 · HTC — Overall",
                 "4 · Feed & Brine",
-                "5 · Desal Product",
             ])
 
             # ---------------------------------------------------------------- 1 · OPERATIONAL
@@ -1506,21 +1518,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             st.number_input(f"{p}", key=f"in_{dd['var']}", on_change=sync_var,
                                             args=(dd['var'], f"in_{dd['var']}"))
 
-            # ---------------------------------------------------------------- 5 · DESAL PRODUCT
-            with entry[4]:
-                st.caption("Source sheet: **Desal Analysis**. Product water quality.")
-                if get_v('skip_wq'):
-                    st.info("Water analysis is currently skipped for today (toggle on the Feed & Brine tab).")
-                else:
-                    pc1, pc2 = st.columns(2)
-                    items = list(WATER_SPECS["Product"].items())
-                    half = (len(items) + 1) // 2
-                    for col, chunk in ((pc1, items[:half]), (pc2, items[half:])):
-                        with col:
-                            for p, dd in chunk:
-                                lo, hi = dd['lim']
-                                st.number_input(f"{p}", key=f"in_{dd['var']}", on_change=sync_var,
-                                                args=(dd['var'], f"in_{dd['var']}"), help=f"Specified limit: {lo} – {hi}")
+            # NOTE: The "5 · Desal Product" manual-entry section was removed at Reliance's request.
+            # Desal/product water quality is NO LONGER captured or shown on screen anywhere in the app,
+            # but it is still ingested through the "Desal (Product) Analysis" bulk-upload tab and stored
+            # against the Product_* columns, so the history stays queryable in the backend and the
+            # figures continue to appear in the generated Word reports.
 
         with tab0_subtabs[1]:
             st.markdown("### Process Flow Diagram - Live Tags")
@@ -1807,12 +1809,25 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
                     c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Feed'][param]['status']}</div>", unsafe_allow_html=True)
             with w_col2:
-                st.markdown("**Product Distillate Matrix**")
-                for param, d in WATER_SPECS["Product"].items():
-                    c_in, c_chk = st.columns([2, 2])
-                    with c_in: 
-                        st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
-                    c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Product'][param]['status']}</div>", unsafe_allow_html=True)
+                # Brine replaces the old Product Distillate matrix here. Brine is already captured on the
+                # Feed & Brine entry tab and via bulk upload, but until now had no display anywhere.
+                # The source sheet lists no specified limits for brine, so these are trended against the
+                # historical average rather than graded pass/fail.
+                st.markdown("**Brine Matrix**")
+                st.caption("No specified limits on the source sheet — tracked for trending against the reference average.")
+                for param, d in BRINE_SPECS.items():
+                    c_in, c_ref = st.columns([2, 2])
+                    with c_in:
+                        st.number_input(f"{param}", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                    _bval = get_v(d['var'])
+                    _bavg = d.get('avg', 0.0)
+                    if _bavg and _bval:
+                        _bdev = (_bval - _bavg) / _bavg * 100
+                        _bcol = "#D9822B" if abs(_bdev) > 15 else "#5A6B7B"
+                        _btxt = f"<span style='color:{_bcol}'>{_bdev:+.1f}% vs ref {_bavg:g}</span>"
+                    else:
+                        _btxt = "<span style='color:#9AA5B1'>no reading</span>"
+                    c_ref.markdown(f"<div style='margin-top:30px'>{_btxt}</div>", unsafe_allow_html=True)
 
     # --- TAB 4: CHEMICAL DOSING ---
     with tabs[4]:
@@ -2245,6 +2260,70 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         st.altair_chart(stec_chart + stec_chart.transform_regression('Date', 'STEC_Val').mark_line(color='black', strokeDash=[5, 5]), use_container_width=True)
                     else:
                         st.info("No STEC data available yet for the selected range. Rows saved before this update won't have a stored STEC value.")
+
+                    # ---- Report for the selected horizon -------------------------------------
+                    # Uses the SAME start/end filter driving the charts above, so the document
+                    # always covers exactly what is on screen. Generated straight into a download
+                    # button (no intermediate "compile" click) so it is one action, not two.
+                    st.divider()
+                    st.markdown("#### Performance Report for the Selected Period")
+
+                    if df_filtered.empty:
+                        st.info("No records fall inside the selected dates, so there is nothing to report on yet.")
+                    else:
+                        _n_run = int((pd.to_numeric(df_filtered.get('Gross production', 0), errors='coerce').fillna(0) > 0).sum())
+                        _span_days = (end_date - start_date).days + 1
+
+                        # If the selection happens to be exactly one whole calendar month, label it as a
+                        # monthly report so it reads naturally; otherwise use the explicit date span.
+                        _is_full_month = (
+                            start_date.day == 1
+                            and end_date.month == start_date.month
+                            and end_date.year == start_date.year
+                            and (end_date + datetime.timedelta(days=1)).month != end_date.month
+                        )
+                        if _is_full_month:
+                            _label = start_date.strftime('%B %Y')
+                            _kind = "Monthly"
+                            _fname = f"MED4_MonthlyReport_{start_date.strftime('%b_%Y')}.docx"
+                        else:
+                            _label = f"{start_date.strftime('%d %B %Y')} to {end_date.strftime('%d %B %Y')}"
+                            _kind = "Period"
+                            _fname = f"MED4_PeriodReport_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.docx"
+
+                        rc1, rc2, rc3 = st.columns(3)
+                        rc1.metric("Days in selection", _span_days)
+                        rc2.metric("Records in range", len(df_filtered))
+                        rc3.metric("Operating days", _n_run)
+
+                        st.caption(f"Report period: **{_label}**")
+
+                        if _n_run == 0:
+                            st.warning(
+                                "None of the records in this range show production above zero, so the report "
+                                "would have no operating days to average. Widen the dates or check that "
+                                "production data was logged for this period."
+                            )
+                        else:
+                            if _n_run < 6:
+                                st.info(
+                                    f"Only {_n_run} operating days in range. The report will still generate, but "
+                                    "the opening-versus-closing fouling trend needs at least 6 days and will be "
+                                    "left out."
+                                )
+                            try:
+                                _period_doc = generate_period_report(df_filtered, _label, period_kind=_kind)
+                                st.download_button(
+                                    "Download Performance Report (.docx)",
+                                    data=_period_doc,
+                                    file_name=_fname,
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    use_container_width=True,
+                                    type="primary",
+                                    key="lt_period_report_dl"
+                                )
+                            except Exception as _e:
+                                st.error(f"Report could not be generated: {_e}")
                 else:
                     st.info("No valid dates found in registry to draw charts.")
 
