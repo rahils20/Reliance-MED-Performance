@@ -69,18 +69,77 @@ def upsert_daily_logs(existing_df, new_df):
     return merged.reset_index()
 
 # MED GLOBAL CONSTANTS
-MRA_COEF_2014 = {
+# ---------------------------------------------------------------------------------------------
+# MRA PREDICTOR SPECIFICATION (revised for Reliance, replacing the original 2014 7-input model)
+#
+# One row per predictor, so the live prediction, the variance table, the training pipeline and the
+# bulk template all read from a SINGLE definition. Adding or removing a predictor is now a one-line
+# change here rather than eight parallel edits that could silently drift out of alignment.
+#
+#   coef_key      key used in the saved calibration config
+#   db_column     column name in the master registry / training CSV
+#   live_var      session-state variable feeding the live daily prediction
+#   label         human-readable name shown in the UI
+#   fallback_base provisional reference value, used ONLY until a calibration writes the real
+#                 post-cleaning mean for this plant (see BASE_ prefixed keys in the config)
+#
+# Anti_PPM (antiscalant residual) was REMOVED at Reliance's instruction - the residual measurement
+# was judged unreliable and was degrading the fit. Its contribution at the old baseline dosing
+# (-7.0301 x 4.82 ppm = -33.885) has been folded into the default intercept below, so a provisional
+# prediction made at typical dosing lands in the same place it used to rather than jumping ~34 m3/h.
+#
+# LLP steam flow/temperature, 1st effect flow, desuperheating water flow and FFC tube side pressure
+# were requested but are NOT included: the first three could not be mapped to an existing tag with
+# confidence, and the last two have no column or history in the registry. Columns for the latter two
+# are reserved in EXACT_DB_COLUMNS so capture can begin now and they can join the model later.
+MED_MRA_PARAMS = [
+    # coef_key,           db_column,                    live_var,      label,                       fallback_base
+    ("Press_1st",         "1st effect vapour pressure", "mra_press",   "1st effect vapour pressure",  231.76),
+    ("Temp_1st",          "1st Effect Vapour Temp",     "mra_t1",      "1st effect vapour temp",       68.47),
+    ("Brine_Temp_1st",    "1st effect brine temp",      "mra_bt1",     "1st effect brine temp",        65.46),
+    ("SW_Upper",          "Sea Water Upper",            "sw_upper",    "Sea water upper",             553.63),
+    ("SW_Feed_Total",     "Sea Water Feed",             "sw_total",    "Seawater feed to MED",       2062.00),
+    ("Brine_Flow",        "Brine Water Return",         "brine_ret",   "Brine water return",         1275.50),
+    ("LP_Steam",          "LP Steam consumption",       "steam",       "LP steam consumption",         71.75),
+    ("Cond_Flow",         "Condensate Return",          "cond_flow",   "Condensate flow",              71.75),
+    ("Brine_Disch_Temp",  "Brine Discharge Temp",       "brine_out_t", "Brine discharge temp",         40.00),
+    ("Brine_11th_Temp",   "11th Effect Brine Temp",     "brine_11",    "11th effect brine temp",       40.00),
+]
+
+MRA_COEF_KEYS   = [p[0] for p in MED_MRA_PARAMS]
+MRA_DB_COLUMNS  = [p[1] for p in MED_MRA_PARAMS]
+MRA_LIVE_VARS   = [p[2] for p in MED_MRA_PARAMS]
+MRA_LABELS      = [p[3] for p in MED_MRA_PARAMS]
+N_MRA_PREDICTORS = len(MED_MRA_PARAMS)
+
+# Provisional references. These are overwritten per-plant by the calibration run, which stores the
+# actual mean of each predictor over the clean post-cleaning window under "BASE_<coef_key>". That
+# is what the deviation column in the variance table is supposed to measure against - this plant
+# when clean, not a generic design figure.
+MRA_BASELINE = {p[0]: p[4] for p in MED_MRA_PARAMS}
+
+# Default coefficients. The six predictors carried over from the previous model keep their 2014
+# values; the four newly added inputs start at 0.0 because no fit exists for them yet. "calibrated"
+# stays 0 until a real calibration is committed, which drives the warning banner on the dashboard.
+# This is deliberately a PROVISIONAL state, not a pretend-fitted model.
+MED_MRA_COEF_DEFAULT = {
     "model_type": "OLS",
-    "Intercept": -161.5638, "Press_1st": 0.6136, "Temp_1st": 3.6392, 
-    "SW_Upper": 0.8111, "Brine_Temp_1st": -7.6638, "Brine_Flow": -0.2329, 
-    "LP_Steam": 8.2539, "Anti_PPM": -7.0301
+    "calibrated": 0,
+    "Intercept": -195.4489,
+    "Press_1st": 0.6136,
+    "Temp_1st": 3.6392,
+    "Brine_Temp_1st": -7.6638,
+    "SW_Upper": 0.8111,
+    "SW_Feed_Total": 0.0,
+    "Brine_Flow": -0.2329,
+    "LP_Steam": 8.2539,
+    "Cond_Flow": 0.0,
+    "Brine_Disch_Temp": 0.0,
+    "Brine_11th_Temp": 0.0,
 }
 
-MRA_BASELINE = {
-    "Press_1st": 231.76, "Temp_1st": 68.47, "SW_Upper": 553.63, 
-    "Brine_Temp_1st": 65.46, "Brine_Flow": 1275.50, "LP_Steam": 71.75, 
-    "Anti_PPM": 4.82
-}
+# Kept as an alias so nothing that still imports the old name breaks.
+MRA_COEF_2014 = MED_MRA_COEF_DEFAULT
 
 BASE_EFFECTS = pd.DataFrame({
     "Effect ID": [f"Effect {i}" for i in range(1, 12)],
@@ -148,6 +207,9 @@ EXACT_DB_COLUMNS = [
     # --- Operational sheet extras ---
     "Steam Inlet Temp", "Recovery", "Conversion", "Steam Economy", "Overall Delta T",
     "Anti_PPM_Hot", "Anti_PPM_Brine",
+    # --- Reserved for the two MRA tags Reliance requested that have no history yet. Capturing them
+    #     from now on means they can be added to the model once enough rows accumulate.
+    "Desuperheating Water Flow", "FFC Tube Side Pressure",
     # --- 1st Effect HTC sheet: its OWN inputs. "Feed flow" here is flow to the 1st effect (~514 m3/hr)
     #     and "Feed Temp" here is the AVG BRINE TEMP OF EFFECTS 4,5,6,7 (~49C) - both are physically
     #     different measurements from the identically-named columns on the Overall-HTC sheet.
@@ -1258,20 +1320,31 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     mra_data = {}
     coefs = st.session_state.mra_coef 
     model_type = coefs.get("model_type", "OLS")
-    
-    live_input_arr = [get_v('mra_press'), get_v('mra_t1'), get_v('sw_upper'), get_v('mra_bt1'), get_v('brine_ret'), get_v('steam'), get_v('chem_anti_ppm')]
-    
+
+    # Live predictor vector, built straight off MED_MRA_PARAMS so it can never fall out of step with
+    # the order the model was trained in - a mismatch here would silently feed the wrong number into
+    # the wrong coefficient and produce a confident, completely wrong prediction.
+    live_input_arr = [get_v(v) for v in MRA_LIVE_VARS]
+
+    # Per-plant reference values written by the last calibration, falling back to the provisional
+    # figures until a calibration has actually been committed.
+    live_baseline = {k: float(coefs.get(f"BASE_{k}", MRA_BASELINE[k])) for k in MRA_COEF_KEYS}
+
+    # Flags the dashboard uses to be upfront about how trustworthy the number is.
+    mra_data['calibrated'] = bool(coefs.get("calibrated", 0))
+    mra_data['n_predictors'] = N_MRA_PREDICTORS
+
+    def _ols_predict(coef_block):
+        """Dot product of the coefficient block with the live inputs. Any predictor absent from the
+        block contributes zero rather than raising, so a config saved by an older build still yields
+        a usable number instead of crashing the whole dashboard."""
+        total = float(coef_block.get("Intercept", 0.0))
+        for _k, _v in zip(MRA_COEF_KEYS, live_input_arr):
+            total += float(coef_block.get(_k, 0.0)) * float(_v)
+        return total
+
     if model_type == "OLS":
-        mra_data['Predicted'] = (
-            coefs["Intercept"] + 
-            (coefs["Press_1st"] * live_input_arr[0]) + 
-            (coefs["Temp_1st"] * live_input_arr[1]) + 
-            (coefs["SW_Upper"] * live_input_arr[2]) + 
-            (coefs["Brine_Temp_1st"] * live_input_arr[3]) + 
-            (coefs["Brine_Flow"] * live_input_arr[4]) + 
-            (coefs["LP_Steam"] * live_input_arr[5]) + 
-            (coefs.get("Anti_PPM", MRA_COEF_2014["Anti_PPM"]) * live_input_arr[6])
-        )
+        mra_data['Predicted'] = _ols_predict(coefs)
     else:
         # The trained RF/XGB model is a .pkl on the LOCAL disk, which Streamlit Cloud wipes on every
         # container restart. The calibration coefficients now persist in the Google Sheet, so
@@ -1296,42 +1369,33 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     active_model = None
         if active_model is not None:
             try:
-                live_df = pd.DataFrame([live_input_arr], columns=["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Anti_PPM"])
+                live_df = pd.DataFrame([live_input_arr], columns=MRA_COEF_KEYS)
                 mra_data['Predicted'] = float(active_model.predict(live_df)[0])
             except Exception:
+                # A stored model trained on the OLD 7-input set will reject this 10-column frame.
+                # That is the correct outcome - better to drop to the OLS block than to coerce the
+                # columns and predict from a model that was never fitted on these inputs.
                 active_model = None
         if active_model is None:
             # Fall back to the CALIBRATED OLS block that is always stored alongside the AI selection,
-            # and only drop to the factory baseline if even that is absent.
+            # and only drop to the provisional default if even that is absent.
             mra_data['model_missing'] = True
-            _b = {k: coefs.get(k, MRA_COEF_2014.get(k, 0.0)) for k in MRA_COEF_2014}
-            mra_data['Predicted'] = (
-                _b["Intercept"]
-                + (_b["Press_1st"] * live_input_arr[0])
-                + (_b["Temp_1st"] * live_input_arr[1])
-                + (_b["SW_Upper"] * live_input_arr[2])
-                + (_b["Brine_Temp_1st"] * live_input_arr[3])
-                + (_b["Brine_Flow"] * live_input_arr[4])
-                + (_b["LP_Steam"] * live_input_arr[5])
-                + (_b["Anti_PPM"] * live_input_arr[6])
-            )
-            
+            _b = {k: coefs.get(k, MED_MRA_COEF_DEFAULT.get(k, 0.0)) for k in MED_MRA_COEF_DEFAULT}
+            mra_data['Predicted'] = _ols_predict(_b)
+
     mra_data['Actual'] = ops_data['Gross Prod']
     mra_data['Residual'] = mra_data['Actual'] - mra_data['Predicted']
 
     var_data = []
-    param_keys = ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Anti_PPM"]
-    param_names = ["1st effect vapour pressure", "1st Effect Vapour Temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Antiscalant PPM"]
-    
-    for i in range(7):
-        dev = live_input_arr[i] - MRA_BASELINE[param_keys[i]]
-        weight = coefs.get(param_keys[i], 0.0) 
-        if model_type == "OLS": 
-            impact = dev * weight
-        else: 
-            impact = np.nan 
-        var_data.append([param_names[i], MRA_BASELINE[param_keys[i]], live_input_arr[i], dev, weight, impact])
-        
+    for _key, _label, _val in zip(MRA_COEF_KEYS, MRA_LABELS, live_input_arr):
+        base = live_baseline[_key]
+        dev = _val - base
+        weight = coefs.get(_key, 0.0)
+        # Feature importances are not coefficients, so a per-parameter m3/h impact is only
+        # meaningful in OLS mode.
+        impact = dev * weight if model_type == "OLS" else np.nan
+        var_data.append([_label, base, _val, dev, weight, impact])
+
     mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
     water_data = {'Feed': {}, 'Product': {}}
@@ -2383,7 +2447,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             c_reset, _ = st.columns([1, 1])
             with c_reset:
                 if st.button("Reset to Default Coefficients", use_container_width=True):
-                    st.session_state.mra_coef = MRA_COEF_2014.copy()
+                    st.session_state.mra_coef = MED_MRA_COEF_DEFAULT.copy()
                     _ok = save_config(db_conn, st.session_state.mra_coef, LOCAL_CONFIG_FILE)
                     if _ok:
                         st.success("Coefficients reset and saved to the cloud sheet.")
@@ -2400,8 +2464,19 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 "measure real fouling rather than drift from a generic design assumption."
             )
 
-            req_cols = ["Date", "Gross production", "1st effect vapour pressure", "1st Effect Vapour Temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Anti_PPM"]
-            N_PREDICTORS = 7  # the model fits 7 inputs; used for the rows-per-parameter check below
+            # Both the required columns and the predictor count come from MED_MRA_PARAMS, so the
+            # template, the validation and the fit can never disagree about what the model expects.
+            req_cols = ["Date", "Gross production"] + MRA_DB_COLUMNS
+            N_PREDICTORS = N_MRA_PREDICTORS
+
+            if not bool(st.session_state.mra_coef.get("calibrated", 0)):
+                st.warning(
+                    f"**This model has not been calibrated yet.** It is running on a provisional "
+                    f"coefficient set: the six inputs carried over from the previous model keep their "
+                    f"old values, and the four new inputs ({', '.join(MRA_LABELS[4:5] + MRA_LABELS[7:])}) "
+                    f"currently contribute nothing at all. Predictions are indicative only until you "
+                    f"calibrate below against real plant data."
+                )
 
             calib_src = st.radio(
                 "Calibration data source",
@@ -2421,9 +2496,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     )
                 with cc2:
                     window_days = st.selectbox(
-                        "Window", [30, 60, 90], index=1, key="calib_window",
-                        help="Days of post-cleaning data to calibrate on. Longer windows support more "
-                             "parameters and give a more stable fit."
+                        "Window", [30, 60, 90, 120, 180, 365], index=3, key="calib_window",
+                        help="Days of post-cleaning data to calibrate on. The model now fits "
+                             f"{N_MRA_PREDICTORS} inputs, so roughly {N_MRA_PREDICTORS * 10} usable "
+                             "rows are needed for a stable fit - noticeably more than the previous "
+                             "7-input model required."
                     )
 
                 hist = st.session_state.daily_logs
@@ -2503,12 +2580,35 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         st.caption(f"Fitting models on {len(df_train)} rows.")
                         
                         if len(df_train) > 0:
-                            X = df_train[["1st effect vapour pressure", "1st Effect Vapour Temp", "Sea Water Upper", "1st effect brine temp", "Brine Water Return", "LP Steam consumption", "Anti_PPM"]]
+                            X = df_train[MRA_DB_COLUMNS].copy()
+                            X.columns = MRA_COEF_KEYS   # fit under the coefficient keys the live path uses
                             Y = df_train["Gross production"]
                             
                             model_ols = LinearRegression(fit_intercept=True).fit(X, Y)
                             r2_ols = r2_score(Y, model_ols.predict(X))
-                            
+
+                            # Ridge is fitted on standardised inputs, then the coefficients are
+                            # converted back to raw units so they drop straight into the same live
+                            # prediction path as OLS. Ridge exists here specifically because several
+                            # of these predictors are near-duplicates of each other physically; the
+                            # penalty shares weight between correlated inputs instead of letting OLS
+                            # assign them huge offsetting coefficients.
+                            model_ridge = None
+                            r2_ridge = np.nan
+                            ridge_block = None
+                            try:
+                                from sklearn.linear_model import RidgeCV
+                                _mu, _sd = X.mean(), X.std(ddof=0).replace(0, 1.0)
+                                Xs = (X - _mu) / _sd
+                                model_ridge = RidgeCV(alphas=np.logspace(-3, 3, 25)).fit(Xs, Y)
+                                r2_ridge = r2_score(Y, model_ridge.predict(Xs))
+                                _raw = model_ridge.coef_ / _sd.values
+                                ridge_block = {"Intercept": float(model_ridge.intercept_ - np.sum(_raw * _mu.values))}
+                                for _i, _k in enumerate(MRA_COEF_KEYS):
+                                    ridge_block[_k] = float(_raw[_i])
+                            except Exception:
+                                model_ridge = None
+
                             model_rf = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, Y)
                             r2_rf = r2_score(Y, model_rf.predict(X))
                             
@@ -2518,47 +2618,112 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 r2_xgb = r2_score(Y, model_xgb.predict(X))
                             
                             st.markdown("### Algorithm Accuracy Evaluation Matrix")
-                            m1, m2, m3 = st.columns(3)
+                            m1, m2, m3, m4 = st.columns(4)
                             m1.metric("1. Linear OLS Fit (R² Coefficient)", f"{r2_ols * 100:.2f}%")
-                            m2.metric("2. Random Forest Tree Logic (R²)", f"{r2_rf * 100:.2f}%")
-                            if XGB_INSTALLED: 
-                                m3.metric("3. Extreme Gradient Boost XGB (R²)", f"{r2_xgb * 100:.2f}%")
-                            else: 
-                                m3.warning("Advanced Gradient boosting library dependency not activated.")
+                            m2.metric("2. Ridge (Penalised Linear) R²", f"{r2_ridge * 100:.2f}%" if pd.notna(r2_ridge) else "n/a")
+                            m3.metric("3. Random Forest Tree Logic (R²)", f"{r2_rf * 100:.2f}%")
+                            if XGB_INSTALLED:
+                                m4.metric("4. Extreme Gradient Boost XGB (R²)", f"{r2_xgb * 100:.2f}%")
+                            else:
+                                m4.warning("Advanced Gradient boosting library dependency not activated.")
+
+                            st.caption(
+                                "These R² figures are measured on the same rows the models were trained on, so "
+                                "they show fit, not predictive accuracy. Random Forest and XGBoost will almost "
+                                "always look near-perfect here; that is memorisation, not skill."
+                            )
+
+                            # ---- Collinearity diagnostic ------------------------------------------
+                            # Several of these predictors measure nearly the same physical thing:
+                            # 1st effect pressure and vapour temperature are a saturation pair, steam
+                            # flow and condensate flow are the same stream in and out, and the brine
+                            # temperatures track each other closely. OLS can still report a high R²
+                            # while assigning individual coefficients that are unstable and can flip
+                            # sign - which would make the daily "Parameter Deviation Impact" chart
+                            # actively misleading. VIF exposes that before the model is committed.
+                            st.markdown("#### Predictor Independence Check (VIF)")
+                            try:
+                                _c = np.corrcoef(X.values, rowvar=False)
+                                _vifs = np.diag(np.linalg.pinv(_c))
+                                vif_df = pd.DataFrame({"Parameter": MRA_LABELS, "VIF": np.round(_vifs, 1)})
+                                vif_df["Assessment"] = np.where(
+                                    vif_df["VIF"] >= 10, "Severe - coefficient unreliable",
+                                    np.where(vif_df["VIF"] >= 5, "Moderate - interpret with care", "Acceptable")
+                                )
+                                vif_df = vif_df.sort_values("VIF", ascending=False)
+                                st.dataframe(vif_df, use_container_width=True, hide_index=True)
+
+                                _n_severe = int((vif_df["VIF"] >= 10).sum())
+                                if _n_severe:
+                                    st.warning(
+                                        f"{_n_severe} of {N_MRA_PREDICTORS} predictors show severe collinearity "
+                                        "(VIF ≥ 10). The overall prediction stays usable, but the individual "
+                                        "coefficients for those inputs are not trustworthy on their own and the "
+                                        "per-parameter impact breakdown should not be read as cause and effect. "
+                                        "Ridge is the safer choice here than plain OLS."
+                                    )
+                                else:
+                                    st.success("No severe collinearity detected. OLS coefficients can be read individually.")
+                            except Exception as _ve:
+                                st.info(f"Collinearity check unavailable for this dataset ({_ve}).")
                             
                             st.markdown("#### Dynamic Feature Sensitivity Weights / Scaling Coefficients")
                             comp_dict = {
-                                "Parameter": ["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st", "Brine_Flow", "LP_Steam", "Anti_PPM"],
+                                "Parameter": MRA_LABELS,
                                 "OLS (Coefficients)": np.round(model_ols.coef_, 4),
                                 "Random Forest (Importance %)": np.round(model_rf.feature_importances_ * 100, 2)
                             }
+                            if ridge_block is not None:
+                                comp_dict["Ridge (Coefficients)"] = np.round([ridge_block[k] for k in MRA_COEF_KEYS], 4)
                             if XGB_INSTALLED: 
                                 comp_dict["XGBoost (Importance %)"] = np.round(model_xgb.feature_importances_ * 100, 2)
                             
                             st.dataframe(pd.DataFrame(comp_dict).style.format(precision=4), use_container_width=True, hide_index=True)
                             
                             st.markdown("### Commit & Lock Mathematical Subroutine Target")
-                            opts = ["OLS (Linear)", "Random Forest"]
-                            if XGB_INSTALLED: 
+                            opts = ["OLS (Linear)"]
+                            if ridge_block is not None:
+                                opts.append("Ridge (Penalised Linear)")
+                            opts.append("Random Forest")
+                            if XGB_INSTALLED:
                                 opts.append("XGBoost")
-                                
+
                             selected_model = st.radio("Configure Active Live Prediction Logic Block:", opts)
-                            
+
                             if st.button("Confirm & Activate Model", type="primary", use_container_width=True):
                                 # The OLS fit is always available here, so persist it EVERY time regardless
                                 # of which model is selected. That guarantees a real calibrated fallback
                                 # exists if an AI model is ever unavailable - previously selecting an AI
                                 # model wiped the OLS coefficients and left only the factory baseline.
-                                ols_block = {
-                                    "Intercept": float(model_ols.intercept_),
-                                    "Press_1st": float(model_ols.coef_[0]), "Temp_1st": float(model_ols.coef_[1]),
-                                    "SW_Upper": float(model_ols.coef_[2]), "Brine_Temp_1st": float(model_ols.coef_[3]),
-                                    "Brine_Flow": float(model_ols.coef_[4]), "LP_Steam": float(model_ols.coef_[5]),
-                                    "Anti_PPM": float(model_ols.coef_[6])
+                                ols_block = {"Intercept": float(model_ols.intercept_)}
+                                for _i, _k in enumerate(MRA_COEF_KEYS):
+                                    ols_block[_k] = float(model_ols.coef_[_i])
+
+                                # Store the calibration-period mean of every predictor. The deviation
+                                # column on the daily dashboard is meant to measure against THIS plant
+                                # in clean condition, so the reference has to come from the calibration
+                                # window rather than a generic design figure.
+                                base_block = {f"BASE_{_k}": float(X[_k].mean()) for _k in MRA_COEF_KEYS}
+
+                                meta = {
+                                    "calibrated": 1,
+                                    "n_predictors": N_MRA_PREDICTORS,
+                                    "calib_rows": int(len(df_train)),
+                                    "calib_r2": float(r2_ols),
                                 }
+
                                 _blob_ok = True
-                                if selected_model == "OLS (Linear)":
-                                    new_coefs = dict(ols_block); new_coefs["model_type"] = "OLS"
+                                if selected_model in ("OLS (Linear)", "Ridge (Penalised Linear)"):
+                                    # Ridge coefficients have already been converted back to raw units,
+                                    # so they slot into the identical live prediction path as OLS.
+                                    block = ols_block if selected_model == "OLS (Linear)" else ridge_block
+                                    new_coefs = dict(block)
+                                    new_coefs.update(base_block)
+                                    new_coefs.update(meta)
+                                    new_coefs["model_type"] = "OLS"
+                                    new_coefs["fit_method"] = selected_model
+                                    if selected_model == "Ridge (Penalised Linear)":
+                                        new_coefs["calib_r2"] = float(r2_ridge)
                                     st.session_state.mra_coef = new_coefs
                                     _ok = save_config(db_conn, new_coefs, LOCAL_CONFIG_FILE)
                                 else:
@@ -2567,17 +2732,19 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                     # coefficients, so they are stored under AI_-prefixed keys. Reusing the
                                     # plain names would silently corrupt the OLS block.
                                     ai_coefs = dict(ols_block)
+                                    ai_coefs.update(base_block)
+                                    ai_coefs.update(meta)
                                     ai_coefs["model_type"] = selected_model
-                                    for _i, _n in enumerate(["Press_1st", "Temp_1st", "SW_Upper", "Brine_Temp_1st",
-                                                             "Brine_Flow", "LP_Steam", "Anti_PPM"]):
-                                        ai_coefs[f"AI_{_n}"] = float(target_m.feature_importances_[_i])
+                                    ai_coefs["fit_method"] = selected_model
+                                    for _i, _k in enumerate(MRA_COEF_KEYS):
+                                        ai_coefs[f"AI_{_k}"] = float(target_m.feature_importances_[_i])
                                     st.session_state.mra_coef = ai_coefs
                                     _ok = save_config(db_conn, ai_coefs, LOCAL_CONFIG_FILE)
                                     # Persist the fitted model itself so it survives container restarts.
                                     _blob_ok = save_model_blob(db_conn, target_m, LOCAL_CONFIG_FILE, AI_MODEL_FILE)
 
                                 if _ok and _blob_ok:
-                                    st.success(f"{selected_model} activated. Calibration and model saved to the cloud sheet.")
+                                    st.success(f"{selected_model} activated on {N_MRA_PREDICTORS} predictors. Calibration and model saved to the cloud sheet.")
                                 elif _ok and not _blob_ok:
                                     st.warning(f"{selected_model} activated and calibration saved, but the model file could not be stored in the sheet - it may need retraining after a restart.")
                                 else:
