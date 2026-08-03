@@ -31,12 +31,12 @@ jobs:
     - name: Build Windows Executable
       if: runner.os == 'Windows'
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine_Win" --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
+        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine_Win" --add-data "streamlit_app.py;." --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
 
     - name: Build macOS Application
       if: runner.os == 'macOS'
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine_Mac" --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
+        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine_Mac" --add-data "streamlit_app.py:." --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
 
     - name: Upload Windows Artifact
       if: runner.os == 'Windows'
