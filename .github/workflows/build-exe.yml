@@ -1,4 +1,4 @@
-name: Build Desktop Executable
+name: Build Cross-Platform Desktop Executables
 
 on:
   push:
@@ -7,7 +7,10 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
 
     steps:
     - name: Checkout Code
@@ -23,14 +26,28 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pandas numpy python-docx altair gspread oauth2client scikit-learn xgboost joblib Pillow
-        pip install pyinstaller pywebview streamlit
+        pip install pyinstaller streamlit
 
-    - name: Build Executable with PyInstaller
+    - name: Build Windows Executable
+      if: runner.os == 'Windows'
       run: |
-        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine" --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
+        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine_Win" --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
 
-    - name: Upload Executable Artifact
+    - name: Build macOS Application
+      if: runner.os == 'macOS'
+      run: |
+        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine_Mac" --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
+
+    - name: Upload Windows Artifact
+      if: runner.os == 'Windows'
       uses: actions/upload-artifact@v4
       with:
         name: RO_Projection_Engine_Windows
-        path: dist/RO_Projection_Engine/*
+        path: dist/RO_Projection_Engine_Win/*
+
+    - name: Upload macOS Artifact
+      if: runner.os == 'macOS'
+      uses: actions/upload-artifact@v4
+      with:
+        name: RO_Projection_Engine_macOS
+        path: dist/RO_Projection_Engine_Mac.app/*
