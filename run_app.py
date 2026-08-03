@@ -1,6 +1,7 @@
 import sys
 import threading
-import webview
+import webbrowser
+import time
 import streamlit.web.cli as stcli
 
 def start_streamlit():
@@ -15,7 +16,12 @@ def start_streamlit():
     stcli.main()
 
 if __name__ == '__main__':
+    # Start Streamlit in a background thread
     t = threading.Thread(target=start_streamlit, daemon=True)
     t.start()
-    webview.create_window("Chembond Water Technologies - Utility Suite", "http://localhost:8501", width=1280, height=800)
-    webview.start()
+    
+    # Give Streamlit 2 seconds to initialize
+    time.sleep(2)
+    
+    # Opens Streamlit locally in a clean, dedicated app window using Microsoft Edge
+    webbrowser.open("http://localhost:8501")
