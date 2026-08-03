@@ -3,7 +3,7 @@ name: Build Desktop Executable
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # Allows manual trigger from the Actions tab
+  workflow_dispatch:
 
 jobs:
   build:
@@ -19,20 +19,38 @@ jobs:
         python-version: '3.11'
         cache: 'pip'
 
-    - name: Install Dependencies from File Comments & Packaging Stack
+    - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        # Installs all required packages directly
         pip install pandas numpy python-docx altair gspread oauth2client scikit-learn xgboost joblib Pillow
-        pip install pyinstaller streamlit-desktop-app
+        pip install pyinstaller pywebview streamlit
+
+    - name: Create Entry Point Script
+      run: |
+        Set-Content -Path "run_app.py" -Value @"
+import os
+import sys
+import webview
+import threading
+import streamlit.web.cli as stcli
+
+def start_streamlit():
+    sys.argv = ["streamlit", "run", "streamlit_app.py", "--global.developmentMode=false", "--server.headless=true", "--server.port=8501"]
+    stcli.main()
+
+if __name__ == '__main__':
+    t = threading.Thread(target=start_streamlit, daemon=True)
+    t.start()
+    webview.create_window("Chembond Water Technologies - Utility Suite", "http://localhost:8501", width=1280, height=800)
+    webview.start()
+"@
 
     - name: Build Executable with PyInstaller
       run: |
-        # Creates standalone EXE wrapping streamlit_app.py
-        python -m streamlit_desktop_app build streamlit_app.py --name "RO_Projection_Engine"
+        pyinstaller --noconfirm --onedir --windowed --name "RO_Projection_Engine" --copy-metadata streamlit --collect-all streamlit --collect-all altair run_app.py
 
     - name: Upload Executable Artifact
       uses: actions/upload-artifact@v4
       with:
         name: RO_Projection_Engine_Windows
-        path: dist/*.exe
+        path: dist/RO_Projection_Engine/*
