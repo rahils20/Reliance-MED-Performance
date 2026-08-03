@@ -16,18 +16,19 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-python-version: '3.11'
+        python-version: '3.11'
         cache: 'pip'
 
-    - name: Install Dependencies
+    - name: Install Dependencies from File Comments & Packaging Stack
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        # Installs all required packages directly
+        pip install pandas numpy python-docx altair gspread oauth2client scikit-learn xgboost joblib Pillow
         pip install pyinstaller streamlit-desktop-app
 
     - name: Build Executable with PyInstaller
       run: |
-        # Creates a standalone executable using streamlit-desktop-app
+        # Creates standalone EXE wrapping streamlit_app.py
         python -m streamlit_desktop_app build streamlit_app.py --name "RO_Projection_Engine"
 
     - name: Upload Executable Artifact
