@@ -29,6 +29,33 @@ def standardize_dates(date_series):
     # Final catch-all: force dayfirst=True instead of pandas' default month-first
     # inference, so any leftover ambiguous numeric date is still read as DD-MM-YYYY.
     parsed = parsed.fillna(pd.to_datetime(date_series, errors='coerce', dayfirst=True))
+
+    # ---- Numeric cells --------------------------------------------------------------------------
+    # A bare number in a date column used to come back as a 1970 epoch timestamp rather than NaT,
+    # because pandas reads plain integers as nanoseconds since 1970. A single stray cell (the Apr-Jul
+    # plant file has one holding "20") was therefore enough to inject a phantom 01-Jan-1970 row into
+    # the registry, which then widened every "period covered" line and date filter back to 1970.
+    #
+    # Numbers in a date column are almost always Excel serial dates, so those are converted properly
+    # from the 1899-12-30 origin. Anything outside a plausible serial range is rejected as NaT rather
+    # than being silently mapped to 1970.
+    EXCEL_SERIAL_MIN, EXCEL_SERIAL_MAX = 20000, 60000   # ~1954 to ~2064
+    raw = pd.Series(date_series).reset_index(drop=True)
+    parsed = pd.Series(parsed).reset_index(drop=True)
+    numeric = pd.to_numeric(raw, errors='coerce')
+    is_num = numeric.notna() & ~raw.astype(str).str.contains(r'[-/:a-zA-Z]', na=False)
+    if is_num.any():
+        serial_ok = is_num & numeric.between(EXCEL_SERIAL_MIN, EXCEL_SERIAL_MAX)
+        parsed.loc[is_num] = pd.NaT                     # discard the bogus epoch reading
+        if serial_ok.any():
+            parsed.loc[serial_ok] = pd.to_datetime(
+                numeric[serial_ok], unit='D', origin='1899-12-30', errors='coerce'
+            )
+
+    # Belt and braces: nothing before 1990 is a real MED-4 operating date.
+    parsed = parsed.where(parsed.isna() | (parsed.dt.year >= 1990), pd.NaT)
+
+    parsed.index = pd.Series(date_series).index
     return parsed
 
 def upsert_daily_logs(existing_df, new_df):
@@ -93,18 +120,30 @@ def upsert_daily_logs(existing_df, new_df):
 # confidence, and the last two have no column or history in the registry. Columns for the latter two
 # are reserved in EXACT_DB_COLUMNS so capture can begin now and they can join the model later.
 MED_MRA_PARAMS = [
-    # coef_key,           db_column,                    live_var,      label,                       fallback_base
-    ("Press_1st",         "1st effect vapour pressure", "mra_press",   "1st effect vapour pressure",  231.76),
-    ("Temp_1st",          "1st Effect Vapour Temp",     "mra_t1",      "1st effect vapour temp",       68.47),
-    ("Brine_Temp_1st",    "1st effect brine temp",      "mra_bt1",     "1st effect brine temp",        65.46),
-    ("SW_Upper",          "Sea Water Upper",            "sw_upper",    "Sea water upper",             553.63),
-    ("SW_Feed_Total",     "Sea Water Feed",             "sw_total",    "Seawater feed to MED",       2062.00),
-    ("Brine_Flow",        "Brine Water Return",         "brine_ret",   "Brine water return",         1275.50),
-    ("LP_Steam",          "LP Steam consumption",       "steam",       "LP steam consumption",         71.75),
-    ("Cond_Flow",         "Condensate Return",          "cond_flow",   "Condensate flow",              71.75),
-    ("Brine_Disch_Temp",  "Brine Discharge Temp",       "brine_out_t", "Brine discharge temp",         40.00),
-    ("Brine_11th_Temp",   "11th Effect Brine Temp",     "brine_11",    "11th effect brine temp",       40.00),
+    # coef_key,          db_column,                    live_var,         label,                          fallback_base
+    ("LP_Steam",         "LP Steam consumption",       "steam",          "LLP steam flow",                 69.91),
+    ("Steam_Inlet_Temp", "Steam Inlet Temp",           "steam_in_t",     "LLP steam temperature",         175.79),
+    ("SW_Feed_Total",    "Sea Water Feed",             "sw_total",       "Seawater feed to MED",         2029.77),
+    ("Press_1st",        "1st effect vapour pressure", "mra_press",      "1st effect pressure",           235.40),
+    ("Temp_1st",         "1st Effect Vapour Temp",     "mra_t1",         "1st effect vapour temperature",  69.73),
+    ("Brine_Temp_1st",   "1st effect brine temp",      "mra_bt1",        "1st effect brine temperature",   66.49),
+    ("Cond_Flow",        "Condensate Return",          "cond_flow",      "Condensate flow",               101.15),
+    ("Brine_11th_Temp",  "11th Effect Brine Temp",     "brine_11",       "Brine temperature",              42.27),
+    ("Feed_1st_Flow",    "HTC1_Feed_Flow",             "htc1_feed_flow", "1st effect flow",               523.35),
 ]
+
+# Requested but NOT included, because the plant records contain no data for them:
+#   - Desuperheating Water Flow : no column anywhere in the operational sheet.
+#   - FFC Tube Side Pressure    : the sheet carries FFC inlet/outlet TEMPERATURES only, no pressure.
+# Both are reserved in EXACT_DB_COLUMNS so capture can start now and they can join the model later.
+#
+# Note on "Brine Temperature": this maps to 11th Effect Brine Temp (Z711TIT411), NOT Brine Discharge
+# Temp (Z711TIT421). The discharge tag is present as a column but is EMPTY on every row of the
+# Apr-Jul plant file, so fitting against it would have trained a permanently dead input.
+#
+# Fallback baselines above are the Apr-Jul 2026 operating means from the plant file, replaced by the
+# real post-cleaning means as soon as a calibration is committed (stored as BASE_<coef_key>).
+MRA_UNAVAILABLE_PARAMS = ["Desuperheating Water Flow", "FFC Tube Side Pressure"]
 
 MRA_COEF_KEYS   = [p[0] for p in MED_MRA_PARAMS]
 MRA_DB_COLUMNS  = [p[1] for p in MED_MRA_PARAMS]
@@ -125,17 +164,13 @@ MRA_BASELINE = {p[0]: p[4] for p in MED_MRA_PARAMS}
 MED_MRA_COEF_DEFAULT = {
     "model_type": "OLS",
     "calibrated": 0,
-    "Intercept": -195.4489,
-    "Press_1st": 0.6136,
-    "Temp_1st": 3.6392,
-    "Brine_Temp_1st": -7.6638,
-    "SW_Upper": 0.8111,
-    "SW_Feed_Total": 0.0,
-    "Brine_Flow": -0.2329,
-    "LP_Steam": 8.2539,
-    "Cond_Flow": 0.0,
-    "Brine_Disch_Temp": 0.0,
-    "Brine_11th_Temp": 0.0,
+    # No fitted coefficients exist for this predictor set yet. Every weight starts at zero and the
+    # intercept holds the mean observed production, so an uncalibrated model returns a sensible
+    # constant instead of a confident-looking number derived from a different set of inputs.
+    "Intercept": 677.96,
+    "LP_Steam": 0.0, "Steam_Inlet_Temp": 0.0, "SW_Feed_Total": 0.0, "Press_1st": 0.0,
+    "Temp_1st": 0.0, "Brine_Temp_1st": 0.0, "Cond_Flow": 0.0, "Brine_11th_Temp": 0.0,
+    "Feed_1st_Flow": 0.0,
 }
 
 # Kept as an alias so nothing that still imports the old name breaks.
@@ -182,6 +217,35 @@ WATER_SPECS = {
 
 # Brine water analysis - right-hand block of the 'Feed & Brine Water Analysis' sheet.
 # The sheet lists no specified limits for brine, so these are tracked/trended, not pass-fail graded.
+# --- Display subset for product water -------------------------------------------------------------
+# Reliance asked for the Product analysis to stay in the tool but show pH and conductivity ONLY.
+# This governs the on-screen matrix only: WATER_SPECS["Product"] is unchanged, every Product_* column
+# is still written by the Desal Analysis bulk upload, and the Word reports still carry the full set.
+PRODUCT_DISPLAY_PARAMS = ["pH", "Conductivity (\u03bcs/cm)"]
+
+# --- Colour convention for measured vs derived values ---------------------------------------------
+# Reliance asked for entered and calculated figures to be visually distinct. One convention is used
+# everywhere: BLUE = a number a person typed or uploaded, GREEN = a number the tool worked out from
+# those inputs. The label text repeats the distinction so it survives greyscale printing.
+COLOR_INPUT = "#0072FF"     # measured / entered
+COLOR_CALC  = "#00875A"     # derived / calculated
+
+_LEGEND_HTML = (
+    f"<span style='color:{COLOR_INPUT};font-weight:600'>&#9632; Measured input</span>"
+    f"&nbsp;&nbsp;&nbsp;<span style='color:{COLOR_CALC};font-weight:600'>&#9632; Calculated value</span>"
+)
+
+
+def _fmt_metric(value, unit="", derived=False, dp=2):
+    """Render a value in the convention above. `derived=True` marks a calculated figure."""
+    col = COLOR_CALC if derived else COLOR_INPUT
+    try:
+        txt = f"{float(value):,.{dp}f}"
+    except (TypeError, ValueError):
+        txt = "-"
+    return f"<span style='color:{col};font-weight:600'>{txt}</span>{(' ' + unit) if unit else ''}"
+
+
 BRINE_SPECS = {
     "pH": {"var": "b_ph", "db_col": "Brine_pH", "avg": 8.4},
     "Turbidity (NTU)": {"var": "b_turb", "db_col": "Brine_Turbidity", "avg": 14.0},
@@ -194,6 +258,9 @@ BRINE_SPECS = {
     "Silica": {"var": "b_sio2", "db_col": "Brine_Silica", "avg": 0.0},
     "Chlorides": {"var": "b_cl", "db_col": "Brine_Chlorides", "avg": 31200.0},
 }
+# Resolved after WATER_SPECS so the limits/vars/db_cols stay in one place.
+PRODUCT_DISPLAY_SPECS = {k: v for k, v in WATER_SPECS["Product"].items() if k in PRODUCT_DISPLAY_PARAMS}
+
 
 EXACT_DB_COLUMNS = [
     "Date", "Sea Water Upper", "Sea Water Lower", "Sea Water Feed", "Sea Water Pressure",
@@ -202,6 +269,9 @@ EXACT_DB_COLUMNS = [
     "1st Effect Vapour Temp", "1st effect brine temp", "11th Effect Brine Temp", "Feed Temp to Cold Group",
     "Intermediate Effects Avg Brine Temp", "Delta T", "1st effect vapour pressure", "Brine Discharge Temp", "Brine Discharge Pressure",
     "Sea Water cond I/L temp", "Sea Water Condenser O/L Temp", 
+    # NOTE: "STEC" and "Overall HTC" are retained as columns ONLY so historical rows already written
+    # to the cloud sheet remain readable. Both were removed from the tool at Reliance's request and
+    # are no longer calculated, populated, displayed or reported.
     "CW supply", "CW Return", "CW Flow", "Gross production", "GOR", "STEC", "Overall HTC", "1st Effect HTC", 
     "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Foam_PPM", "Area_1st", "Area_Overall", "Remarks",
     # --- Operational sheet extras ---
@@ -262,13 +332,7 @@ HTC_1ST_BULK_HEADERS = [
     'Feed Temp', 'Brine Temp', '1st effect vapor temp', 'Condensate temperature', 'Heat Transfer Area'
 ]
 
-# --- Overall HTC bulk template: mirrors the 'Overall-HTC' sheet's INPUT columns (A-K) exactly.
-# NOTE: 'Feed flow', 'Feed Temp' and the brine column here are DIFFERENT physical measurements from the
-# same-named columns on the 1st-effect sheet - which is exactly why these need to be two separate uploads.
-HTC_OVERALL_BULK_HEADERS = [
-    'Date', 'Feed flow', 'Product flow', 'Condensate Flow', 'Steam consumption rate',
-    'Feed Temp', 'Brine discharge Temp', '1st effect vapor temp', 'Condensate temperature', 'Heat Transfer Area'
-]
+# (Overall HTC bulk template removed - the Overall HTC calculation is no longer part of the tool.)
 
 # --- Feed & Brine Water Analysis template: mirrors that sheet's columns A-X.
 FEEDBRINE_BULK_HEADERS = [
@@ -306,7 +370,7 @@ AF_DENSITY = 0.02
 
 # --- Operational Data bulk template: throughput/production/chemicals only. Matches your existing
 # 'Operational data' sheet / DCS export format exactly, so your existing file works unmodified.
-# Computes GOR, STEC and MRA Residual - never touches any HTC field.
+# Computes GOR and MRA Residual - never touches any HTC field.
 OPERATIONAL_BULK_HEADERS = [
     'Parameter', 'Sea water Upper', 'Sea water Lower', 'Sea water feed', 'Brine return',
     ' Desal Production', 'LP Steam Consumption', 'Condensate return', 'Condensate Temp',
@@ -401,7 +465,7 @@ def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
         "Sea Water cond I/L temp": ops['SW In_overall'], "Sea Water Condenser O/L Temp": extra_tags['sw_out_t'],
         "CW supply": extra_tags['cw_supply'], "CW Return": extra_tags['cw_return'], "CW Flow": extra_tags['cw_flow'],
         "Gross production": ops['Gross Prod'], "Recovery (%)": round(ops['Recovery'], 2),
-        "GOR": round(ops['GOR'], 2), "STEC": round(ops['STEC'], 2), "Overall HTC": round(ops['htc_overall'], 2),
+        "GOR": round(ops['GOR'], 2),
         "1st Effect HTC": round(ops['htc_1st'], 2), "Residual": round(mra['Residual'], 2),
         "Antiscalant Dosing (PPM)": chem_data['anti_ppm'], "Antiscalant (kg)": chem_data['anti_cons'],
         "Antifoam Dosing (PPM)": chem_data['foam_ppm'], "Antifoam (kg)": chem_data['foam_cons'],
@@ -426,6 +490,42 @@ def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
 REPORT_VERSION = "v2.0 (analysis + charts)"
 
 # SOR reference values used for variance analysis and interpretation.
+# --- Design (nameplate) references ---------------------------------------------------------------
+# Taken from the "Design" row of the plant's own operational sheet, so the figures shown in the tool
+# are the same ones Reliance already work to. Where the sheet gives a range (steam 92-94.5 TPH) the
+# upper value is used; where it gives no design figure the entry is None and the UI shows "-" rather
+# than inventing one.
+DESIGN_REF = {
+    'Gross_Prod': 1000.0,       # Gross desal water production, m3/hr
+    'Desal_Prod': 1000.0,       # Desal production, m3/hr
+    'GOR': 10.5,
+    'Steam_TPH': 94.5,
+    'SW_Feed': 2400.0,          # Sea water feed, m3/hr
+    'Brine_Return': 1400.0,
+    'Cond_Return': 139.5,
+    'Vapour_Temp_1st': 74.0,
+    'Brine_Temp_1st': 73.0,
+    'Press_1st': 248.0,         # mmHg
+    'Recovery': 40.0,
+    'Steam_Inlet_Temp': None,   # no design figure on the sheet
+    'Brine_11th_Temp': None,
+    'Feed_1st_Flow': 580.0,     # 1st effect-HTC design row, feed flow to effect 1
+}
+
+# Design value per MRA predictor, keyed to match MED_MRA_PARAMS. None where the plant sheet gives no
+# design figure - the variance table renders those as "-" instead of a fabricated number.
+MRA_DESIGN = {
+    'LP_Steam': DESIGN_REF['Steam_TPH'],
+    'Steam_Inlet_Temp': DESIGN_REF['Steam_Inlet_Temp'],
+    'SW_Feed_Total': DESIGN_REF['SW_Feed'],
+    'Press_1st': DESIGN_REF['Press_1st'],
+    'Temp_1st': DESIGN_REF['Vapour_Temp_1st'],
+    'Brine_Temp_1st': DESIGN_REF['Brine_Temp_1st'],
+    'Cond_Flow': DESIGN_REF['Cond_Return'],
+    'Brine_11th_Temp': DESIGN_REF['Brine_11th_Temp'],
+    'Feed_1st_Flow': DESIGN_REF['Feed_1st_Flow'],
+}
+
 SOR_REF = {
     'GOR': 11.4,
     'Steam_TPH': 76.94,
@@ -532,7 +632,6 @@ def build_interpretation(ops, mra, chem_ppm=None):
     gor = float(ops.get('GOR') or 0)
     steam = float(ops.get('Steam') or 0)
     gross = float(ops.get('Gross Prod') or 0)
-    htc_o = float(ops.get('htc_overall') or 0)
     htc_1 = float(ops.get('htc_1st') or 0)
     recovery = float(ops.get('Recovery') or 0)
 
@@ -582,30 +681,31 @@ def build_interpretation(ops, mra, chem_ppm=None):
         )
 
     # ---- Fouling assessment: HTC drop against the SOR-clean baseline ----
-    d_o = _safe_pct(htc_o, HTC_OVERALL_U_SOR) if htc_o > 0 else None
+    # Overall HTC was removed from the tool at Reliance's request. Fouling is now assessed on the
+    # 1st effect coefficient alone, which is the surface the chemical programme actually protects.
     d_1 = _safe_pct(htc_1, HTC_1ST_U_SOR) if htc_1 > 0 else None
-    out['fouling'] = {'overall_dev': d_o, 'first_dev': d_1, 'htc_overall': htc_o, 'htc_1st': htc_1}
+    out['fouling'] = {'first_dev': d_1, 'htc_1st': htc_1}
 
-    worst = min([x for x in (d_o, d_1) if x is not None], default=None)
+    worst = d_1
     if worst is None:
-        out['fouling']['verdict'] = "Heat transfer coefficients were not calculable for this day, so no fouling assessment can be made."
+        out['fouling']['verdict'] = "The 1st effect heat transfer coefficient was not calculable for this day, so no fouling assessment can be made."
         out['fouling']['tier'] = 'unknown'
     elif worst >= -5:
         out['fouling']['verdict'] = (
-            "Heat transfer coefficients are within 5% of the post-clean SOR baseline. The tube surfaces "
+            "The 1st effect heat transfer coefficient is within 5% of the post-clean SOR baseline. The tube surfaces "
             "are effectively clean and no chemical or mechanical intervention is indicated."
         )
         out['fouling']['tier'] = 'clean'
     elif worst >= -15:
         out['fouling']['verdict'] = (
-            "Heat transfer coefficients have declined between 5% and 15% from the post-clean SOR baseline. "
+            "The 1st effect heat transfer coefficient has declined between 5% and 15% from the post-clean SOR baseline. "
             "This is the signature of early-stage scale formation. It is recoverable at this stage through "
             "dosing control and does not yet warrant taking the unit offline."
         )
         out['fouling']['tier'] = 'early'
     else:
         out['fouling']['verdict'] = (
-            "Heat transfer coefficients have declined more than 15% from the post-clean SOR baseline. This "
+            "The 1st effect heat transfer coefficient has declined more than 15% from the post-clean SOR baseline. This "
             "represents established scale on the heat transfer surfaces, which will continue to depress "
             "output and raise specific energy consumption until it is removed."
         )
@@ -714,9 +814,9 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
     doc.add_paragraph(
         f"On {date.strftime('%d %B %Y')} the MED-4 unit produced {_num(ops.get('Gross Prod'))} m³/h gross, "
         f"at a Gain Output Ratio of {_num(ops.get('GOR'), 2)} and a specific thermal energy consumption of "
-        f"{_num(ops.get('STEC'))} kWh per tonne of distillate. Recovery from seawater feed was "
+        f"Recovery from seawater feed was "
         f"{_num(ops.get('Recovery'))}%. Overall plant heat transfer coefficient was "
-        f"{_num(ops.get('htc_overall'), 2)} W/m²K and first effect heat transfer coefficient "
+        f"the first effect heat transfer coefficient "
         f"{_num(ops.get('htc_1st'))} W/m²K."
     )
     doc.add_paragraph(interp['fouling'].get('verdict', ''))
@@ -728,9 +828,6 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
                ['Gross production (m³/h)', _num(ops.get('Gross Prod')), '-', '-'],
                ['Gain Output Ratio', _num(ops.get('GOR'), 2), f"{SOR_REF['GOR']:.2f}",
                 f"{_safe_pct(ops.get('GOR'), SOR_REF['GOR']):+.1f}%" if _safe_pct(ops.get('GOR'), SOR_REF['GOR']) is not None else '-'],
-               ['STEC (kWh/tonne)', _num(ops.get('STEC')), '-', '-'],
-               ['Overall HTC (W/m²K)', _num(ops.get('htc_overall'), 2), f"{HTC_OVERALL_U_SOR:.2f}",
-                f"{interp['fouling']['overall_dev']:+.1f}%" if interp['fouling'].get('overall_dev') is not None else '-'],
                ['1st Effect HTC (W/m²K)', _num(ops.get('htc_1st')), f"{HTC_1ST_U_SOR:.1f}",
                 f"{interp['fouling']['first_dev']:+.1f}%" if interp['fouling'].get('first_dev') is not None else '-'],
                ['Recovery (%)', _num(ops.get('Recovery')), '-', '-'],
@@ -753,8 +850,6 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
            [
                ['First effect', _num(ops.get('htc_1st')), f"{HTC_1ST_U_SOR:.1f}",
                 f"{interp['fouling']['first_dev']:+.1f}%" if interp['fouling'].get('first_dev') is not None else '-'],
-               ['Overall plant', _num(ops.get('htc_overall'), 2), f"{HTC_OVERALL_U_SOR:.2f}",
-                f"{interp['fouling']['overall_dev']:+.1f}%" if interp['fouling'].get('overall_dev') is not None else '-'],
            ],
            widths=[1.8, 1.7, 1.5, 1.4])
     doc.add_paragraph(
@@ -839,6 +934,43 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
 # -------------------------------------------------------------------------------------
 # MONTHLY REPORT
 # -------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------
+# CLEANING (CIP) EVENT REGISTRY
+# ---------------------------------------------------------------------------------------------
+# A "full cycle" runs from one cleaning to the next, so the tool needs to know when cleanings
+# happened. There was no such record before this - the cleaning date only ever existed as a
+# throwaway input on the calibration tab. Dates are stored in the same config blob the MRA
+# coefficients use, so they persist in the cloud sheet and survive container restarts.
+CLEANING_KEY = "cleaning_dates"
+
+
+def get_cleaning_dates(coef_cfg):
+    """Return stored cleaning dates as a sorted list of date objects, newest last."""
+    raw = (coef_cfg or {}).get(CLEANING_KEY) or []
+    if isinstance(raw, str):
+        raw = [x.strip() for x in raw.split(",") if x.strip()]
+    out = []
+    for item in raw:
+        try:
+            out.append(pd.to_datetime(item).date())
+        except Exception:
+            continue
+    return sorted(set(out))
+
+
+def resolve_cycle_window(cleaning_dates, cycle_start, df_dates):
+    """Given a chosen cycle start, return (start, end) for that cleaning cycle.
+
+    The cycle ends the day before the NEXT cleaning, or at the last available record if this is
+    the current (still-running) cycle. Returns the end as a date object.
+    """
+    later = [d for d in cleaning_dates if d > cycle_start]
+    last_record = max(df_dates) if len(df_dates) else cycle_start
+    if later:
+        return cycle_start, min(later[0] - datetime.timedelta(days=1), last_record)
+    return cycle_start, last_record
+
+
 def generate_period_report(df_period, period_label, period_kind="Period"):
     """Build the aggregate performance report for ANY span of days.
 
@@ -854,7 +986,7 @@ def generate_period_report(df_period, period_label, period_kind="Period"):
         s.top_margin = Inches(0.7); s.bottom_margin = Inches(0.7)
 
     d = df_period.copy()
-    for c in ['Gross production', 'GOR', 'STEC', 'Overall HTC', '1st Effect HTC', 'Desal production',
+    for c in ['Gross production', 'GOR', '1st Effect HTC', 'Desal production',
               'LP Steam consumption', 'Recovery', 'Anti_PPM']:
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors='coerce')
@@ -887,14 +1019,13 @@ def generate_period_report(df_period, period_label, period_kind="Period"):
         bio = io.BytesIO(); doc.save(bio); return bio.getvalue()
 
     avg = lambda c: run[c].mean()
-    gor_m, htc_o_m, htc_1_m = avg('GOR'), avg('Overall HTC'), avg('1st Effect HTC')
+    gor_m, htc_1_m = avg('GOR'), avg('1st Effect HTC')
 
     # Trend across the month: compare first third against last third.
     trend_txt = ""
     if n_days >= 6:
         k = max(2, n_days // 3)
-        for label, col, ref in (('Overall HTC', 'Overall HTC', HTC_OVERALL_U_SOR),
-                                ('First effect HTC', '1st Effect HTC', HTC_1ST_U_SOR)):
+        for label, col, ref in (('First effect HTC', '1st Effect HTC', HTC_1ST_U_SOR),):
             a, b = run[col].head(k).mean(), run[col].tail(k).mean()
             if pd.notna(a) and pd.notna(b) and a > 0:
                 ch = (b - a) / a * 100
@@ -906,16 +1037,16 @@ def generate_period_report(df_period, period_label, period_kind="Period"):
     doc.add_paragraph(
         f"Over {n_days} operating days across {period_label}, MED-4 averaged "
         f"{_num(avg('Gross production'))} m³/h gross production at a Gain Output Ratio of "
-        f"{_num(gor_m, 2)} against an SOR reference of {SOR_REF['GOR']:.2f}. Average specific thermal "
-        f"energy consumption was {_num(avg('STEC'))} kWh per tonne. Heat transfer coefficients averaged "
-        f"{_num(htc_o_m, 2)} W/m²K overall and {_num(htc_1_m)} W/m²K on the first effect."
+        f"{_num(gor_m, 2)} against an SOR reference of {SOR_REF['GOR']:.2f}. The first effect heat "
+        f"transfer coefficient averaged {_num(htc_1_m)} W/m²K against an SOR baseline of "
+        f"{HTC_1ST_U_SOR:.0f} W/m²K."
     )
     if trend_txt:
         doc.add_paragraph(trend_txt.strip())
 
     interp_m = build_interpretation(
         {'GOR': gor_m, 'Steam': avg('LP Steam consumption'), 'Gross Prod': avg('Gross production'),
-         'htc_overall': htc_o_m, 'htc_1st': htc_1_m, 'Recovery': avg('Recovery'), 'STEC': avg('STEC')},
+         'htc_1st': htc_1_m, 'Recovery': avg('Recovery')},
         {'Predicted': 0, 'Residual': 0, 'Actual': 0},
         avg('Anti_PPM') if pd.notna(avg('Anti_PPM')) else None
     )
@@ -929,8 +1060,6 @@ def generate_period_report(df_period, period_label, period_kind="Period"):
         ('Desal production (m³/h)', 'Desal production', 1),
         ('LP steam consumption (TPH)', 'LP Steam consumption', 1),
         ('Gain Output Ratio', 'GOR', 2),
-        ('STEC (kWh/tonne)', 'STEC', 1),
-        ('Overall HTC (W/m²K)', 'Overall HTC', 2),
         ('1st Effect HTC (W/m²K)', '1st Effect HTC', 1),
         ('Recovery (%)', 'Recovery', 1),
     ):
@@ -962,12 +1091,6 @@ def generate_period_report(df_period, period_label, period_kind="Period"):
         ax.set_ylabel('GOR'); ax.set_title('Gain Output Ratio vs SOR', fontsize=10)
         ax.grid(alpha=.3); ax.legend(fontsize=7); ax.tick_params(labelsize=7)
         plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
-    def _htco(ax, plt):
-        ax.plot(x, run['Overall HTC'], marker='o', ms=3, lw=1.4, color='#0072FF')
-        ax.axhline(HTC_OVERALL_U_SOR, ls='--', color='red', lw=1, label=f"SOR {HTC_OVERALL_U_SOR:.2f}")
-        ax.set_ylabel('W/m²K'); ax.set_title('Overall HTC vs SOR (fouling indicator)', fontsize=10)
-        ax.grid(alpha=.3); ax.legend(fontsize=7); ax.tick_params(labelsize=7)
-        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
     def _htc1(ax, plt):
         ax.plot(x, run['1st Effect HTC'], marker='o', ms=3, lw=1.4, color='#D9822B')
         ax.axhline(HTC_1ST_U_SOR, ls='--', color='red', lw=1, label=f"SOR {HTC_1ST_U_SOR:.0f}")
@@ -978,7 +1101,6 @@ def generate_period_report(df_period, period_label, period_kind="Period"):
     any_chart = False
     for fn, caption in ((_prod, "Daily gross production."),
                         (_gor, "Thermal efficiency against the SOR reference."),
-                        (_htco, "Overall heat transfer coefficient. A sustained downward slope indicates scale."),
                         (_htc1, "First effect heat transfer coefficient, the earliest indicator of scaling.")):
         buf = _chart(fn)
         if buf:
@@ -1240,7 +1362,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     }
     
     ops_data['GOR'] = ops_data['Gross Prod'] / ops_data['Steam'] if ops_data['Steam'] > 0 else 0
-    ops_data['STEC'] = (((ops_data['Steam'] * 1000) / 3600) * LATENT_HEAT_STEAM_KJ_KG) / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
     ops_data['Recovery'] = (ops_data['Gross Prod'] / ops_data['SW Total']) * 100 if ops_data['SW Total'] > 0 else 0
     ops_data['Conversion'] = ops_data['Desal'] / ops_data['SW Total'] if ops_data['SW Total'] > 0 else 0
     ops_data['Economy'] = ops_data['Steam'] / ops_data['Desal'] if ops_data['Desal'] > 0 else 0
@@ -1258,7 +1379,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     #   W  (kJ/hr) = ms x latent heat
     #   Q  (W)     = W x 1000 / 3600
     ops_data['q_1st'] = (ops_data['Steam'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
-    ops_data['q_overall'] = ops_data['q_1st']
 
     def _lmtd_scalar(dt1, dt2):
         """LMTD = (dT1 - dT2) / ln(dT1/dT2), col N of both sheets. Returns 0 when either driving
@@ -1295,24 +1415,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         (1 / ops_data['htc_1st']) - (1 / HTC_1ST_U_SOR) if ops_data['htc_1st'] > 0 else 0
     )
 
-    # ---- OVERALL HTC  (sheet: 'Overall-HTC') ----------------------------------------------------
-    # dT1 = 1st effect vapour temp - brine DISCHARGE temp   (col L)
-    # dT2 = condensate temp - FEED TEMP TO COLD GROUP       (col M)
-    #       NB: this sheet ALSO labels its column "Feed Temp", but here it means the cold-group feed
-    #       temp (~40 C) - a different measurement from the 1st-effect sheet's "Feed Temp" (~49 C).
-    ops_data['dt1_overall'] = get_v('mra_t1') - get_v('brine_out_t')
-    _cond_ov = get_v('htco_cond_temp') or get_v('cond_temp')
-    ops_data['dt2_overall'] = _cond_ov - get_v('feed_cold')
-    ops_data['lmtd_overall'] = _lmtd_scalar(ops_data['dt1_overall'], ops_data['dt2_overall'])
-    _ao = get_v('area_overall')
-    ops_data['htc_overall'] = (
-        ops_data['q_overall'] / (_ao * ops_data['lmtd_overall'])
-        if ops_data['lmtd_overall'] > 0 and _ao > 0 else 0
-    )
-    ops_data['fouling_overall'] = 1 / ops_data['htc_overall'] if ops_data['htc_overall'] > 0 else 0
-    ops_data['rf_overall'] = (
-        (1 / ops_data['htc_overall']) - (1 / HTC_OVERALL_U_SOR) if ops_data['htc_overall'] > 0 else 0
-    )
+    # ---- OVERALL HTC: REMOVED ------------------------------------------------------------------
+    # Reliance asked for the Overall HTC calculation to be taken out of the tool entirely, so it is
+    # no longer computed, stored, displayed or reported. Fouling is assessed on the 1st effect
+    # coefficient alone. The Overall-HTC input columns remain in EXACT_DB_COLUMNS so that historical
+    # rows already written to the sheet stay readable and nothing is silently dropped from the
+    # registry - they are simply no longer populated or surfaced.
 
     # Simple (non-LMTD) cascade delta, shown for reference only.
     ops_data['dt_overall_simple'] = get_v('mra_t1') - get_v('brine_11')
@@ -1389,14 +1497,15 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     var_data = []
     for _key, _label, _val in zip(MRA_COEF_KEYS, MRA_LABELS, live_input_arr):
         base = live_baseline[_key]
+        design = MRA_DESIGN.get(_key)
         dev = _val - base
         weight = coefs.get(_key, 0.0)
         # Feature importances are not coefficients, so a per-parameter m3/h impact is only
         # meaningful in OLS mode.
         impact = dev * weight if model_type == "OLS" else np.nan
-        var_data.append([_label, base, _val, dev, weight, impact])
+        var_data.append([_label, design, base, _val, dev, weight, impact])
 
-    mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
+    mra_data['Variance_DF'] = pd.DataFrame(var_data, columns=["Parameter", "Design", "Baseline", "Live Input", "Deviation", "Regression Weight", "Impact (TPH)"])
 
     water_data = {'Feed': {}, 'Product': {}}
     for cat in ['Feed', 'Product']:
@@ -1464,7 +1573,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.number_input("Condensate Temp", key="in_cond_temp", on_change=sync_var, args=('cond_temp', 'in_cond_temp'),
                                     help="Tag Z711TIT415. Cold-side source for BOTH HTC calculations.")
                     st.number_input("Brine Discharge Temp", key="in_brine_out", on_change=sync_var, args=('brine_out_t', 'in_brine_out'),
-                                    help="Hot-side sink for the Overall HTC.")
+                                    help="Brine discharge temperature (recorded for reference).")
                 with t3:
                     st.number_input("11th Effect Brine Temp", key="in_brine_11", on_change=sync_var, args=('brine_11', 'in_brine_11'))
                     st.number_input("Steam Inlet Temp", key="in_steam_in_t", on_change=sync_var, args=('steam_in_t', 'in_steam_in_t'))
@@ -1551,18 +1660,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                              "feed temperature into the cold group (~40 °C), a DIFFERENT measurement from the "
                              "'Feed Temp' on the 1st-effect sheet. It is the cold-side reference (ΔT2) here."
                     )
-                with hob:
-                    st.number_input("Overall Heat Transfer Area (m²)", key="in_area_overall",
-                                    on_change=sync_var, args=('area_overall', 'in_area_overall'),
-                                    help="11 effects × 12,950 m² × 1.15 correction = 163,818 m²")
-
-                st.divider()
-                o1, o2, o3, o4 = st.columns(4)
-                o1.metric("ΔT1 (vapour − brine disch.)", f"{ops_data.get('dt1_overall', 0):.2f} °C")
-                o2.metric("ΔT2 (condensate − cold grp)", f"{ops_data.get('dt2_overall', 0):.2f} °C")
-                o3.metric("LMTD", f"{ops_data.get('lmtd_overall', 0):.2f} °C")
-                o4.metric("Overall HTC", f"{ops_data['htc_overall']:.2f} W/m²K")
-
             # ---------------------------------------------------------------- 4 · FEED & BRINE
             with entry[3]:
                 st.caption("Source sheet: **Feed & Brine Water Analysis**. Daily lab results.")
@@ -1655,12 +1752,22 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
         # --- Headline KPI cards: the numbers Reliance/Chembond actually track day to day, up front ---
         st.markdown("##### Headline Performance Indicators")
-        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-        kpi1.metric("GOR", f"{ops_data['GOR']:.2f}", f"{ops_data['GOR'] - 11.4:+.2f} vs SOR", help="Gain Output Ratio: Gross production / Steam consumption. SOR baseline: 11.4")
-        kpi2.metric("STEC", f"{ops_data['STEC']:.1f} kWh/t", help="Specific Thermal Energy Consumption per tonne of distillate")
-        kpi3.metric("Overall HTC", f"{ops_data['htc_overall']:.1f} W/m²K", help="Whole-plant heat transfer coefficient (steam condensation basis)")
-        kpi4.metric("1st Effect HTC", f"{ops_data['htc_1st']:.1f} W/m²K", help="1st effect heat transfer coefficient (steam condensation basis)")
-        kpi5.metric("Recovery", f"{ops_data['Recovery']:.1f}%", help="Gross production / Total sea water feed")
+        # Every card here is a DERIVED figure, so the whole row is captioned as calculated rather
+        # than colouring each number individually (st.metric does not accept inline HTML).
+        st.caption(f"{_LEGEND_HTML} &nbsp;— the cards below are all calculated values.",
+                   unsafe_allow_html=True)
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        kpi1.metric("GOR", f"{ops_data['GOR']:.2f}", f"{ops_data['GOR'] - SOR_REF['GOR']:+.2f} vs SOR",
+                    help="Gain Output Ratio: Gross production / Steam consumption. SOR baseline: 11.4")
+        kpi2.metric("Gross Production", f"{ops_data['Gross Prod']:.1f} m³/h",
+                    f"{ops_data['Gross Prod'] - DESIGN_REF['Gross_Prod']:+.1f} vs design",
+                    help="Gross desal water production against the 1000 m³/h design figure.")
+        kpi3.metric("1st Effect HTC", f"{ops_data['htc_1st']:.1f} W/m²K",
+                    f"{ops_data['htc_1st'] - HTC_1ST_U_SOR:+.1f} vs SOR",
+                    help="First effect heat transfer coefficient (steam condensation basis)")
+        kpi4.metric("Recovery", f"{ops_data['Recovery']:.1f}%",
+                    f"{ops_data['Recovery'] - DESIGN_REF['Recovery']:+.1f} vs design",
+                    help="Gross production / Total sea water feed")
         st.divider()
 
         def color_diff(val):
@@ -1764,31 +1871,26 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     with tabs[2]:
         st.subheader("Heat Transfer & Fouling")
         st.caption(
-            "Both calculations use the steam-condensation basis: **U = Q / (A × LMTD)**, with "
-            "**LMTD = (ΔT1 − ΔT2) / ln(ΔT1/ΔT2)**. They differ in which temperatures define ΔT1 and ΔT2, "
-            "and in heat transfer area — exactly as in the two source sheets."
+            "Steam-condensation basis: **U = Q / (A × LMTD)**, with "
+            "**LMTD = (ΔT1 − ΔT2) / ln(ΔT1/ΔT2)**, exactly as in the `1st effect-HTC` source sheet. "
+            "The Overall HTC calculation has been removed from the tool at Reliance's request."
         )
 
-        htc_headline = st.columns(4)
+        htc_headline = st.columns(2)
         _d1 = ops_data['htc_1st'] - HTC_1ST_U_SOR
-        _d2 = ops_data['htc_overall'] - HTC_OVERALL_U_SOR
         htc_headline[0].metric("1st Effect HTC", f"{ops_data['htc_1st']:.1f} W/m²K",
                                f"{_d1:+.1f} vs SOR ({HTC_1ST_U_SOR:.0f})")
-        htc_headline[1].metric("Overall HTC", f"{ops_data['htc_overall']:.2f} W/m²K",
-                               f"{_d2:+.2f} vs SOR ({HTC_OVERALL_U_SOR:.1f})")
-        htc_headline[2].metric("1st Effect Fouling Rf", f"{ops_data['rf_1st']:.6f}",
-                               help="Rf = 1/U_actual − 1/U_SOR. Rising = fouling building up.")
-        htc_headline[3].metric("Overall Fouling Rf", f"{ops_data['rf_overall']:.5f}",
+        htc_headline[1].metric("1st Effect Fouling Rf", f"{ops_data['rf_1st']:.6f}",
                                help="Rf = 1/U_actual − 1/U_SOR. Rising = fouling building up.")
 
-        if ops_data['htc_1st'] == 0 or ops_data['htc_overall'] == 0:
+        if ops_data['htc_1st'] == 0:
             st.warning(
-                "An HTC reads 0, which means one of its required temperatures is missing or non-physical "
+                "The HTC reads 0, which means one of its required temperatures is missing or non-physical "
                 "(ΔT ≤ 0). Check the Inputs tab — the calculator reports 0 rather than inventing a value."
             )
 
         st.divider()
-        c1, c2 = st.columns(2)
+        c1 = st.container()
 
         with c1:
             st.markdown("#### 1st Effect")
@@ -1798,32 +1900,26 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             st.number_input("Avg Brine Temp, Effects 4-5-6-7 (°C)", key="t2_mid_effects_temp",
                             on_change=sync_var, args=('mid_effects_temp', 't2_mid_effects_temp'),
                             help="Cold-side reference. The source sheet calls this 'Feed Temp' — it is not a seawater temp.")
-            st.dataframe(pd.DataFrame([
+            _htc_steps = pd.DataFrame([
                 {"Step": "ΔT1  =  vapour − 1st eff. brine", "Value": ops_data['dt_1st'], "Unit": "°C"},
                 {"Step": "ΔT2  =  condensate − eff 4-7 avg", "Value": ops_data['dt2_1st'], "Unit": "°C"},
                 {"Step": "LMTD", "Value": ops_data['lmtd_1st'], "Unit": "°C"},
                 {"Step": "Q  (heat duty)", "Value": ops_data['q_1st'] / 1000, "Unit": "kW"},
                 {"Step": "A  (area)", "Value": get_v('area_1st'), "Unit": "m²"},
                 {"Step": "U = Q / (A × LMTD)", "Value": ops_data['htc_1st'], "Unit": "W/m²K"},
-            ]).style.format({"Value": "{:,.2f}"}), use_container_width=True, hide_index=True)
-
-        with c2:
-            st.markdown("#### Overall Plant")
-            st.caption("Source: `Overall-HTC` · Area 163,818 m² (11 × 12,950 × 1.15)")
-            st.number_input("Overall Heat Transfer Area (m²)", key="t2_area_overall",
-                            on_change=sync_var, args=('area_overall', 't2_area_overall'))
-            st.number_input("Feed Temp to Cold Group (°C)", key="t2_feed_cold",
-                            on_change=sync_var, args=('feed_cold', 't2_feed_cold'),
-                            help="Cold-side reference. The source sheet also calls this 'Feed Temp', but it is a "
-                                 "different measurement from the 1st-effect sheet's column of the same name.")
-            st.dataframe(pd.DataFrame([
-                {"Step": "ΔT1  =  vapour − brine discharge", "Value": ops_data['dt1_overall'], "Unit": "°C"},
-                {"Step": "ΔT2  =  condensate − cold grp feed", "Value": ops_data['dt2_overall'], "Unit": "°C"},
-                {"Step": "LMTD", "Value": ops_data['lmtd_overall'], "Unit": "°C"},
-                {"Step": "Q  (heat duty)", "Value": ops_data['q_overall'] / 1000, "Unit": "kW"},
-                {"Step": "A  (area)", "Value": get_v('area_overall'), "Unit": "m²"},
-                {"Step": "U = Q / (A × LMTD)", "Value": ops_data['htc_overall'], "Unit": "W/m²K"},
-            ]).style.format({"Value": "{:,.2f}"}), use_container_width=True, hide_index=True)
+            ])
+            # "A (area)" is the only entered figure in this table; everything else is derived from
+            # the readings, so the two are coloured differently per the convention above.
+            _entered_steps = {"A  (area)"}
+            st.dataframe(
+                _htc_steps.style
+                    .format({"Value": "{:,.2f}"})
+                    .apply(lambda col: [
+                        f"color: {COLOR_INPUT}; font-weight:600" if _htc_steps.loc[i, "Step"] in _entered_steps
+                        else f"color: {COLOR_CALC}; font-weight:600"
+                        for i in col.index], subset=["Value"]),
+                use_container_width=True, hide_index=True)
+            st.caption(_LEGEND_HTML, unsafe_allow_html=True)
 
         st.divider()
         st.markdown("#### Fouling Trend")
@@ -1831,15 +1927,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         if _logs is not None and not _logs.empty and 'Date' in _logs.columns:
             tdf = _logs.copy()
             tdf['Date'] = standardize_dates(tdf['Date'])
-            for c in ['1st Effect HTC', 'Overall HTC']:
+            for c in ['1st Effect HTC']:
                 tdf[c] = pd.to_numeric(tdf.get(c), errors='coerce')
             tdf = tdf.dropna(subset=['Date']).sort_values('Date')
-            tdf = tdf[(tdf['1st Effect HTC'].fillna(0) > 0) | (tdf['Overall HTC'].fillna(0) > 0)]
+            tdf = tdf[tdf['1st Effect HTC'].fillna(0) > 0]
             if len(tdf) > 1:
                 g1, g2 = st.columns(2)
                 for col, metric, base, colr in (
                     (g1, '1st Effect HTC', HTC_1ST_U_SOR, '#1f77b4'),
-                    (g2, 'Overall HTC', HTC_OVERALL_U_SOR, '#2ca02c'),
                 ):
                     sub = tdf[tdf[metric] > 0]
                     if len(sub) > 1:
@@ -1863,26 +1958,61 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
     # --- TAB 3: WATER ANALYSIS TAB ---
     with tabs[3]:
         st.subheader("Water Quality Analysis")
+        st.caption(
+            f"{_LEGEND_HTML}  Pass/Fail is graded against the specified limit shown beside each parameter.",
+            unsafe_allow_html=True
+        )
         if not get_v('skip_wq'):
-            w_col1, w_col2 = st.columns(2)
+
+            def _status_badge(status):
+                """Colour-coded Pass/Fail pill. Colour carries the verdict at a glance, and the word
+                is kept alongside it so the status is still readable in greyscale print and for
+                colour-blind users."""
+                if status == "Pass":
+                    return ("<span style='background:#E6F4EA;color:#1E7B34;border:1px solid #1E7B34;"
+                            "border-radius:10px;padding:2px 10px;font-weight:600;font-size:0.82rem'>PASS</span>")
+                return ("<span style='background:#FCE8E6;color:#B3261E;border:1px solid #B3261E;"
+                        "border-radius:10px;padding:2px 10px;font-weight:600;font-size:0.82rem'>FAIL</span>")
+
+            w_col1, w_col2, w_col3 = st.columns(3)
+
             with w_col1:
                 st.markdown("**Intake Seawater Matrix**")
                 for param, d in WATER_SPECS["Feed"].items():
                     c_in, c_chk = st.columns([2, 2])
-                    with c_in: 
-                        st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
-                    c_chk.markdown(f"<div style='margin-top:30px'>{water_data['Feed'][param]['status']}</div>", unsafe_allow_html=True)
+                    with c_in:
+                        st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}",
+                                        on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                    c_chk.markdown(
+                        f"<div style='margin-top:32px'>{_status_badge(water_data['Feed'][param]['status'])}</div>",
+                        unsafe_allow_html=True)
+
             with w_col2:
-                # Brine replaces the old Product Distillate matrix here. Brine is already captured on the
-                # Feed & Brine entry tab and via bulk upload, but until now had no display anywhere.
-                # The source sheet lists no specified limits for brine, so these are trended against the
-                # historical average rather than graded pass/fail.
+                # Product analysis retained at Reliance's request, reduced to pH and conductivity only.
+                # PRODUCT_DISPLAY_SPECS controls what is SHOWN; the full Product_* column set is still
+                # captured through the Desal Analysis bulk upload and still appears in the Word reports.
+                st.markdown("**Product (Desal) Matrix**")
+                st.caption("pH and conductivity only, as requested.")
+                for param, d in PRODUCT_DISPLAY_SPECS.items():
+                    c_in, c_chk = st.columns([2, 2])
+                    with c_in:
+                        st.number_input(f"{param} ({d['lim'][0]}-{d['lim'][1]})", key=f"t3_{d['var']}",
+                                        on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                    c_chk.markdown(
+                        f"<div style='margin-top:32px'>{_status_badge(water_data['Product'][param]['status'])}</div>",
+                        unsafe_allow_html=True)
+
+            with w_col3:
+                # Brine has no specified limits on the source sheet, so it is trended against its
+                # reference average rather than graded pass/fail - showing a PASS badge here would
+                # imply a specification that does not exist.
                 st.markdown("**Brine Matrix**")
-                st.caption("No specified limits on the source sheet — tracked for trending against the reference average.")
+                st.caption("No specified limits on the source sheet — trended against the reference average.")
                 for param, d in BRINE_SPECS.items():
                     c_in, c_ref = st.columns([2, 2])
                     with c_in:
-                        st.number_input(f"{param}", key=f"t3_{d['var']}", on_change=sync_var, args=(d['var'], f"t3_{d['var']}"))
+                        st.number_input(f"{param}", key=f"t3_{d['var']}", on_change=sync_var,
+                                        args=(d['var'], f"t3_{d['var']}"))
                     _bval = get_v(d['var'])
                     _bavg = d.get('avg', 0.0)
                     if _bavg and _bval:
@@ -1891,7 +2021,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         _btxt = f"<span style='color:{_bcol}'>{_bdev:+.1f}% vs ref {_bavg:g}</span>"
                     else:
                         _btxt = "<span style='color:#9AA5B1'>no reading</span>"
-                    c_ref.markdown(f"<div style='margin-top:30px'>{_btxt}</div>", unsafe_allow_html=True)
+                    c_ref.markdown(f"<div style='margin-top:32px'>{_btxt}</div>", unsafe_allow_html=True)
+        else:
+            st.info("Water analysis is marked as skipped for this date.")
 
     # --- TAB 4: CHEMICAL DOSING ---
     with tabs[4]:
@@ -2007,13 +2139,29 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         controls_col, calc_col = st.columns([1, 2])
         
         with controls_col:
-            st.number_input("1st effect vapour pressure (mmHg)", key="t5_press", on_change=sync_var, args=('mra_press', 't5_press'))
-            st.number_input("1st Effect Vapour Temp (°C)", key="t5_t1", on_change=sync_var, args=('mra_t1', 't5_t1'))
-            st.number_input("Sea Water Upper (m³/h)", key="t5_sw_up", on_change=sync_var, args=('sw_upper', 't5_sw_up'))
-            st.number_input("1st effect brine temp (°C)", key="t5_bt1", on_change=sync_var, args=('mra_bt1', 't5_bt1'))
-            st.number_input("Brine Water Return (m³/h)", key="t5_bflow", on_change=sync_var, args=('brine_ret', 't5_bflow'))
-            st.number_input("LP Steam consumption (TPH)", key="t5_steam", on_change=sync_var, args=('steam', 't5_steam'))
-            st.number_input("Antiscalant PPM", key="t5_anti", on_change=sync_var, args=('chem_anti_ppm', 't5_anti'))
+            st.markdown("**Model inputs**")
+            st.caption("One control per predictor, generated from MED_MRA_PARAMS so the what-if inputs "
+                       "always match what the model was fitted on.")
+            # Antiscalant PPM was removed from this panel along with its predictor - it is no longer
+            # part of the model, so a control here would imply an influence on the prediction that
+            # does not exist. Antiscalant residual is still tracked on the Chemicals tab.
+            # "Sea Water Upper" has been replaced by "Sea Water Feed (Upper + Lower)", the total
+            # feed to the unit, matching the tag the model is now fitted on.
+            _UNITS = {
+                "LP_Steam": "TPH", "Steam_Inlet_Temp": "°C", "SW_Feed_Total": "m³/h",
+                "Press_1st": "mmHg", "Temp_1st": "°C", "Brine_Temp_1st": "°C",
+                "Cond_Flow": "m³/h", "Brine_11th_Temp": "°C", "Feed_1st_Flow": "m³/h",
+            }
+            _CTRL_LABELS = {"SW_Feed_Total": "Sea Water Feed (Upper + Lower)"}
+            for _k, _dbcol, _var, _lbl, _base in MED_MRA_PARAMS:
+                _shown = _CTRL_LABELS.get(_k, _lbl.capitalize())
+                st.number_input(f"{_shown} ({_UNITS.get(_k, '')})", key=f"t5_{_var}",
+                                on_change=sync_var, args=(_var, f"t5_{_var}"))
+            if MRA_UNAVAILABLE_PARAMS:
+                st.caption(
+                    "Not in the model: " + ", ".join(MRA_UNAVAILABLE_PARAMS) +
+                    " — these tags are not recorded in the plant data, so there is no history to fit them on."
+                )
 
         with calc_col:
             if mra_data.get('model_missing'):
@@ -2022,10 +2170,16 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     "local disk, which resets when the app restarts). The prediction below is using the "
                     "baseline OLS formula instead. Retrain the model on the Model tab to restore it."
                 )
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Actual Gross SCADA", f"{mra_data['Actual']:.1f} m³/h")
+            k0, k1, k2, k3 = st.columns(4)
+            # Design figure shown alongside actual and predicted so the reading is anchored against
+            # nameplate as well as against the model.
+            k0.metric("Design", f"{DESIGN_REF['Gross_Prod']:.0f} m³/h",
+                      help="Nameplate gross production for MED-4.")
+            k1.metric("Actual Gross SCADA", f"{mra_data['Actual']:.1f} m³/h",
+                      f"{mra_data['Actual'] - DESIGN_REF['Gross_Prod']:+.1f} vs design")
             _pred_label = "OLS fallback" if mra_data.get('model_missing') else model_type
-            k2.metric(f"Predicted ({_pred_label})", f"{mra_data['Predicted']:.1f} m³/h")
+            k2.metric(f"Predicted ({_pred_label})", f"{mra_data['Predicted']:.1f} m³/h",
+                      f"{mra_data['Predicted'] - DESIGN_REF['Gross_Prod']:+.1f} vs design")
             
             diff_pct = (mra_data['Residual'] / mra_data['Predicted']) * 100 if mra_data['Predicted'] > 0 else 0
             if diff_pct <= -5.0: 
@@ -2037,7 +2191,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 
             if model_type != "OLS": 
                 st.info("Machine Learning Evaluation Mode Active: Multi-variable parameter expansion is only available under pure linear OLS logic.")
-            st.dataframe(mra_data['Variance_DF'].style.format({"Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
+            st.dataframe(mra_data['Variance_DF'].style.format({"Design": "{:.1f}", "Baseline": "{:.1f}", "Live Input": "{:.1f}", "Deviation": "{:+.1f}", "Regression Weight": "{:.3f}", "Impact (TPH)": "{:+.1f}"}, na_rep="-"), use_container_width=True, hide_index=True)
 
     # --- TAB 6: REPORTING & ANALYTICS ---
     with tabs[6]:
@@ -2131,8 +2285,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "CW Flow": [get_v('cw_flow')],
                             "Gross production": [ops_data['Gross Prod']],
                             "GOR": [round(ops_data['GOR'], 2)], 
-                            "STEC": [round(ops_data['STEC'], 2)],
-                            "Overall HTC": [round(ops_data['htc_overall'], 2)], 
                             "1st Effect HTC": [round(ops_data['htc_1st'], 2)], 
                             "Residual": [round(mra_data['Residual'], 1)], 
                             "Antiscalant (kg)": [chem_data['anti_cons']], 
@@ -2140,7 +2292,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "Anti_PPM": [get_v('chem_anti_ppm')], 
                             "Foam_PPM": [get_v('chem_foam_ppm')], 
                             "Area_1st": [get_v('area_1st')], 
-                            "Area_Overall": [get_v('area_overall')], 
                             "Remarks": [get_v('remarks')]
                         }
                         for cat in ['Feed', 'Product']:
@@ -2163,16 +2314,6 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "HTC1_dT2": [round(ops_data['dt2_1st'], 3)],
                             "HTC1_LMTD": [round(ops_data['lmtd_1st'], 3)],
                             "HTC1_Rf": [round(ops_data['rf_1st'], 8)],
-                            "HTCO_Feed_Flow": [get_v('sw_total')],
-                            "HTCO_Steam_TPH": [get_v('steam')],
-                            "HTCO_Feed_Temp_ColdGrp": [get_v('feed_cold')],
-                            "HTCO_Brine_Disch_Temp": [get_v('brine_out_t')],
-                            "HTCO_Vapor_Temp": [get_v('mra_t1')],
-                            "HTCO_Cond_Temp": [get_v('cond_temp')],
-                            "HTCO_dT1": [round(ops_data['dt1_overall'], 3)],
-                            "HTCO_dT2": [round(ops_data['dt2_overall'], 3)],
-                            "HTCO_LMTD": [round(ops_data['lmtd_overall'], 3)],
-                            "HTCO_Rf": [round(ops_data['rf_overall'], 8)],
                         })
                         
                         new_log = pd.DataFrame(db_dict)
@@ -2260,9 +2401,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     df_logs['Actual Production'] = pd.to_numeric(df_logs.get('Gross production', 0), errors='coerce')
                     df_logs['Residual_Val'] = pd.to_numeric(df_logs.get('Residual', 0), errors='coerce')
                     df_logs['Predicted Production'] = df_logs['Actual Production'] - df_logs['Residual_Val']
-                    df_logs['Overall_HTC_Val'] = pd.to_numeric(df_logs.get('Overall HTC', 0), errors='coerce')
+                    df_logs['HTC1_Val'] = pd.to_numeric(df_logs.get('1st Effect HTC', 0), errors='coerce')
                     df_logs['GOR_Val'] = pd.to_numeric(df_logs.get('GOR', 0), errors='coerce')
-                    df_logs['STEC_Val'] = pd.to_numeric(df_logs.get('STEC', np.nan), errors='coerce')
                     
                     min_date = df_logs['Date'].min().date() 
                     max_date = df_logs['Date'].max().date()
@@ -2284,10 +2424,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             rec_chart = alt.Chart(df_filtered).mark_circle().encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Recovery (%):Q', scale=alt.Scale(zero=False)))
                             st.altair_chart(rec_chart + rec_chart.transform_regression('Date', 'Recovery (%)').mark_line(color='red'), use_container_width=True)
                     with q_col2:
-                        st.markdown("#### Seawater Coefficient Degradation Rate (HTC)")
+                        st.markdown("#### 1st Effect Coefficient Degradation Rate (HTC)")
                         if len(df_filtered) > 1:
-                            htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('Overall_HTC_Val:Q', scale=alt.Scale(zero=False), title="Overall HTC (W/m²K)"))
-                            st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'Overall_HTC_Val').mark_line(color='black'), use_container_width=True)
+                            htc_chart = alt.Chart(df_filtered).mark_line(point=True, color='orange').encode(x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('HTC1_Val:Q', scale=alt.Scale(zero=False), title="1st Effect HTC (W/m²K)"))
+                            st.altair_chart(htc_chart + htc_chart.transform_regression('Date', 'HTC1_Val').mark_line(color='black'), use_container_width=True)
 
                     st.divider()
                     
@@ -2314,16 +2454,99 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
                     st.divider()
 
-                    st.markdown("#### Specific Thermal Energy Consumption (STEC) Trend")
-                    df_stec = df_filtered.dropna(subset=['STEC_Val'])
-                    if len(df_stec) > 1:
-                        stec_chart = alt.Chart(df_stec).mark_line(point=True, color='purple').encode(
-                            x=alt.X('Date:T', title="Evaluation Timeline"), y=alt.Y('STEC_Val:Q', scale=alt.Scale(zero=False), title="STEC (kWh/ton)"),
-                            tooltip=['Date:T', 'STEC_Val']
+                    # ---- FULL CYCLE (cleaning to cleaning) REPORT ----------------------------
+                    # A cycle runs from one CIP to the next. This reports on the whole cycle
+                    # regardless of the date filter above, because the point of a cycle report is to
+                    # cover the entire run, not whatever window happens to be on screen.
+                    st.divider()
+                    st.markdown("#### Full Cycle Report (cleaning to cleaning)")
+
+                    _clean_dates = get_cleaning_dates(st.session_state.mra_coef)
+                    _all_dates = df_logs['Date'].dropna().dt.date.tolist()
+
+                    with st.expander("Manage cleaning dates", expanded=not _clean_dates):
+                        st.caption(
+                            "A full cycle is defined by the cleaning dates recorded here. Add each CIP as it "
+                            "happens; the cycle then runs from that date to the day before the next cleaning."
                         )
-                        st.altair_chart(stec_chart + stec_chart.transform_regression('Date', 'STEC_Val').mark_line(color='black', strokeDash=[5, 5]), use_container_width=True)
+                        _cc1, _cc2 = st.columns([2, 1])
+                        with _cc1:
+                            _new_clean = st.date_input("Cleaning date to add", value=datetime.date.today(),
+                                                       format="DD/MM/YYYY", key="cip_add_date")
+                        with _cc2:
+                            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                            if st.button("Add cleaning date", use_container_width=True, key="cip_add_btn"):
+                                _upd = dict(st.session_state.mra_coef)
+                                _existing = get_cleaning_dates(_upd)
+                                if _new_clean in _existing:
+                                    st.warning("That cleaning date is already recorded.")
+                                else:
+                                    _existing.append(_new_clean)
+                                    _upd[CLEANING_KEY] = [d.isoformat() for d in sorted(set(_existing))]
+                                    st.session_state.mra_coef = _upd
+                                    if save_config(db_conn, _upd, LOCAL_CONFIG_FILE):
+                                        st.success(f"Cleaning on {_new_clean:%d %b %Y} recorded.")
+                                    else:
+                                        st.warning("Recorded locally, but the cloud sheet was unreachable.")
+                                    time.sleep(1.0)
+                                    st.rerun()
+                        if _clean_dates:
+                            st.caption("Recorded: " + ", ".join(d.strftime('%d %b %Y') for d in _clean_dates))
+                            _rm = st.selectbox("Remove a date", ["—"] + [d.isoformat() for d in _clean_dates],
+                                               key="cip_rm_sel")
+                            if _rm != "—" and st.button("Remove", key="cip_rm_btn"):
+                                _upd = dict(st.session_state.mra_coef)
+                                _upd[CLEANING_KEY] = [d.isoformat() for d in _clean_dates
+                                                      if d.isoformat() != _rm]
+                                st.session_state.mra_coef = _upd
+                                save_config(db_conn, _upd, LOCAL_CONFIG_FILE)
+                                st.rerun()
+
+                    if not _clean_dates:
+                        st.info(
+                            "No cleaning dates recorded yet, so a full cycle cannot be defined. Add the most "
+                            "recent CIP date above to enable this report."
+                        )
                     else:
-                        st.info("No STEC data available yet for the selected range. Rows saved before this update won't have a stored STEC value.")
+                        _cycle_start = st.selectbox(
+                            "Cycle starting from cleaning on",
+                            options=list(reversed(_clean_dates)),
+                            format_func=lambda d: d.strftime('%d %b %Y'),
+                            key="cip_cycle_sel"
+                        )
+                        _cs, _ce = resolve_cycle_window(_clean_dates, _cycle_start, _all_dates)
+                        _is_current = _cycle_start == _clean_dates[-1]
+
+                        _cyc = df_logs[
+                            (df_logs['Date'].dt.date >= _cs) & (df_logs['Date'].dt.date <= _ce)
+                        ].copy()
+                        _cyc_run = int((pd.to_numeric(_cyc.get('Gross production', 0), errors='coerce').fillna(0) > 0).sum())
+
+                        _m1, _m2, _m3 = st.columns(3)
+                        _m1.metric("Cycle length", f"{(_ce - _cs).days + 1} days")
+                        _m2.metric("Operating days", _cyc_run)
+                        _m3.metric("Status", "In progress" if _is_current else "Completed")
+                        st.caption(
+                            f"Cycle window: **{_cs:%d %b %Y} to {_ce:%d %b %Y}**"
+                            + ("  ·  still running, so this covers the cycle so far." if _is_current
+                               else "  ·  ended the day before the following cleaning.")
+                        )
+
+                        if _cyc_run == 0:
+                            st.warning("No production was recorded inside this cycle, so there is nothing to report on.")
+                        else:
+                            _clabel = f"cleaning cycle {_cs:%d %b %Y} to {_ce:%d %b %Y}"
+                            try:
+                                _cyc_doc = generate_period_report(_cyc, _clabel, period_kind="Full Cycle")
+                                st.download_button(
+                                    "Download Full Cycle Report (.docx)",
+                                    data=_cyc_doc,
+                                    file_name=f"MED4_FullCycle_{_cs:%Y%m%d}_{_ce:%Y%m%d}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    use_container_width=True, type="primary", key="cip_cycle_dl"
+                                )
+                            except Exception as _e:
+                                st.error(f"Full cycle report could not be generated: {_e}")
 
                     # ---- Report for the selected horizon -------------------------------------
                     # Uses the SAME start/end filter driving the charts above, so the document
@@ -2761,7 +2984,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         st.subheader("Bulk Data Upload")
         st.caption(
             "Each uploader mirrors ONE tab of the plant workbook exactly. Upload only the INPUT columns - "
-            "every derived value (LMTD, HTC, GOR, STEC, Recovery, Fouling) is recomputed by the calculator "
+            "every derived value (LMTD, HTC, GOR, Recovery, Fouling) is recomputed by the calculator "
             "and any such column in your file is ignored. Uploads are merged by date: loading HTC data never "
             "overwrites Operational or Water Quality data for the same day, and vice versa."
         )
@@ -2814,7 +3037,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             return d, filled
 
         bulk_subtabs = st.tabs([
-            "A) Operational Data", "B) 1st Effect HTC", "C) Overall HTC", "D) Water Quality", "E) Chemical Doses"
+            "A) Operational Data", "B) 1st Effect HTC", "C) Water Quality", "D) Chemical Doses"
         ])
 
         # ===================================================================================
@@ -2823,7 +3046,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         with bulk_subtabs[0]:
             st.markdown(
                 "Source: **`Operational data`** tab. Upload the sheet as-is. The calculator recomputes "
-                "**Recovery**, **Conversion**, **GOR**, **Steam Economy**, **Overall Delta T** and **STEC** "
+                "**Recovery**, **Conversion**, **GOR**, **Steam Economy** and **Overall Delta T** "
                 "from the raw readings - the versions of those columns already in your sheet are ignored."
             )
             st.download_button(
@@ -2891,13 +3114,10 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         d['Recovery'] = np.where(swfeed > 0, (gross / swfeed) * 100, np.nan)
                         d['Conversion'] = d['Recovery'] / 100
                         d['Steam Economy'] = np.where(desal > 0, steam / desal, np.nan)
-                        d['STEC'] = np.where(
-                            desal > 0, ((steam * 1000) / 3600 * LATENT_HEAT_STEAM_KJ_KG) / desal, np.nan
-                        )
 
                         out_cols = ['Date'] + op_inputs + [
                             'Delta T', 'Overall Delta T', 'GOR', 'Recovery', 'Conversion',
-                            'Steam Economy', 'STEC'
+                            'Steam Economy'
                         ]
                         ready = d[out_cols].copy()
                         ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
@@ -3034,7 +3254,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             if pw == "12345678":
                                 st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
                                 save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
-                                st.success("1st Effect HTC synced. Operational, Overall HTC and Water Quality untouched.")
+                                st.success("1st Effect HTC synced. Operational and Water Quality untouched.")
                                 time.sleep(1.2); st.rerun()
                             elif pw != "":
                                 st.error("Incorrect password.")
@@ -3042,131 +3262,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.error(f"Error processing file: {e}")
 
         # ===================================================================================
-        # C) OVERALL HTC  <-  'Overall-HTC ' sheet
+        # C) WATER QUALITY  <-  'Feed & Brine Water Analysis' + 'Desal Analysis' sheets
         # ===================================================================================
         with bulk_subtabs[2]:
-            st.markdown(
-                "Source: **`Overall-HTC`** tab. Upload only columns **A-K** (the process inputs). "
-                "The calculator recomputes ΔT1, ΔT2, LMTD, Heat Duty, HTC and Fouling."
-            )
-            st.info(
-                "**Column meanings on this sheet** (they differ from the 1st-effect sheet):\n\n"
-                "- **Feed flow** = *total* seawater feed (~2062 m³/hr), tag Z711FIT424\n"
-                "- **Feed Temp** = *feed temp to the cold group* (~40 °C) - the cold-side reference\n"
-                "- **Brine discharge Temp** = ~42 °C, tag Z711TIT401\n"
-                "- **1st effect vapor temp** = ~69 °C, tag Z711TIT414\n"
-                "- **Condensate temperature** = ~75 °C\n"
-                "- **Heat Transfer Area** = 163,818 m² (11 × 12,950 × 1.15; leave blank to use this default)\n\n"
-                "ΔT1 = vapor − brine discharge · ΔT2 = condensate − Feed Temp(cold group)"
-            )
-            st.download_button(
-                "Download Overall HTC Template", key='dl_ho',
-                data=pd.DataFrame(columns=HTC_OVERALL_BULK_HEADERS).to_csv(index=False).encode('utf-8'),
-                file_name='MED4_Overall_HTC_Template.csv', mime='text/csv'
-            )
-            st.divider()
-            ho_file = st.file_uploader("Upload Overall HTC CSV", type=["csv"], key="ho_up")
-
-            if ho_file is not None:
-                try:
-                    d = pd.read_csv(ho_file)
-                    first = d.columns[0]
-                    d = d[~d[first].astype(str).isin(['Unit ', 'Unit', 'Tag', 'Desigen', 'Design', 'SOR/  Base line'])]
-                    d.rename(columns={
-                        first: 'Date',
-                        'Feed flow': 'HTCO_Feed_Flow', 'Product flow ': 'HTCO_Product_Flow',
-                        'Product flow': 'HTCO_Product_Flow',
-                        'Condensate Flow ': 'HTCO_Cond_Flow', 'Condensate Flow': 'HTCO_Cond_Flow',
-                        'Steam consumption rate': 'HTCO_Steam_TPH',
-                        'Feed Temp': 'HTCO_Feed_Temp_ColdGrp',
-                        'Brine discharge Temp': 'HTCO_Brine_Disch_Temp',
-                        'Brine Discharge Temp': 'HTCO_Brine_Disch_Temp',
-                        '1st effect vapor temp': 'HTCO_Vapor_Temp',
-                        ' Condensate temperature': 'HTCO_Cond_Temp',
-                        'Condensate temperature': 'HTCO_Cond_Temp',
-                    }, inplace=True)
-                    # Area column header on this sheet carries the formula in its name, so match by prefix.
-                    for c in list(d.columns):
-                        if str(c).strip().startswith('Heat Transfer Area'):
-                            d.rename(columns={c: 'HTCO_Area'}, inplace=True)
-
-                    ho_inputs = ['HTCO_Feed_Flow', 'HTCO_Product_Flow', 'HTCO_Cond_Flow', 'HTCO_Steam_TPH',
-                                 'HTCO_Feed_Temp_ColdGrp', 'HTCO_Brine_Disch_Temp', 'HTCO_Vapor_Temp',
-                                 'HTCO_Cond_Temp', 'HTCO_Area']
-                    d = _clean_num(d, ho_inputs)
-                    d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
-                    d = d.dropna(subset=['Date'])
-
-                    # Pull anything this file didn't supply from the registry (Operational upload shares
-                    # steam rate, vapour/condensate temps, brine discharge temp, seawater feed, flows).
-                    d, filled = _backfill_from_db(d, {
-                        'HTCO_Steam_TPH': 'LP Steam consumption',
-                        'HTCO_Vapor_Temp': '1st Effect Vapour Temp',
-                        'HTCO_Brine_Disch_Temp': 'Brine Discharge Temp',
-                        'HTCO_Cond_Temp': 'condensate temp',
-                        'HTCO_Feed_Flow': 'Sea Water Feed',
-                        'HTCO_Product_Flow': 'Desal production',
-                        'HTCO_Cond_Flow': 'Condensate Return',
-                        'HTCO_Feed_Temp_ColdGrp': 'HTCO_Feed_Temp_ColdGrp',
-                    })
-                    if filled:
-                        st.info("Filled from existing registry data: " + ", ".join(filled))
-
-                    if len(d) == 0:
-                        st.error("No valid dated rows found.")
-                    else:
-                        d['HTCO_Area'] = d['HTCO_Area'].fillna(HTC_OVERALL_AREA)
-
-                        # ΔT1 = 1st effect vapor temp - brine discharge temp     (sheet col L)
-                        # ΔT2 = condensate temp - feed temp to cold group        (sheet col M)
-                        d['HTCO_dT1'] = d['HTCO_Vapor_Temp'] - d['HTCO_Brine_Disch_Temp']
-                        d['HTCO_dT2'] = d['HTCO_Cond_Temp'] - d['HTCO_Feed_Temp_ColdGrp']
-                        d['HTCO_LMTD'] = _lmtd(d['HTCO_dT1'], d['HTCO_dT2'])
-
-                        d['HTCO_Q_Steam'] = (d['HTCO_Steam_TPH'] * 1000 * LATENT_HEAT_STEAM_KJ_KG * 1000) / 3600
-
-                        denom = d['HTCO_Area'] * d['HTCO_LMTD']
-                        d['Overall HTC'] = np.where(
-                            d['HTCO_Q_Steam'].notna() & pd.notna(denom) & (denom > 0),
-                            d['HTCO_Q_Steam'] / denom, np.nan
-                        )
-                        d['HTCO_Fouling'] = np.where(d['Overall HTC'] > 0, 1 / d['Overall HTC'], np.nan)
-                        d['HTCO_Rf'] = np.where(
-                            d['Overall HTC'] > 0,
-                            (1 / d['Overall HTC']) - (1 / HTC_OVERALL_U_SOR), np.nan
-                        )
-                        d['Area_Overall'] = d['HTCO_Area']
-
-                        ready = d[['Date'] + ho_inputs + [
-                            'HTCO_dT1', 'HTCO_dT2', 'HTCO_LMTD', 'HTCO_Q_Steam',
-                            'Overall HTC', 'HTCO_Fouling', 'HTCO_Rf', 'Area_Overall'
-                        ]].copy()
-
-                        n_bad = int(ready['Overall HTC'].isna().sum())
-                        st.success(f"Computed Overall HTC for {len(ready) - n_bad} of {len(ready)} rows.")
-                        if n_bad:
-                            st.warning(f"{n_bad} row(s) left blank - missing one of: steam rate, vapor temp, "
-                                       f"brine discharge temp, condensate temp, or Feed Temp (cold group).")
-                        st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
-
-                        cp, cs = st.columns([2, 2])
-                        pw = cp.text_input("Password", type="password", key="pw_ho",
-                                           label_visibility="collapsed", placeholder="Master password to sync")
-                        if cs.button("Update Database (Overall HTC)", use_container_width=True, key="b_ho"):
-                            if pw == "12345678":
-                                st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, ready)
-                                save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
-                                st.success("Overall HTC synced. Operational, 1st Effect HTC and Water Quality untouched.")
-                                time.sleep(1.2); st.rerun()
-                            elif pw != "":
-                                st.error("Incorrect password.")
-                except Exception as e:
-                    st.error(f"Error processing file: {e}")
-
-        # ===================================================================================
-        # D) WATER QUALITY  <-  'Feed & Brine Water Analysis' + 'Desal Analysis' sheets
-        # ===================================================================================
-        with bulk_subtabs[3]:
             st.markdown(
                 "Two separate lab sheets, uploaded independently. Both are pure lab readings - nothing is "
                 "derived from them, so they are stored exactly as supplied (`-` becomes blank, not 0)."
@@ -3290,9 +3388,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.error(f"Error processing Desal file: {e}")
 
         # ===================================================================================
-        # E) CHEMICAL DOSES  <-  'Chemicals doses' sheet
+        # D) CHEMICAL DOSES  <-  'Chemicals doses' sheet
         # ===================================================================================
-        with bulk_subtabs[4]:
+        with bulk_subtabs[3]:
             st.markdown(
                 "Source sheet: **Chemicals doses**. Upload the raw tank readings (initial / top-up / final "
                 "levels and hours) plus MMC stock movements. The calculator recomputes **LPH**, **Kg/hr** and "
