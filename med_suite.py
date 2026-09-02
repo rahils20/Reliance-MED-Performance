@@ -122,7 +122,7 @@ def upsert_daily_logs(existing_df, new_df):
 MED_MRA_PARAMS = [
     # coef_key,          db_column,                    live_var,         label,                          fallback_base
     ("LP_Steam",         "LP Steam consumption",       "steam",          "LLP steam flow",                 69.91),
-    ("Steam_Inlet_Temp", "Steam Inlet Temp",           "steam_in_t",     "LLP steam temperature",         175.79),
+    ("Steam_Inlet_Temp", "Steam Inlet Temp",           "steam_in_t",     "Motive steam inlet temperature",         175.79),
     ("SW_Feed_Total",    "Sea Water Feed",             "sw_total",       "Seawater feed to MED",         2029.77),
     ("Press_1st",        "1st effect vapour pressure", "mra_press",      "1st effect pressure",           235.40),
     ("Temp_1st",         "1st Effect Vapour Temp",     "mra_t1",         "1st effect vapour temperature",  69.73),
@@ -413,7 +413,7 @@ DEFAULTS = {
     # (correction factor). Previous defaults (1757.49 / 19332.0) were roughly 7-8x too small, which alone made HTC
     # numbers wrong by close to an order of magnitude regardless of anything else. See tube-geometry calc sheet.
     'skip_eff': False, 'skip_wq': False, 'remarks': "", 'area_1st': HTC_1ST_AREA, 'area_overall': HTC_OVERALL_AREA,
-    'sw_lower': 0.0, 'cond_flow': 0.0, 'cond_temp': 0.0, 'htc1_cond_temp': 0.0, 'htco_cond_temp': 0.0, 'cond_cond': 3.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0, 'cw_flow': 2726.0
+    'sw_lower': 1269.41, 'cond_flow': 101.15, 'cond_temp': 0.0, 'htc1_cond_temp': 0.0, 'htco_cond_temp': 0.0, 'cond_cond': 3.0, 'sw_out_t': 0.0, 'cw_supply': 0.0, 'cw_return': 0.0, 'cw_flow': 2726.0
 }
 
 SYNC_MAP = {
@@ -448,6 +448,33 @@ SYNC_MAP = {
 }
 
 LATENT_HEAT_STEAM_KJ_KG = 2330.0
+
+# --- Auto-registration of tab-mirrored widget keys -------------------------------------------------
+# Widget keys are seeded from SYNC_MAP on first load, and reloaded into it whenever a date is opened
+# or a bulk upload lands. A widget whose key is NOT in SYNC_MAP therefore renders permanently blank -
+# it never receives the stored value and never writes back.
+#
+# That is exactly what happened to the Brine matrix on the Water Quality tab (t3_b_*) and to the
+# rebuilt Prediction controls (t5_*): both were added with generated keys that were never registered
+# here, so they displayed nothing. Rather than hand-maintain the list and risk the same silent
+# breakage next time a control moves, the mirrored keys are now derived from the same definitions
+# that create the widgets, so the two cannot drift apart.
+for _p, _d in BRINE_SPECS.items():                       # Water Quality tab mirrors of the Brine inputs
+    SYNC_MAP.setdefault(_d['var'], [])
+    _k = f"t3_{_d['var']}"
+    if _k not in SYNC_MAP[_d['var']]:
+        SYNC_MAP[_d['var']].append(_k)
+
+for _key, _dbcol, _var, _lbl, _base in MED_MRA_PARAMS:   # Prediction tab what-if controls
+    SYNC_MAP.setdefault(_var, [])
+    _k = f"t5_{_var}"
+    if _k not in SYNC_MAP[_var]:
+        SYNC_MAP[_var].append(_k)
+
+# Antiscalant is no longer a model input, so its old Prediction-tab control key is retired. Leaving
+# it registered would keep seeding a widget that no longer exists.
+if 't5_anti' in SYNC_MAP.get('chem_anti_ppm', []):
+    SYNC_MAP['chem_anti_ppm'].remove('t5_anti')
 
 def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
     data_dict = {
@@ -769,13 +796,13 @@ def build_interpretation(ops, mra, chem_ppm=None):
             ppm = float(chem_ppm)
             if 0 < ppm < SOR_REF['Anti_PPM'] * 0.8:
                 out['actions'].append(
-                    f"Antiscalant residual measured {ppm:.2f} ppm against an SOR target of "
+                    f"Antiscalant dosed at {ppm:.2f} ppm against an SOR target of "
                     f"{SOR_REF['Anti_PPM']:.2f} ppm. Under-dosing at this level materially raises scaling "
                     f"risk on the first effect and should be corrected irrespective of current HTC."
                 )
             elif ppm > SOR_REF['Anti_PPM'] * 1.3:
                 out['actions'].append(
-                    f"Antiscalant residual measured {ppm:.2f} ppm against an SOR target of "
+                    f"Antiscalant dosed at {ppm:.2f} ppm against an SOR target of "
                     f"{SOR_REF['Anti_PPM']:.2f} ppm. Dosing above requirement adds chemical cost without "
                     f"proportional scale protection and can be trimmed."
                 )
@@ -1576,7 +1603,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                     help="Brine discharge temperature (recorded for reference).")
                 with t3:
                     st.number_input("11th Effect Brine Temp", key="in_brine_11", on_change=sync_var, args=('brine_11', 'in_brine_11'))
-                    st.number_input("Steam Inlet Temp", key="in_steam_in_t", on_change=sync_var, args=('steam_in_t', 'in_steam_in_t'))
+                    st.number_input("Motive Steam Inlet Temp", key="in_steam_in_t", on_change=sync_var, args=('steam_in_t', 'in_steam_in_t'))
                 with t4:
                     st.number_input("SW Condenser (FFC) I/L Temp", key="in_sw_in", on_change=sync_var, args=('sw_in_t', 'in_sw_in'))
                     st.number_input("SW Condenser (FFC) O/L Temp", key="in_sw_out", on_change=sync_var, args=('sw_out_t', 'in_sw_out'))
@@ -1595,9 +1622,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     st.number_input("CW Return Temp (°C)", key="in_cw_return", on_change=sync_var, args=('cw_return', 'in_cw_return'))
                     st.number_input("CW Flow (m³/h)", key="in_cw_flow", on_change=sync_var, args=('cw_flow', 'in_cw_flow'))
                 with p4:
-                    st.number_input("Antiscalant Residual (ppm)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
+                    st.number_input("Antiscalant Dosed (ppm)", key="in_anti_ppm", on_change=sync_var, args=('chem_anti_ppm', 'in_anti_ppm'))
                     st.number_input("Antiscalant Consumption (kg/hr)", key="in_anti_cons", on_change=sync_var, args=('chem_anti_cons', 'in_anti_cons'))
-                    st.number_input("Antifoam Residual (ppm)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
+                    st.number_input("Antifoam Dosed (ppm)", key="in_foam_ppm", on_change=sync_var, args=('chem_foam_ppm', 'in_foam_ppm'))
                     st.number_input("Antifoam Consumption (kg/hr)", key="in_foam_cons", on_change=sync_var, args=('chem_foam_cons', 'in_foam_cons'))
 
                 st.divider()
@@ -1790,7 +1817,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         df_b = pd.DataFrame([
             {"Parameter": "Total Flow (Thermocompressor + NCG)", "UOM": "Tonne/hr", "Design": "97.5", "SOR Base": 76.94, "Actual": ops_data['Steam'], "Difference": ops_data['Steam'] - 76.94},
             {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "3.5", "SOR Base": 4.3, "Actual": get_v('stm_press'), "Difference": get_v('stm_press') - 4.3},
-            {"Parameter": "Steam Inlet Temp.", "UOM": "°C", "Design": "176", "SOR Base": 176.0, "Actual": get_v('steam_in_t'), "Difference": get_v('steam_in_t') - 176.0},
+            {"Parameter": "Motive Steam Inlet Temp.", "UOM": "°C", "Design": "176", "SOR Base": 176.0, "Actual": get_v('steam_in_t'), "Difference": get_v('steam_in_t') - 176.0},
             {"Parameter": "First Effect Vapour Temp.", "UOM": "°C", "Design": "69", "SOR Base": 68.47, "Actual": get_v('mra_t1'), "Difference": get_v('mra_t1') - 68.47}
         ])
         st.dataframe(df_b.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
@@ -1842,23 +1869,23 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         ])
         st.dataframe(df_h.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.3f}", "Actual": "{:.3f}", "Difference": "{:+.3f}"}), use_container_width=True, hide_index=True)
 
-        st.markdown("#### Chemical Dosing & Residual")
-        st.caption("Dosing rate (gm/m³) needs a logged kg-consumption figure for the day; residual PPM comes from lab analysis and is tracked independently.")
+        st.markdown("#### Chemical Dosing")
+        st.caption("Dosing rate (gm/m³) needs a logged kg-consumption figure for the day; the dosed PPM figure is tracked independently.")
         df_i = pd.DataFrame([
-            {"Parameter": "Antiscalant (ID204)/IN-204AS", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5,
+            {"Parameter": "Antiscalant", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5,
              "Actual": anti_gm_m3 if has_anti_kg else np.nan, "Difference": (anti_gm_m3 - 10.5) if has_anti_kg else np.nan,
-             "Residual (PPM)": get_v('chem_anti_ppm')},
+             "Dosed (PPM)": get_v('chem_anti_ppm')},
             {"Parameter": "Antifoam", "UOM": "gm/m3 sea water", "Design": "0.25", "SOR Base": 0.16,
              "Actual": foam_gm_m3 if has_foam_kg else np.nan, "Difference": (foam_gm_m3 - 0.16) if has_foam_kg else np.nan,
-             "Residual (PPM)": get_v('chem_foam_ppm')}
+             "Dosed (PPM)": get_v('chem_foam_ppm')}
         ])
         st.dataframe(
-            df_i.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}", "Residual (PPM)": "{:.2f}"}, na_rep="No kg data logged"),
+            df_i.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}", "Dosed (PPM)": "{:.2f}"}, na_rep="No kg data logged"),
             use_container_width=True, hide_index=True
         )
         if not has_anti_kg or not has_foam_kg:
             missing_chem = ([] if has_anti_kg else ["antiscalant"]) + ([] if has_foam_kg else ["antifoam"])
-            st.info(f"No {' or '.join(missing_chem)} consumption (kg) is logged for this date, so the gm/m³ dosing rate can't be calculated - only the PPM residual is shown. Log daily kg consumption on the Chemical Dosing tab to enable this.")
+            st.info(f"No {' or '.join(missing_chem)} consumption (kg) is logged for this date, so the gm/m³ dosing rate can't be calculated - only the dosed PPM figure is shown. Log daily kg consumption on the Chemical Dosing tab to enable this.")
         
         sor_export_dfs = {
             "Sea Water": df_a, "LP Steam": df_b, "Cooling Water": df_c, 
@@ -2052,9 +2079,14 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
 
         as_kghr, as_ppm, as_lph = _cv('AS_KgHr'), _cv('AS_PPM'), _cv('AS_LPH')
         af_kghr, af_ppm, af_lph = _cv('AF_KgHr'), _cv('AF_PPM'), _cv('AF_LPH')
-        # Fall back to the manually-tracked residual PPM fields if the dosing record isn't present.
-        if as_ppm == 0: as_ppm = get_v('chem_anti_ppm')
-        if af_ppm == 0: af_ppm = get_v('chem_foam_ppm')
+        # AS_PPM / AF_PPM are DERIVED from consumption (kg/hr x 1000 / feed m3/hr), so they are a
+        # dose figure - which is why the labels here read "Dosed" rather than "Residual".
+        # Confirmed with Reliance that the manually-entered ppm field is also a dose figure, so the
+        # fallback below is the same quantity and needs no separate labelling.
+        if as_ppm == 0:
+            as_ppm = get_v('chem_anti_ppm')
+        if af_ppm == 0:
+            af_ppm = get_v('chem_foam_ppm')
 
         st.markdown("##### Dosing Snapshot")
         m1, m2, m3, m4 = st.columns(4)
@@ -2074,12 +2106,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             df_as = pd.DataFrame([
                 {"Metric": "Dose Rate (kg/hr)", "Value": as_kghr},
                 {"Metric": "Dose Rate (LPH)", "Value": as_lph},
-                {"Metric": "Residual (ppm)", "Value": as_ppm},
+                {"Metric": "Dosed (ppm)", "Value": as_ppm},
                 {"Metric": "SOR Target (ppm)", "Value": as_target},
                 {"Metric": "Deviation vs Target (ppm)", "Value": as_ppm - as_target},
             ])
             st.dataframe(df_as.style.format({"Value": "{:.3f}"}), use_container_width=True, hide_index=True)
-            st.markdown("**MMC Stock (kg)**")
+            st.markdown("**Site Stock (kg)**")
             st.dataframe(pd.DataFrame([{
                 "Opening": _cv('AS_Stock_Open'), "Received": _cv('AS_Stock_Recd'),
                 "Consumed": _cv('AS_Stock_Consumed'), "Closing": _cv('AS_Stock_Close')
@@ -2091,12 +2123,12 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             df_af = pd.DataFrame([
                 {"Metric": "Dose Rate (kg/hr)", "Value": af_kghr},
                 {"Metric": "Dose Rate (LPH)", "Value": af_lph},
-                {"Metric": "Residual (ppm)", "Value": af_ppm},
+                {"Metric": "Dosed (ppm)", "Value": af_ppm},
                 {"Metric": "SOR Target (ppm)", "Value": af_target},
                 {"Metric": "Deviation vs Target (ppm)", "Value": af_ppm - af_target},
             ])
             st.dataframe(df_af.style.format({"Value": "{:.3f}"}), use_container_width=True, hide_index=True)
-            st.markdown("**MMC Stock (kg)**")
+            st.markdown("**Site Stock (kg)**")
             st.dataframe(pd.DataFrame([{
                 "Opening": _cv('AF_Stock_Open'), "Received": _cv('AF_Stock_Recd'),
                 "Consumed": _cv('AF_Stock_Consumed'), "Closing": _cv('AF_Stock_Close')
