@@ -514,7 +514,15 @@ def generate_daily_csv(date, ops, w_data, chem_data, mra, extra_tags):
 
 # Stamped into every generated report so it is immediately obvious which build produced a file.
 # If a downloaded report does not show this version in its footer, the app is running older code.
-REPORT_VERSION = "v2.0 (analysis + charts)"
+# Bump this string whenever the report OUTPUT changes. It prints in the footer of every generated
+# document, so it is the quickest way to confirm which build a report came from. It was previously
+# left at v2.0 across a set of substantial report changes, which made it useless as a deployment
+# check - the old and new builds produced identical version strings.
+#   v2.0 - analysis + charts
+#   v3.0 - adds Data Coverage, Water Quality and Chemical Programme sections, water-chemistry and
+#          dosing trend charts, expanded aggregates, and explicit "no data" statements in place of
+#          silently omitted sections.
+REPORT_VERSION = "v3.0 (chemistry + coverage)"
 
 # SOR reference values used for variance analysis and interpretation.
 # --- Design (nameplate) references ---------------------------------------------------------------
@@ -1524,6 +1532,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         return
             
     st.sidebar.divider()
+    # Build indicator. Lets you confirm at a glance which code Streamlit Cloud is actually serving,
+    # without having to generate a report first and inspect its footer.
+    st.sidebar.caption(f"Report engine **{REPORT_VERSION}**")
     # Default to the most recent date that actually has data, not today. Defaulting to today meant
     # that whenever the registry lagged the calendar (e.g. data ends 6 Jul, today is 14 Jul) the app
     # opened on a date with no record, reset every field to 0, and showed HTC/KPIs as 0 - even though
