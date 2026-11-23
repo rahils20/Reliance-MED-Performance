@@ -321,6 +321,9 @@ RIL_EXCEL_HEADERS = [
 # Rf (fouling resistance) = 1/U_actual - 1/U_clean, where the sheets use the SOR baseline as "clean".
 HTC_1ST_AREA = 12950.013120000001      # 1st effect-HTC!K  = pi * 5.5m * 31244 tubes * 0.024m OD
 HTC_OVERALL_AREA = 163818.0            # Overall-HTC!K     = 11 effects * 12950 * 1.15
+# NOTE (Nov 2026): still the PREVIOUS cycle's SOR. The 18-20 Sep 2026 SOR data gives ~570 W/m²K with
+# this tool's formula, but that relies on the condensate temperature from a transmitter the site has
+# flagged as faulty. Held at 415.3 pending confirmation from site/RIL on which baseline to use.
 HTC_1ST_U_SOR = 415.31060504252554     # 1st effect-HTC!AA6 (steam condensation basis, SOR baseline)
 HTC_OVERALL_U_SOR = 17.726796070321715 # Overall-HTC!AA6   (steam condensation basis, SOR baseline)
 CP_WATER_KJ_KGC = 4.186                # specific heat, both sheets col P
@@ -561,14 +564,56 @@ MRA_DESIGN = {
     'Feed_1st_Flow': DESIGN_REF['Feed_1st_Flow'],
 }
 
+# --- SOR (Start of Run) baseline ---------------------------------------------------------------------
+# Single source of truth for every SOR figure in the app: the Daily Analysis tables, KPI cards, report
+# narrative and charts all read from here. To re-baseline after the next cleaning, edit this dict only.
+#
+# Source: "MED-4 SOR Performance.docx", Desal Plant Performance Summary, SOR column, verified by RIL
+# CTS-Utilities (26 Oct 2026). Post-cleaning start-up 5 Sep 2026; SOR period 18-20 Sep 2026.
+SOR_PERIOD = "18–20 Sep 2026"
 SOR_REF = {
-    'GOR': 11.4,
-    'Steam_TPH': 76.94,
-    'Steam_Press': 4.3,
+    # A) Sea water
+    'SW_Temp': 29.54,
+    'SW_Press': 1.64,
+    'SW_Upper': 820.0,
+    'SW_Lower': 1380.0,
+    'SW_Total': 2200.0,
+    # B) LP steam
+    'Steam_TPH': 90.3,            # thermocompressor + NCG
+    'Steam_Press': 4.61,
+    'Desuperheat_Flow': 13.0,
     'Steam_Inlet_Temp': 176.0,
-    'Vapour_Temp_1st': 68.47,
-    'Anti_PPM': 10.5,
-    'Foam_PPM': 0.16,
+    # C) Cooling water
+    'CW_Flow': 3586.0,
+    'CW_Supply_Temp': 34.63,
+    'CW_Return_Temp': 41.44,
+    # D) Desalinated water
+    'Desal_Net': 949.0,
+    'Product_Cond': 3.29,
+    # E) Brine discharge
+    'Brine_Flow': 1238.0,
+    'Brine_Temp': 42.25,
+    'Brine_Press': 1.19,
+    # F) Condensate return
+    'Cond_Flow': 123.0,
+    'Cond_Temp': 69.0,
+    'Cond_Cond': 3.54,
+    # G) Plant capacity
+    'Gross_Prod': 969.0,
+    'Conversion_Pct': 44.06,
+    'GOR': 10.73,
+    'Steam_Economy': 0.093,       # MT steam / m3 desal
+    'Feed_1st_Flow': 516.0,
+    'Vapour_Temp_1st': 71.41,
+    'Press_1st': 252.0,           # mmHg
+    'Brine_Temp_1st': 68.58,
+    'Brine_Temp_11th': 43.77,
+    'DT_1st': 2.83,               # 1st effect vapour - 1st effect brine
+    'DT_Overall': 24.81,          # 1st effect brine - 11th effect brine
+    'Feed_Cold_Temp': 38.74,
+    # H) Chemical consumption
+    'Anti_PPM': 12.33,
+    'Foam_PPM': 0.20,
 }
 
 
@@ -2149,7 +2194,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                    unsafe_allow_html=True)
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
         kpi1.metric("GOR", f"{ops_data['GOR']:.2f}", f"{ops_data['GOR'] - SOR_REF['GOR']:+.2f} vs SOR",
-                    help="Gain Output Ratio: Gross production / Steam consumption. SOR baseline: 11.4")
+                    help=f"Gain Output Ratio: Gross production / Steam consumption. SOR baseline ({SOR_PERIOD}): {SOR_REF['GOR']:.2f}")
         kpi2.metric("Gross Production", f"{ops_data['Gross Prod']:.1f} m³/h",
                     f"{ops_data['Gross Prod'] - DESIGN_REF['Gross_Prod']:+.1f} vs design",
                     help="Gross desal water production against the 1000 m³/h design figure.")
@@ -2169,78 +2214,89 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
             except:
                 return ''
 
+        def _sor_row(param, uom, design, sor_key, actual):
+            """One row of an SOR comparison table. The SOR figure always comes from SOR_REF so the
+            tables, KPI cards and report can never disagree about the baseline."""
+            sor = SOR_REF[sor_key]
+            return {"Parameter": param, "UOM": uom, "Design": design, "SOR Base": sor,
+                    "Actual": actual, "Difference": actual - sor}
+
+        st.caption(f"SOR baseline: {SOR_PERIOD} (post-cleaning start of run, verified by RIL CTS).")
+
         st.markdown("#### Sea Water")
         df_a = pd.DataFrame([
-            {"Parameter": "Temp.", "UOM": "°C", "Design": "19-35", "SOR Base": 29.0, "Actual": get_v('sw_in_t'), "Difference": get_v('sw_in_t') - 29.0},
-            {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "2.5", "SOR Base": 1.7, "Actual": get_v('sw_press'), "Difference": get_v('sw_press') - 1.7},
-            {"Parameter": "Total sea water flow to desal unit", "UOM": "m3/hr", "Design": "2400", "SOR Base": 2112.0, "Actual": ops_data['SW Total'], "Difference": ops_data['SW Total'] - 2112.0}
+            _sor_row("Temp.", "°C", "19-35", 'SW_Temp', get_v('sw_in_t')),
+            _sor_row("Pressure", "kg/cm2-g", "2.5", 'SW_Press', get_v('sw_press')),
+            _sor_row("Total sea water flow to desal unit", "m3/hr", "2400", 'SW_Total', ops_data['SW Total']),
         ])
         st.dataframe(df_a.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("#### LP Steam")
         df_b = pd.DataFrame([
-            {"Parameter": "Total Flow (Thermocompressor + NCG)", "UOM": "Tonne/hr", "Design": "97.5", "SOR Base": 76.94, "Actual": ops_data['Steam'], "Difference": ops_data['Steam'] - 76.94},
-            {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "3.5", "SOR Base": 4.3, "Actual": get_v('stm_press'), "Difference": get_v('stm_press') - 4.3},
-            {"Parameter": "Motive Steam Inlet Temp.", "UOM": "°C", "Design": "176", "SOR Base": 176.0, "Actual": get_v('steam_in_t'), "Difference": get_v('steam_in_t') - 176.0},
-            {"Parameter": "First Effect Vapour Temp.", "UOM": "°C", "Design": "69", "SOR Base": 68.47, "Actual": get_v('mra_t1'), "Difference": get_v('mra_t1') - 68.47}
+            _sor_row("Total Flow (Thermocompressor + NCG)", "Tonne/hr", "97.5", 'Steam_TPH', ops_data['Steam']),
+            _sor_row("Pressure", "kg/cm2-g", "3.5", 'Steam_Press', get_v('stm_press')),
+            _sor_row("Motive Steam Inlet Temp.", "°C", "176", 'Steam_Inlet_Temp', get_v('steam_in_t')),
+            _sor_row("First Effect Vapour Temp.", "°C", "69", 'Vapour_Temp_1st', get_v('mra_t1')),
         ])
         st.dataframe(df_b.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.2f}", "Actual": "{:.2f}", "Difference": "{:+.2f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("#### Cooling Water")
         df_c = pd.DataFrame([
-            {"Parameter": "Flow", "UOM": "m3/hr", "Design": "4200", "SOR Base": 2726.0, "Actual": get_v('cw_flow'), "Difference": get_v('cw_flow') - 2726.0},
-            {"Parameter": "Cooling Water Supply Temp", "UOM": "°C", "Design": "32", "SOR Base": 31.9, "Actual": get_v('cw_supply'), "Difference": get_v('cw_supply') - 31.9},
-            {"Parameter": "Cooling Water Return Temp", "UOM": "°C", "Design": "41", "SOR Base": 37.5, "Actual": get_v('cw_return'), "Difference": get_v('cw_return') - 37.5}
+            _sor_row("Flow", "m3/hr", "4200", 'CW_Flow', get_v('cw_flow')),
+            _sor_row("Cooling Water Supply Temp", "°C", "32", 'CW_Supply_Temp', get_v('cw_supply')),
+            _sor_row("Cooling Water Return Temp", "°C", "41", 'CW_Return_Temp', get_v('cw_return')),
         ])
         st.dataframe(df_c.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("#### Desalinated Water")
         df_d = pd.DataFrame([
-            {"Parameter": "Desal water production", "UOM": "m3/hr", "Design": "1000", "SOR Base": 824.0, "Actual": ops_data['Desal'], "Difference": ops_data['Desal'] - 824.0},
-            {"Parameter": "Conductivity", "UOM": "microS/cm", "Design": "<15", "SOR Base": 2.5, "Actual": get_v('p_cond'), "Difference": get_v('p_cond') - 2.5}
+            _sor_row("Desal water production", "m3/hr", "1000", 'Desal_Net', ops_data['Desal']),
+            _sor_row("Conductivity", "microS/cm", "<15", 'Product_Cond', get_v('p_cond')),
         ])
         st.dataframe(df_d.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("#### Brine Discharge")
         df_e = pd.DataFrame([
-            {"Parameter": "Flow", "UOM": "m3/hr", "Design": "1400", "SOR Base": 1315.0, "Actual": ops_data['Brine Return'], "Difference": ops_data['Brine Return'] - 1315.0},
-            {"Parameter": "Temp.", "UOM": "°C", "Design": "43.5", "SOR Base": 40.5, "Actual": ops_data['Brine Out_overall'], "Difference": ops_data['Brine Out_overall'] - 40.5},
-            {"Parameter": "Pressure", "UOM": "kg/cm2-g", "Design": "6", "SOR Base": 1.3, "Actual": get_v('brine_press'), "Difference": get_v('brine_press') - 1.3}
+            _sor_row("Flow", "m3/hr", "1400", 'Brine_Flow', ops_data['Brine Return']),
+            _sor_row("Temp.", "°C", "43.5", 'Brine_Temp', ops_data['Brine Out_overall']),
+            _sor_row("Pressure", "kg/cm2-g", "6", 'Brine_Press', get_v('brine_press')),
         ])
         st.dataframe(df_e.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("#### Condensate Return")
         df_f = pd.DataFrame([
-            {"Parameter": "Quantity", "UOM": "m3/hr", "Design": "100", "SOR Base": 127.0, "Actual": get_v('cond_flow'), "Difference": get_v('cond_flow') - 127.0},
-            {"Parameter": "Temp.", "UOM": "°C", "Design": "70", "SOR Base": 71.0, "Actual": get_v('cond_temp'), "Difference": get_v('cond_temp') - 71.0},
-            {"Parameter": "Conductivity", "UOM": "microS/cm", "Design": "<15", "SOR Base": 3.0, "Actual": get_v('cond_cond'), "Difference": get_v('cond_cond') - 3.0}
+            _sor_row("Quantity", "m3/hr", "100", 'Cond_Flow', get_v('cond_flow')),
+            _sor_row("Temp.", "°C", "70", 'Cond_Temp', get_v('cond_temp')),
+            _sor_row("Conductivity", "microS/cm", "<15", 'Cond_Cond', get_v('cond_cond')),
         ])
         st.dataframe(df_f.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.1f}", "Actual": "{:.1f}", "Difference": "{:+.1f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("#### Plant Capacity Details")
         df_h = pd.DataFrame([
-            {"Parameter": "Gross desal water production", "UOM": "tph", "Design": "1000", "SOR Base": 873.0, "Actual": ops_data['Gross Prod'], "Difference": ops_data['Gross Prod'] - 873.0},
-            {"Parameter": "Conversion (Product to Feed)", "UOM": "%", "Design": "41.6", "SOR Base": 41.4, "Actual": ops_data['Conversion'] * 100, "Difference": (ops_data['Conversion'] * 100) - 41.4},
-            {"Parameter": "GOR / Steam Economy", "UOM": "-", "Design": "10.5", "SOR Base": 11.4, "Actual": ops_data['GOR'], "Difference": ops_data['GOR'] - 11.4},
-            {"Parameter": "Steam Economy (Steam/Desal)", "UOM": "Norms", "Design": "0.088", "SOR Base": 0.088, "Actual": ops_data['Economy'], "Difference": ops_data['Economy'] - 0.088},
-            {"Parameter": "1st effect vapour temp.", "UOM": "°C", "Design": "74", "SOR Base": 72.0, "Actual": get_v('mra_t1'), "Difference": get_v('mra_t1') - 72.0},
-            {"Parameter": "1st effect pressure", "UOM": "mm Hg", "Design": "248", "SOR Base": 256.0, "Actual": get_v('mra_press'), "Difference": get_v('mra_press') - 256.0},
-            {"Parameter": "1st effect brine temp.", "UOM": "°C", "Design": "69", "SOR Base": 69.0, "Actual": get_v('mra_bt1'), "Difference": get_v('mra_bt1') - 69.0},
-            {"Parameter": "11th effect brine temp", "UOM": "°C", "Design": "44", "SOR Base": 42.0, "Actual": get_v('brine_11'), "Difference": get_v('brine_11') - 42.0},
-            {"Parameter": "Delta T (1st effect vapour temp -1st effect brine temp)", "UOM": "°C", "Design": "4", "SOR Base": 2.5, "Actual": ops_data['dt_1st'], "Difference": ops_data['dt_1st'] - 2.5},
-            {"Parameter": "Overall delta T(1st eff brine temp - 11th eff brine temp)", "UOM": "°C", "Design": "25", "SOR Base": 27.1, "Actual": ops_data['dt_overall_simple'], "Difference": ops_data['dt_overall_simple'] - 27.1},
-            {"Parameter": "Feed temp to cold group", "UOM": "°C", "Design": "40", "SOR Base": 37.0, "Actual": get_v('feed_cold'), "Difference": get_v('feed_cold') - 37.0}
+            _sor_row("Gross desal water production", "tph", "1000", 'Gross_Prod', ops_data['Gross Prod']),
+            _sor_row("Conversion (Product to Feed)", "%", "41.6", 'Conversion_Pct', ops_data['Conversion'] * 100),
+            _sor_row("GOR / Steam Economy", "-", "10.5", 'GOR', ops_data['GOR']),
+            _sor_row("Steam Economy (Steam/Desal)", "Norms", "0.088", 'Steam_Economy', ops_data['Economy']),
+            _sor_row("1st effect vapour temp.", "°C", "74", 'Vapour_Temp_1st', get_v('mra_t1')),
+            _sor_row("1st effect pressure", "mm Hg", "248", 'Press_1st', get_v('mra_press')),
+            _sor_row("1st effect brine temp.", "°C", "69", 'Brine_Temp_1st', get_v('mra_bt1')),
+            _sor_row("11th effect brine temp", "°C", "44", 'Brine_Temp_11th', get_v('brine_11')),
+            _sor_row("Delta T (1st effect vapour temp -1st effect brine temp)", "°C", "4", 'DT_1st', ops_data['dt_1st']),
+            _sor_row("Overall delta T(1st eff brine temp - 11th eff brine temp)", "°C", "25", 'DT_Overall', ops_data['dt_overall_simple']),
+            _sor_row("Feed temp to cold group", "°C", "40", 'Feed_Cold_Temp', get_v('feed_cold')),
         ])
         st.dataframe(df_h.style.map(color_diff, subset=['Difference']).format({"SOR Base": "{:.3f}", "Actual": "{:.3f}", "Difference": "{:+.3f}"}), use_container_width=True, hide_index=True)
 
         st.markdown("#### Chemical Dosing")
         st.caption("Dosing rate (gm/m³) needs a logged kg-consumption figure for the day; the dosed PPM figure is tracked independently.")
         df_i = pd.DataFrame([
-            {"Parameter": "Antiscalant", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": 10.5,
-             "Actual": anti_gm_m3 if has_anti_kg else np.nan, "Difference": (anti_gm_m3 - 10.5) if has_anti_kg else np.nan,
+            {"Parameter": "Antiscalant", "UOM": "gm/m3 sea water", "Design": "7", "SOR Base": SOR_REF['Anti_PPM'],
+             "Actual": anti_gm_m3 if has_anti_kg else np.nan,
+             "Difference": (anti_gm_m3 - SOR_REF['Anti_PPM']) if has_anti_kg else np.nan,
              "Dosed (PPM)": get_v('chem_anti_ppm')},
-            {"Parameter": "Antifoam", "UOM": "gm/m3 sea water", "Design": "0.25", "SOR Base": 0.16,
-             "Actual": foam_gm_m3 if has_foam_kg else np.nan, "Difference": (foam_gm_m3 - 0.16) if has_foam_kg else np.nan,
+            {"Parameter": "Antifoam", "UOM": "gm/m3 sea water", "Design": "0.25", "SOR Base": SOR_REF['Foam_PPM'],
+             "Actual": foam_gm_m3 if has_foam_kg else np.nan,
+             "Difference": (foam_gm_m3 - SOR_REF['Foam_PPM']) if has_foam_kg else np.nan,
              "Dosed (PPM)": get_v('chem_foam_ppm')}
         ])
         st.dataframe(
@@ -2466,7 +2522,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
         cc1, cc2 = st.columns(2)
         with cc1:
             st.markdown("### Kem Watreat r 3687 — Antiscalant")
-            as_target = 10.5  # SOR baseline ppm
+            as_target = SOR_REF['Anti_PPM']  # SOR baseline ppm
             df_as = pd.DataFrame([
                 {"Metric": "Dose Rate (kg/hr)", "Value": as_kghr},
                 {"Metric": "Dose Rate (LPH)", "Value": as_lph},
