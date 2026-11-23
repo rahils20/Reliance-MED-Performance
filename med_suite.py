@@ -300,7 +300,7 @@ EXACT_DB_COLUMNS = [
     "Residual", "Antiscalant (kg)", "Antifoam (kg)", "Anti_PPM", "Foam_PPM", "Area_1st", "Area_Overall", "Remarks",
     # --- Operational sheet extras ---
     "Steam Inlet Temp", "Recovery", "Conversion", "Steam Economy", "Overall Delta T",
-    "Anti_PPM_Hot", "Anti_PPM_Brine",
+    "Anti_PPM_Hot", "Anti_PPM_Brine", "Anti_PPM_Cold",
     # --- Reserved for the two MRA tags Reliance requested that have no history yet. Capturing them
     #     from now on means they can be added to the model once enough rows accumulate.
     "Desuperheating Water Flow", "FFC Tube Side Pressure",
@@ -892,7 +892,86 @@ def build_interpretation(ops, mra, chem_ppm=None):
 # -------------------------------------------------------------------------------------
 # DAILY REPORT
 # -------------------------------------------------------------------------------------
-def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, skip_wq, remarks):
+# ---- History helpers for the daily report -----------------------------------------------------
+# The daily report used to see only the selected day's live values. The weekly residual table and
+# the trend charts need the registry, so it is passed in and sliced here.
+REPORT_TREND_DAYS = 30
+RESIDUAL_LOOKBACK_DAYS = 7
+
+def _history_window(history, date, days):
+    """Registry rows dated within the `days` days ending on `date` (inclusive), oldest first,
+    with a parsed '_d' column. Empty frame if there is no usable history."""
+    if history is None or getattr(history, 'empty', True) or 'Date' not in history.columns:
+        return pd.DataFrame()
+    h = history.copy()
+    h['_d'] = standardize_dates(h['Date'])
+    h = h.dropna(subset=['_d']).sort_values('_d').drop_duplicates(subset=['_d'], keep='last')
+    end = pd.Timestamp(date)
+    start = end - pd.Timedelta(days=days - 1)
+    return h[(h['_d'] >= start) & (h['_d'] <= end)]
+
+def _day_row(history, date):
+    w = _history_window(history, date, 1)
+    return None if w.empty else w.iloc[-1]
+
+def _pos_num(v):
+    """float(v) if it is a positive number, else None. Registry blanks come back as 0."""
+    try:
+        f = float(str(v).replace(',', ''))
+        return f if f > 0 and not pd.isna(f) else None
+    except (TypeError, ValueError):
+        return None
+
+def _dev_str(actual, ref):
+    p = _safe_pct(actual, ref)
+    return f"{p:+.1f}%" if p is not None and _pos_num(actual) is not None else '-'
+
+def _trend_figure(window, panels, ncols=2):
+    """Small-multiples trend chart (one panel per KPI) as PNG bytes, or None if nothing to plot.
+    panels: list of (column, title, unit, ref_value_or_None[, ref_label]) - ref_label defaults to 'SOR'."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        usable = []
+        for p in panels:
+            col, title, unit, ref = p[:4]
+            ref_label = p[4] if len(p) > 4 else 'SOR'
+            if col not in window.columns:
+                continue
+            s = pd.to_numeric(window[col], errors='coerce')
+            s = s.where(s > 0)
+            if s.notna().sum() >= 2:
+                usable.append((s, title, unit, ref, ref_label))
+        if not usable:
+            return None
+        nrows = (len(usable) + ncols - 1) // ncols
+        fig, axes = plt.subplots(nrows, ncols, figsize=(7.2, 2.1 * nrows), dpi=150, squeeze=False)
+        for i, (s, title, unit, ref, ref_label) in enumerate(usable):
+            ax = axes[i // ncols][i % ncols]
+            ax.plot(window['_d'], s, marker='o', ms=2.5, lw=1.2, color='#1f77b4')
+            if ref:
+                ax.axhline(ref, ls='--', lw=1, color='red', label=f"{ref_label} {ref:.4g}")
+                ax.legend(fontsize=6, loc='best', frameon=False)
+            ax.set_title(f"{title} ({unit})" if unit else title, fontsize=8)
+            ax.tick_params(labelsize=6)
+            ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=3, maxticks=6 if ncols > 1 else 10))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter('%d-%b'))
+            ax.grid(alpha=0.3)
+        for j in range(len(usable), nrows * ncols):
+            axes[j // ncols][j % ncols].axis('off')
+        fig.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
+
+def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, skip_wq, remarks, history=None):
     doc = Document()
     for s in doc.sections:
         s.left_margin = Inches(0.8); s.right_margin = Inches(0.8)
@@ -915,28 +994,37 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
 
     # ---- 1. Executive summary ----
     doc.add_heading('1. Executive Summary', level=1)
+    # The old sentence had two clauses spliced together ("specific thermal energy consumption of
+    # Recovery ... Overall plant heat transfer coefficient was the first effect ..."), left over from
+    # removing STEC and Overall HTC, and it went out in client reports like that.
     doc.add_paragraph(
-        f"On {date.strftime('%d %B %Y')} the MED-4 unit produced {_num(ops.get('Gross Prod'))} m³/h gross, "
-        f"at a Gain Output Ratio of {_num(ops.get('GOR'), 2)} and a specific thermal energy consumption of "
-        f"Recovery from seawater feed was "
-        f"{_num(ops.get('Recovery'))}%. Overall plant heat transfer coefficient was "
-        f"the first effect heat transfer coefficient "
+        f"On {date.strftime('%d %B %Y')} the MED-4 unit produced {_num(ops.get('Gross Prod'))} m³/h gross "
+        f"at a Gain Output Ratio of {_num(ops.get('GOR'), 2)}, with a steam economy of "
+        f"{_num(ops.get('Economy'), 3)} MT steam per m³ desal. Recovery from seawater feed was "
+        f"{_num(ops.get('Recovery'))}% and the first effect heat transfer coefficient was "
         f"{_num(ops.get('htc_1st'))} W/m²K."
     )
     doc.add_paragraph(interp['fouling'].get('verdict', ''))
 
     doc.add_heading('Key indicators', level=2)
     _table(doc,
-           ['Indicator', 'Value', 'SOR Reference', 'Deviation'],
+           ['Indicator', 'Value', f'SOR Reference ({SOR_PERIOD})', 'Deviation'],
            [
-               ['Gross production (m³/h)', _num(ops.get('Gross Prod')), '-', '-'],
+               ['Gross production (m³/h)', _num(ops.get('Gross Prod')), _num(SOR_REF['Gross_Prod']),
+                _dev_str(ops.get('Gross Prod'), SOR_REF['Gross_Prod'])],
                ['Gain Output Ratio', _num(ops.get('GOR'), 2), f"{SOR_REF['GOR']:.2f}",
-                f"{_safe_pct(ops.get('GOR'), SOR_REF['GOR']):+.1f}%" if _safe_pct(ops.get('GOR'), SOR_REF['GOR']) is not None else '-'],
+                _dev_str(ops.get('GOR'), SOR_REF['GOR'])],
                ['1st Effect HTC (W/m²K)', _num(ops.get('htc_1st')), f"{HTC_1ST_U_SOR:.1f}",
                 f"{interp['fouling']['first_dev']:+.1f}%" if interp['fouling'].get('first_dev') is not None else '-'],
-               ['Recovery (%)', _num(ops.get('Recovery')), '-', '-'],
+               ['Recovery (%)', _num(ops.get('Recovery')), _num(SOR_REF['Conversion_Pct'], 2),
+                _dev_str(ops.get('Recovery'), SOR_REF['Conversion_Pct'])],
+               # Added at site's request (Pramod, 16 Sep 2026).
+               ['Delta T, 1st effect vapour − brine (°C)', _num(ops.get('dt_1st'), 2), f"{SOR_REF['DT_1st']:.2f}",
+                _dev_str(ops.get('dt_1st'), SOR_REF['DT_1st'])],
+               ['Steam Economy, steam / desal (MT/m³)', _num(ops.get('Economy'), 3), f"{SOR_REF['Steam_Economy']:.3f}",
+                _dev_str(ops.get('Economy'), SOR_REF['Steam_Economy'])],
            ],
-           widths=[2.6, 1.3, 1.3, 1.2])
+           widths=[2.6, 1.2, 1.5, 1.1])
 
     # ---- 2. Performance interpretation (the part that was missing entirely) ----
     doc.add_heading('2. Performance Analysis', level=1)
@@ -975,9 +1063,39 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
             "within their expected range against the System Operating Reference."
         )
 
-    # ---- 4. SOR matrix (reference detail, moved onto its own page) ----
+    # ---- 4. Trends (added at site's request, Pramod 16 Sep 2026) ----
+    # Key-indicator trend and sea water / feed TSS trend over the last REPORT_TREND_DAYS days.
+    doc.add_heading('4. Performance Trends', level=1)
+    _win = _history_window(history, date, REPORT_TREND_DAYS)
+    _start = (pd.Timestamp(date) - pd.Timedelta(days=REPORT_TREND_DAYS - 1)).strftime('%d %b %Y')
+    doc.add_paragraph(
+        f"Key indicators and feed TSS from {_start} to {date.strftime('%d %b %Y')}. "
+        f"The dashed red line is the SOR baseline ({SOR_PERIOD}) where one applies."
+    )
+    doc.add_heading('Key indicator trend', level=2)
+    _kpi_png = _trend_figure(_win, [
+        ('Gross production', 'Gross production', 'm³/h', SOR_REF['Gross_Prod']),
+        ('GOR', 'Gain Output Ratio', '', SOR_REF['GOR']),
+        ('1st Effect HTC', '1st Effect HTC', 'W/m²K', HTC_1ST_U_SOR),
+        ('Recovery', 'Recovery', '%', SOR_REF['Conversion_Pct']),
+        ('Delta T', 'Delta T 1st effect vapour − brine', '°C', SOR_REF['DT_1st']),
+        ('Steam Economy', 'Steam economy', 'MT/m³', SOR_REF['Steam_Economy']),
+    ])
+    if _kpi_png:
+        doc.add_picture(_kpi_png, width=Inches(6.8))
+    else:
+        doc.add_paragraph("Not enough history in this window to plot the key indicator trend (needs at least two days).")
+    doc.add_heading('Sea water / feed TSS trend', level=2)
+    _tss_lim = WATER_SPECS['Feed'].get('TSS (ppm)', {}).get('lim', (None, None))[1]
+    _tss_png = _trend_figure(_win, [('Feed_TSS', 'Sea water feed TSS', 'ppm', _tss_lim, 'Limit')], ncols=1)
+    if _tss_png:
+        doc.add_picture(_tss_png, width=Inches(6.0))
+    else:
+        doc.add_paragraph("Not enough feed TSS results in this window to plot a trend (needs at least two days).")
+
+    # ---- 5. SOR matrix (reference detail, moved onto its own page) ----
     doc.add_page_break()
-    doc.add_heading('4. SOR Performance Matrix', level=1)
+    doc.add_heading('5. SOR Performance Matrix', level=1)
     doc.add_paragraph(
         "Full parameter-by-parameter comparison against the System Operating Reference. Positive deviations "
         "indicate operation above the reference condition."
@@ -997,9 +1115,9 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
         _table(doc, ['Parameter', 'UOM', 'Design', 'SOR Base', 'Actual', 'Deviation'], rows,
                widths=[2.2, 1.0, 0.9, 0.9, 0.9, 0.9])
 
-    # ---- 5. Water quality ----
+    # ---- 6. Water quality ----
     doc.add_page_break()
-    doc.add_heading('5. Water Quality', level=1)
+    doc.add_heading('6. Water Quality', level=1)
     if skip_wq:
         doc.add_paragraph("Laboratory water quality parameters were not recorded for this operational day.")
     else:
@@ -1039,36 +1157,65 @@ def generate_comprehensive_report(date, ops, sor_dfs, w_data, chem_data, mra, sk
     # ---- 6. Chemical dosing for the day -------------------------------------------------------
     # Chembond's own programme performance was absent from the daily report entirely, despite being
     # the thing the contract is actually about.
-    doc.add_heading('6. Chemical Programme', level=1)
+    # Trimmed at site's request (Pramod, 16 Sep 2026): Chemical | Dose (ppm) | kg/day | Total stock
+    # only. Dose rate (kg/hr), LPH, SOR target and deviation were dropped from the report.
+    doc.add_heading('7. Chemical Programme', level=1)
+    _row = _day_row(history, date)
+    _rv = (lambda c: _pos_num(_row.get(c)) if _row is not None else None)
+    _cd = chem_data or {}
+
+    def _stock_total(prefix, density):
+        """Total stock (kg) = MMC store closing + day-tank contents from the final tank level,
+        converted the same way the Chemical Doses sheet converts level to kg."""
+        mmc = _rv(f'{prefix}_Stock_Close')
+        lvl = _rv(f'{prefix}_Final')
+        tank = lvl * LITRES_PER_LEVEL_UNIT * density if lvl is not None else None
+        if mmc is None and tank is None:
+            return '-'
+        return _num((mmc or 0) + (tank or 0), 0)
+
     _chem_rows = []
-    for _lbl, _key, _dp, _tgt in (
-        ('Antiscalant dose rate (kg/hr)', 'AS_KgHr', 3, None),
-        ('Antiscalant dosed (ppm)', 'AS_PPM', 2, SOR_REF.get('Anti_PPM')),
-        ('Antifoam dose rate (kg/hr)', 'AF_KgHr', 3, None),
-        ('Antifoam dosed (ppm)', 'AF_PPM', 3, SOR_REF.get('Foam_PPM')),
+    for name, prefix, ppm_keys, density, dp in (
+        ('Kem Watreat R 3687 (antiscalant)', 'AS', ('AS_PPM', 'anti_ppm'), AS_DENSITY, 2),
+        ('Kem Antifoam 1795 (antifoam)', 'AF', ('AF_PPM', 'foam_ppm'), AF_DENSITY, 3),
     ):
-        _v = (chem_data or {}).get(_key)
-        try:
-            _v = float(_v)
-        except (TypeError, ValueError):
-            _v = None
-        if _v is None or _v == 0:
-            _chem_rows.append([_lbl, '-', _num(_tgt, _dp) if _tgt else '-', 'No record'])
-        elif _tgt:
-            _dev = (_v - _tgt) / _tgt * 100
-            _chem_rows.append([_lbl, _num(_v, _dp), _num(_tgt, _dp), f"{_dev:+.0f}% vs SOR"])
-        else:
-            _chem_rows.append([_lbl, _num(_v, _dp), '-', '-'])
-    _table(doc, ['Parameter', 'Recorded', 'SOR target', 'Assessment'], _chem_rows,
-           widths=[2.4, 1.2, 1.2, 1.5])
-    if all(r[1] == '-' for r in _chem_rows):
+        ppm = next((v for v in (_pos_num(_cd.get(k)) for k in ppm_keys) if v is not None), None)
+        kghr = _pos_num(_cd.get(f'{prefix}_KgHr')) or _rv(f'{prefix}_KgHr')
+        _chem_rows.append([name, _num(ppm, dp) if ppm else '-', _num(kghr * 24, 1) if kghr else '-',
+                           _stock_total(prefix, density)])
+    _table(doc, ['Chemical', 'Dose (ppm)', 'kg/day', 'Total stock, site + MMC (kg)'], _chem_rows,
+           widths=[2.5, 1.1, 1.1, 1.9])
+    if all(r[1] == '-' and r[2] == '-' for r in _chem_rows):
         doc.add_paragraph(
             "No chemical dosing record was captured for this date. Dosing figures are derived from the "
             "Chemical Doses sheet on the Bulk Uploads tab."
         )
 
+    # Antiscalant residual is sampled weekly, so show the latest sample within the last week.
+    doc.add_heading('Antiscalant residual (weekly)', level=2)
+    _res_cols = ('Anti_PPM_Cold', 'Anti_PPM_Hot', 'Anti_PPM_Brine')
+    _rwin = _history_window(history, date, RESIDUAL_LOOKBACK_DAYS)
+    _res = None
+    if not _rwin.empty:
+        for _, r in _rwin.iloc[::-1].iterrows():
+            if any(_pos_num(r.get(c)) is not None for c in _res_cols):
+                _res = r
+                break
+    if _res is not None:
+        _vals = [_num(_pos_num(_res.get(c)), 2) if _pos_num(_res.get(c)) is not None else '-' for c in _res_cols]
+        _note = f"Sampled {_res['_d'].strftime('%d-%m-%Y')}"
+    else:
+        _vals = ['-', '-', '-']
+        _note = f"No sample in the last {RESIDUAL_LOOKBACK_DAYS} days"
+    _table(doc, ['', 'Cold Feed', 'Hot Feed', 'Brine Discharge', 'Remarks'],
+           [['Kem Watreat R 3687 residual (ppm)'] + _vals + [_note]],
+           widths=[2.0, 0.9, 0.9, 1.1, 1.7])
+    doc.add_paragraph(
+        "Dosing pattern ratio is 80:20 - about 80% of the total dose goes to the cold group and 20% to the hot group."
+    )
+
     if remarks and str(remarks).strip():
-        doc.add_heading('7. Operator Remarks', level=1)
+        doc.add_heading('8. Operator Remarks', level=1)
         doc.add_paragraph(str(remarks))
 
     _para(doc, f"Report generated by the Chembond MED Performance Monitoring System  |  Report engine {REPORT_VERSION}",
@@ -2852,7 +2999,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                     with st.spinner("Building report..."):
                         st.session_state.daily_docx = generate_comprehensive_report(
                             log_date, ops_data, sor_export_dfs, water_data, chem_data,
-                            mra_data, get_v('skip_wq'), get_v('remarks'))
+                            mra_data, get_v('skip_wq'), get_v('remarks'),
+                            history=st.session_state.daily_logs)
                         st.session_state.daily_docx_date = log_date_str
                 if st.session_state.get('daily_docx') and st.session_state.get('daily_docx_date') == log_date_str:
                     st.download_button("Download Word Report", data=st.session_state.daily_docx,
@@ -3592,8 +3740,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         'CW (FCC) supply': 'CW supply', 'CW (FCC) return': 'CW Return',
                         'Gross desal water production': 'Gross production',
                         '11 effect brine Temp': '11th Effect Brine Temp',
-                        'Antiscalant residual (Cold group)': 'Anti_PPM',
-                        'Antiscalant residual': 'Anti_PPM',
+                        # Cold-group RESIDUAL gets its own column. It used to be written to 'Anti_PPM',
+                        # which is the antiscalant DOSED ppm that the Chemical Doses upload also writes -
+                        # whichever upload ran last overwrote the other.
+                        'Antiscalant residual (Cold group)': 'Anti_PPM_Cold',
+                        'Antiscalant residual': 'Anti_PPM_Cold',
                         'Antiscalant residual (Hot group)': 'Anti_PPM_Hot',
                         'Antiscalant residual (Brine)': 'Anti_PPM_Brine',
                         'Unnamed: 27': 'Anti_PPM_Hot', 'Unnamed: 28': 'Anti_PPM_Brine',
@@ -3606,7 +3757,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         '1st Effect Vapour Temp', '1st effect brine temp', '1st effect vapour pressure',
                         'Steam Inlet Temp', 'Brine Discharge Temp', 'Sea Water cond I/L temp',
                         'Sea Water Condenser O/L Temp', 'CW supply', 'CW Return', 'Gross production',
-                        '11th Effect Brine Temp', 'Anti_PPM', 'Anti_PPM_Hot', 'Anti_PPM_Brine',
+                        '11th Effect Brine Temp', 'Anti_PPM_Cold', 'Anti_PPM_Hot', 'Anti_PPM_Brine',
                     ]
                     d = _clean_num(d, op_inputs)
                     d['Date'] = standardize_dates(d['Date']).dt.strftime('%Y-%m-%d')
