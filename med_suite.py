@@ -95,6 +95,30 @@ def upsert_daily_logs(existing_df, new_df):
     merged = new_df.combine_first(existing_df)
     return merged.reset_index()
 
+# Readings the Operational bulk sheet has no column for, so the only way they reach the registry is
+# by being typed in on the Inputs tab and saved. Before this existed they lived only in the session:
+# once the browser closed they were gone and could not be retrieved for past dates.
+MANUAL_ONLY_FIELDS = {
+    # registry column            : session var
+    'Sea Water Pressure': 'sw_press',
+    'LP Steam Pressure': 'stm_press',
+    'Brine Discharge Pressure': 'brine_press',
+    'CW Flow': 'cw_flow',
+    'Condensate Conductivity': 'cond_cond',
+}
+
+def _is_blank_remark(v):
+    """True for a remark that carries no text. save_database() fills NaN with 0, so an empty remark
+    comes back from the sheet as 0 / '0' / '0.0' and must not be shown as if someone typed '0'."""
+    s = str(v).strip() if v is not None else ""
+    return s.lower() in ("", "0", "0.0", "nan", "none", "null", "na")
+
+def blank_remarks_to_nan(series):
+    """Bulk uploads used to write Remarks = "" for every row. upsert_daily_logs treats "" as a real
+    value, so re-uploading a sheet that covers past dates wiped the remarks typed for those dates.
+    Blank remarks are turned into NaN so the merge keeps whatever remark the registry already has."""
+    return series.where(~series.map(_is_blank_remark), np.nan)
+
 # MED GLOBAL CONSTANTS
 # ---------------------------------------------------------------------------------------------
 # MRA PREDICTOR SPECIFICATION (revised for Reliance, replacing the original 2014 7-input model)
@@ -1694,7 +1718,9 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             try:
                                 val_str = str(row[col_name]).strip()
                                 if val_str and val_str.lower() not in ['nan', 'none', 'null', 'na']:
-                                    if var_key == 'remarks': 
+                                    if var_key == 'remarks':
+                                        if _is_blank_remark(val_str):
+                                            break
                                         val = val_str
                                     else: 
                                         val = float(val_str.replace(',', ''))
@@ -2040,6 +2066,42 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                 st.number_input("Condensate Conductivity (µS/cm)", key="in_cond_cond", on_change=sync_var, args=('cond_cond', 'in_cond_cond'))
                 st.text_area("Remarks", key="t0_remarks", on_change=sync_var, args=('remarks', 't0_remarks'), height=68,
                              help="Mirrors the Remarks box on the Reporting tab - edit either one.")
+
+                # ---- Save the hand-entered readings to the registry --------------------------------
+                # Pressures, CW flow and condensate conductivity have no column in the Operational bulk
+                # sheet, so they must be typed in. This saves ONLY those fields + remarks for the selected
+                # date, merging into the existing row - bulk-uploaded data for the date is left untouched.
+                st.markdown("**Save manual readings**")
+                st.caption(
+                    "Sea water / LP steam / brine pressure, CW flow, condensate conductivity and remarks are not "
+                    f"in the bulk sheet. Save them here so they stay in the history for {log_date.strftime('%d-%m-%Y')}. "
+                    "Fields left at 0 are skipped, so they never overwrite a value saved earlier."
+                )
+                m_pwd, m_btn = st.columns([2, 1])
+                manual_pwd = m_pwd.text_input("Password", type="password", key="pwd_manual",
+                                              label_visibility="collapsed", placeholder="Master password to save")
+                if m_btn.button("Save manual readings", use_container_width=True, key="b_save_manual"):
+                    if manual_pwd == "":
+                        st.warning("Enter the master password, then click Save manual readings.")
+                    elif manual_pwd == "12345678":
+                        manual_row = {'Date': [log_date_str]}
+                        for col, var in MANUAL_ONLY_FIELDS.items():
+                            v = get_v(var)
+                            manual_row[col] = [v if v else np.nan]
+                        _rem = get_v('remarks')
+                        manual_row['Remarks'] = [np.nan if _is_blank_remark(_rem) else str(_rem).strip()]
+                        n_saved = sum(1 for k, v in manual_row.items() if k != 'Date' and pd.notna(v[0]))
+                        if n_saved == 0:
+                            st.warning("Nothing to save - all the manual fields are 0 and remarks are empty.")
+                        else:
+                            st.session_state.daily_logs = upsert_daily_logs(
+                                st.session_state.daily_logs, pd.DataFrame(manual_row))
+                            save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
+                            st.success(f"Saved {n_saved} manual field(s) for {log_date.strftime('%d-%m-%Y')}.")
+                            time.sleep(1.0)
+                            st.rerun()
+                    else:
+                        st.error("Incorrect password.")
 
                 # Effect-wise temperature cascade is no longer recorded by the team, so the input UI is
                 # hidden. skip_eff is forced True so any downstream logic treats it as intentionally absent.
@@ -2743,8 +2805,8 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             "Antifoam (kg)": [chem_data['foam_cons']], 
                             "Anti_PPM": [get_v('chem_anti_ppm')], 
                             "Foam_PPM": [get_v('chem_foam_ppm')], 
-                            "Area_1st": [get_v('area_1st')], 
-                            "Remarks": [get_v('remarks')]
+                            "Area_1st": [get_v('area_1st')],
+                            "Remarks": [np.nan if _is_blank_remark(get_v('remarks')) else get_v('remarks')]
                         }
                         for cat in ['Feed', 'Product']:
                             for param, details in WATER_SPECS[cat].items(): 
@@ -2769,12 +2831,11 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         })
                         
                         new_log = pd.DataFrame(db_dict)
-                        st.session_state.daily_logs = pd.concat([st.session_state.daily_logs, new_log], ignore_index=True)
-                        
-                        # MASTER DATE FIX: Standardize before dropping duplicates to eradicate "ghost" format duplication
-                        st.session_state.daily_logs['Date'] = standardize_dates(st.session_state.daily_logs['Date']).dt.strftime('%Y-%m-%d')
-                        st.session_state.daily_logs = st.session_state.daily_logs.dropna(subset=['Date'])
-                        st.session_state.daily_logs = st.session_state.daily_logs.drop_duplicates(subset=['Date'], keep='last').reset_index(drop=True)
+                        # Merge into the existing row for this date rather than replacing it. The old
+                        # concat + drop_duplicates(keep='last') did a whole-row replace, which wiped every
+                        # column this form doesn't cover (bulk-uploaded HTC inputs, chemical tank/stock
+                        # data, Recovery/Conversion, hot/brine residuals) for the date being saved.
+                        st.session_state.daily_logs = upsert_daily_logs(st.session_state.daily_logs, new_log)
                         
                         save_database(db_conn, st.session_state.daily_logs, LOCAL_DB_FILE)
                         st.success("Operational record successfully integrated into file engine!")
@@ -3572,7 +3633,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                             'Steam Economy'
                         ]
                         ready = d[out_cols].copy()
-                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+                        ready['Remarks'] = blank_remarks_to_nan(d.get('Remarks', pd.Series(np.nan, index=d.index)))
 
                         st.success(f"Recomputed operational KPIs for {len(ready)} rows.")
                         st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
@@ -3768,7 +3829,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         st.error("No valid dated rows found.")
                     else:
                         ready = d[['Date'] + fb_cols].copy()
-                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+                        ready['Remarks'] = blank_remarks_to_nan(d.get('Remarks', pd.Series(np.nan, index=d.index)))
                         st.success(f"Prepared Feed & Brine analysis for {len(ready)} rows.")
                         st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
 
@@ -3821,7 +3882,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                         st.error("No valid dated rows found.")
                     else:
                         ready = d[['Date'] + ds_cols].copy()
-                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+                        ready['Remarks'] = blank_remarks_to_nan(d.get('Remarks', pd.Series(np.nan, index=d.index)))
                         st.success(f"Prepared Desal product analysis for {len(ready)} rows.")
                         st.dataframe(ready.style.format(precision=2), use_container_width=True, hide_index=True)
 
@@ -3925,7 +3986,7 @@ def render_med_suite(db_conn, LOCAL_DB_FILE, LOCAL_CONFIG_FILE, AI_MODEL_FILE, s
                                 'AF_Stock_Open', 'AF_Stock_Recd', 'AF_Stock_Consumed', 'AF_Stock_Close',
                                 'Anti_PPM', 'Foam_PPM', 'Antiscalant (kg)', 'Antifoam (kg)']
                         ready = d[keep].copy()
-                        ready['Remarks'] = d.get('Remarks', pd.Series("", index=d.index)).fillna("")
+                        ready['Remarks'] = blank_remarks_to_nan(d.get('Remarks', pd.Series(np.nan, index=d.index)))
 
                         n_nofeed = int(ready['AS_PPM'].isna().sum())
                         st.success(f"Computed chemical dosing for {len(ready)} rows.")

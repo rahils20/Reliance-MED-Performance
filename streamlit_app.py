@@ -553,7 +553,9 @@ def main():
                 med_kpis = {
                     "date": last['_d'].strftime('%d-%m-%Y'),
                     "gross": _mnum('Gross production'), "gor": _mnum('GOR'),
-                    "htc_overall": _mnum('Overall HTC'), "recovery": _mnum('Recovery'),
+                    # 1st Effect HTC replaces Overall HTC here at site's request (Overall HTC was
+                    # removed from the tool, so this tile read a dead column and always showed 0.0).
+                    "htc_1st": _mnum('1st Effect HTC'), "recovery": _mnum('Recovery'),
                 }
                 gross_val = _mnum('Gross production', 1) or 1.0
                 med_diff = (_mnum('Residual') / gross_val) * 100
@@ -626,7 +628,7 @@ def main():
                 body = _kpi_row([
                     ("Gross Prod.", f"{med_kpis['gross']:.0f} m³/h"),
                     ("GOR", f"{med_kpis['gor']:.2f}"),
-                    ("Overall HTC", f"{med_kpis['htc_overall']:.1f}"),
+                    ("1st Effect HTC", f"{med_kpis['htc_1st']:.1f} W/m²K"),
                     ("Recovery", f"{med_kpis['recovery']:.1f}%"),
                 ])
                 subtitle = f"Unit MED-4  ·  as of {med_kpis['date']}"
