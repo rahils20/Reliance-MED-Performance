@@ -345,10 +345,15 @@ RIL_EXCEL_HEADERS = [
 # Rf (fouling resistance) = 1/U_actual - 1/U_clean, where the sheets use the SOR baseline as "clean".
 HTC_1ST_AREA = 12950.013120000001      # 1st effect-HTC!K  = pi * 5.5m * 31244 tubes * 0.024m OD
 HTC_OVERALL_AREA = 163818.0            # Overall-HTC!K     = 11 effects * 12950 * 1.15
-# NOTE (Nov 2026): still the PREVIOUS cycle's SOR. The 18-20 Sep 2026 SOR data gives ~570 W/m²K with
-# this tool's formula, but that relies on the condensate temperature from a transmitter the site has
-# flagged as faulty. Held at 415.3 pending confirmation from site/RIL on which baseline to use.
-HTC_1ST_U_SOR = 415.31060504252554     # 1st effect-HTC!AA6 (steam condensation basis, SOR baseline)
+# 1st-effect HTC at the 18-20 Sep 2026 SOR, adopted on Pramod Dubey's confirmation (24 Nov 2026).
+# Computed with this tool's own formula from the RIL "MED-4 SOR Performance" document:
+#   Q    = 90.3 TPH x 1000 x 2330 kJ/kg x 1000 / 3600          = 58.44 MW
+#   dT1  = 1st effect vapour 71.41 - 1st effect brine 68.58     = 2.83 C
+#   dT2  = condensate 69.0 - avg brine of effects 4-7 51.95     = 17.05 C
+#          (effects 4-7 = 58.97 / 47.65 / 51.42 / 49.76 C, from the document's effect-to-effect brine dTs)
+#   LMTD = 7.918 C,  U = Q / (12950 m2 x LMTD)                  = 569.96 W/m2K
+# Previous cycle's baseline was 415.31. The condensate TT is flagged faulty, so revisit once it is fixed.
+HTC_1ST_U_SOR = 569.9635802909081      # steam condensation basis, 18-20 Sep 2026 SOR
 HTC_OVERALL_U_SOR = 17.726796070321715 # Overall-HTC!AA6   (steam condensation basis, SOR baseline)
 CP_WATER_KJ_KGC = 4.186                # specific heat, both sheets col P
 
